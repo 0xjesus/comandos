@@ -27,6 +27,7 @@
     clippy::unimplemented
 )]
 
+pub mod chat_markdown;
 pub mod escape;
 pub mod push_settings;
 pub mod session_config;

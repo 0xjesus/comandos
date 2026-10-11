@@ -16,11 +16,19 @@ pub(super) struct Owned {
     /// Messages currently drawn, one list child each; a refresh only redraws the tail
     /// that changed.
     shown: RefCell<Vec<(String, String)>>,
+    /// The transcript as last received; older turns stay folded until asked for.
+    messages: RefCell<Vec<(String, String)>>,
+    expanded: Cell<bool>,
+    /// Seconds since the transcript moved, as the server reported it.
+    age: Cell<u64>,
 }
 struct View {
     root: gtk::Box,
     notebook: gtk::Notebook,
     list: gtk::Box,
+    more: gtk::Button,
+    typing: gtk::Box,
+    send: gtk::Button,
     scroll: gtk::ScrolledWindow,
     title: gtk::Label,
     input: gtk::TextView,
@@ -72,20 +80,48 @@ fn inline(line: &str) -> String {
     out
 }
 
-/// Splits a message into prose (as Pango markup) and fenced code blocks (verbatim).
-fn segments(text: &str) -> Vec<(bool, String)> {
-    let mut out: Vec<(bool, String)> = Vec::new();
+enum Block {
+    /// Pango markup, one rendered line per source line.
+    Prose(String),
+    Code(String),
+    Table(Vec<Vec<String>>),
+}
+
+fn list_item(t: &str) -> Option<(String, &str)> {
+    if let Some(item) = t.strip_prefix("- ").or(t.strip_prefix("* ")).or(t.strip_prefix("+ ")) {
+        return Some(("•".into(), item));
+    }
+    let digits = t.bytes().take_while(u8::is_ascii_digit).count();
+    (digits > 0 && digits < 4)
+        .then(|| t[digits..].strip_prefix(". ").or(t[digits..].strip_prefix(") ")))
+        .flatten()
+        .map(|item| (format!("{}.", &t[..digits]), item))
+}
+
+/// Splits a message into prose (as Pango markup), fenced code (verbatim) and tables.
+fn blocks(text: &str) -> Vec<Block> {
+    let mut out: Vec<Block> = Vec::new();
     let mut prose: Vec<String> = Vec::new();
     let mut code: Option<Vec<&str>> = None;
+    let mut table: Vec<Vec<String>> = Vec::new();
+    let flush = |out: &mut Vec<Block>, prose: &mut Vec<String>, table: &mut Vec<Vec<String>>| {
+        while prose.last().is_some_and(String::is_empty) {
+            prose.pop();
+        }
+        if !prose.is_empty() {
+            out.push(Block::Prose(prose.join("\n")));
+            prose.clear();
+        }
+        if !table.is_empty() {
+            out.push(Block::Table(std::mem::take(table)));
+        }
+    };
     for line in text.lines() {
         if line.trim_start().starts_with("```") {
             match code.take() {
-                Some(block) => out.push((true, block.join("\n"))),
+                Some(block) => out.push(Block::Code(block.join("\n"))),
                 None => {
-                    if !prose.is_empty() {
-                        out.push((false, prose.join("\n")));
-                        prose.clear();
-                    }
+                    flush(&mut out, &mut prose, &mut table);
                     code = Some(Vec::new());
                 }
             }
@@ -96,25 +132,52 @@ fn segments(text: &str) -> Vec<(bool, String)> {
             continue;
         }
         let trimmed = line.trim_start();
-        let indent = &line[..line.len() - trimmed.len()];
+        if trimmed.starts_with('|') {
+            let cells: Vec<&str> = trimmed.trim_end().trim_matches('|').split('|').map(str::trim).collect();
+            if cells.iter().all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' '))) {
+                continue;
+            }
+            if table.is_empty() {
+                flush(&mut out, &mut prose, &mut table);
+            }
+            table.push(cells.iter().map(|c| inline(c)).collect());
+            continue;
+        }
+        if !table.is_empty() {
+            flush(&mut out, &mut prose, &mut table);
+        }
+        let indent = if line.len() - trimmed.len() >= 2 { "      " } else { "" };
         let markup = if let Some(h) = trimmed.strip_prefix("### ").or(trimmed.strip_prefix("## ")).or(trimmed.strip_prefix("# ")) {
             format!("<b><big>{}</big></b>", inline(h))
-        } else if let Some(item) = trimmed.strip_prefix("- ").or(trimmed.strip_prefix("* ")) {
-            format!("{indent}  •  {}", inline(item))
-        } else if trimmed.starts_with("---") && trimmed.chars().all(|c| c == '-') {
+        } else if let Some((mark, item)) = list_item(trimmed) {
+            format!("{indent}  <b>{mark}</b>  {}", inline(item))
+        } else if trimmed.len() >= 3 && trimmed.chars().all(|c| matches!(c, '-' | '*' | '_')) {
             "<span alpha=\"40%\">────────────</span>".into()
+        } else if let Some(q) = trimmed.strip_prefix("> ").or(trimmed.strip_prefix('>')) {
+            format!("<span alpha=\"70%\">▎ <i>{}</i></span>", inline(q))
         } else {
-            inline(line)
+            inline(line.trim_end())
         };
+        if markup.is_empty() && prose.last().is_some_and(String::is_empty) {
+            continue;
+        }
         prose.push(markup);
     }
     if let Some(block) = code {
-        out.push((true, block.join("\n")));
+        out.push(Block::Code(block.join("\n")));
     }
-    if !prose.is_empty() {
-        out.push((false, prose.join("\n")));
-    }
+    flush(&mut out, &mut prose, &mut table);
     out
+}
+
+/// Where the collapsed view starts: the last agent answer (and what followed it), or
+/// the last prompt while no answer exists yet.
+fn cut(messages: &[(String, String)]) -> usize {
+    messages
+        .iter()
+        .rposition(|(r, _)| r == "a")
+        .or_else(|| messages.iter().rposition(|(r, _)| r == "u"))
+        .unwrap_or(0)
 }
 
 fn text_label(markup: Option<&str>, plain: &str, class: &str) -> gtk::Label {
@@ -144,17 +207,36 @@ fn bubble(role: &str, text: &str) -> gtk::Widget {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
     column.style_context().add_class(if me { "cv-me" } else { "cv-ai" });
     column.set_halign(if me { gtk::Align::End } else { gtk::Align::Fill });
-    for (code, body) in segments(text) {
-        let label = if code {
-            text_label(None, &body, "cv-code")
-        } else {
-            text_label(Some(&body), "", "cv-text")
+    for block in blocks(text) {
+        let widget: gtk::Widget = match block {
+            Block::Prose(markup) => {
+                let label = text_label(Some(&markup), "", "cv-text");
+                label.set_max_width_chars(if me { 72 } else { 110 });
+                label.upcast()
+            }
+            Block::Code(body) => {
+                let label = text_label(None, &body, "cv-code");
+                label.set_max_width_chars(110);
+                label.set_line_wrap_mode(pango::WrapMode::Char);
+                label.upcast()
+            }
+            Block::Table(rows) => {
+                let grid = gtk::Grid::new();
+                grid.style_context().add_class("cv-table");
+                grid.set_column_homogeneous(true);
+                for (y, row) in rows.iter().enumerate() {
+                    for (x, cell) in row.iter().enumerate() {
+                        let markup = if y == 0 { format!("<b>{cell}</b>") } else { cell.clone() };
+                        let label = text_label(Some(&markup), "", "cv-cell");
+                        label.set_max_width_chars(28);
+                        label.set_yalign(0.);
+                        grid.attach(&label, x as i32, y as i32, 1, 1);
+                    }
+                }
+                grid.upcast()
+            }
         };
-        label.set_max_width_chars(if me { 72 } else { 110 });
-        if code {
-            label.set_line_wrap_mode(pango::WrapMode::Char);
-        }
-        column.pack_start(&label, false, false, 0);
+        column.pack_start(&widget, false, false, 0);
     }
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     row.style_context().add_class(if me { "cv-row-me" } else { "cv-row-ai" });
@@ -176,9 +258,35 @@ impl App {
         title.set_xalign(0.);
         let list = gtk::Box::new(gtk::Orientation::Vertical, 10);
         list.style_context().add_class("cv-list");
+        let more = gtk::Button::with_label("");
+        more.style_context().add_class("cv-more");
+        more.set_halign(gtk::Align::Center);
+        more.set_no_show_all(true);
+        let weak = Rc::downgrade(self);
+        more.connect_clicked(move |_| {
+            if let Some(app) = weak.upgrade() {
+                app.chat.expanded.set(!app.chat.expanded.get());
+                app.chat_draw(false);
+            }
+        });
+        let typing = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        typing.style_context().add_class("cv-typing");
+        typing.set_halign(gtk::Align::Start);
+        let spinner = gtk::Spinner::new();
+        spinner.start();
+        typing.pack_start(&spinner, false, false, 0);
+        typing.pack_start(&gtk::Label::new(Some("Trabajando…")), false, false, 0);
+        typing.set_no_show_all(true);
+        spinner.show();
+        typing.children().iter().for_each(|c| c.show());
+        let feed = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        feed.style_context().add_class("cv-feed");
+        feed.pack_start(&more, false, false, 0);
+        feed.pack_start(&list, false, false, 0);
+        feed.pack_start(&typing, false, false, 0);
         let scroll = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
         scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.add(&list);
+        scroll.add(&feed);
         let keys = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         keys.style_context().add_class("cv-keys");
         for (label, key, class) in [
@@ -251,6 +359,9 @@ impl App {
             root,
             notebook: notebook.clone(),
             list,
+            more,
+            typing,
+            send,
             scroll,
             title,
             input,
@@ -332,7 +443,18 @@ impl App {
                     view.list.remove(&child);
                 }
                 self.chat.shown.borrow_mut().clear();
-                view.list.pack_start(&bubble("t", "Cargando conversación…"), false, false, 0);
+                self.chat.messages.borrow_mut().clear();
+                self.chat.expanded.set(false);
+                view.more.hide();
+                view.typing.hide();
+                let loading = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                loading.style_context().add_class("cv-loading");
+                loading.set_halign(gtk::Align::Center);
+                let spinner = gtk::Spinner::new();
+                spinner.start();
+                loading.pack_start(&spinner, false, false, 0);
+                loading.pack_start(&gtk::Label::new(Some("Cargando conversación…")), false, false, 0);
+                view.list.pack_start(&loading, false, false, 0);
                 view.list.show_all();
             }
         }
@@ -349,55 +471,94 @@ impl App {
                 let Some(app) = weak.upgrade() else { return };
                 app.chat.busy.set(false);
                 let Ok((_, v)) = result else { return };
-                if *app.chat.session.borrow() != session || v["unchanged"] == true {
+                if *app.chat.session.borrow() != session {
+                    return;
+                }
+                app.chat.age.set(v["age"].as_u64().unwrap_or(u64::MAX));
+                if v["unchanged"] == true {
+                    app.chat_typing();
                     return;
                 }
                 app.chat.token.replace(v["token"].as_str().unwrap_or("").into());
-                let Some(view) = &*app.chat.view.borrow() else { return };
-                let adj = view.scroll.vadjustment();
-                let pinned = since.is_empty() || adj.upper() - adj.value() - adj.page_size() < 120.;
+                if v["agent"].is_null() {
+                    app.chat.messages.borrow_mut().clear();
+                    app.chat.shown.borrow_mut().clear();
+                    if let Some(view) = &*app.chat.view.borrow() {
+                        for child in view.list.children() {
+                            view.list.remove(&child);
+                        }
+                        view.list.pack_start(&bubble("t", "Sin conversación de Claude o Codex en esta sesión. Usa la terminal."), false, false, 0);
+                        view.list.show_all();
+                    }
+                    return;
+                }
                 let empty = Vec::new();
-                let messages: Vec<(String, String)> = v["messages"]
+                *app.chat.messages.borrow_mut() = v["messages"]
                     .as_array()
                     .unwrap_or(&empty)
                     .iter()
                     .map(|m| (m["r"].as_str().unwrap_or("t").to_owned(), m["t"].as_str().unwrap_or("").to_owned()))
                     .collect();
-                let children = view.list.children();
-                let mut shown = app.chat.shown.borrow_mut();
-                // Keep the drawn prefix that still matches; redraw only from there.
-                let keep = if children.len() == shown.len() {
-                    shown.iter().zip(&messages).take_while(|(a, b)| a == b).count()
-                } else {
-                    0
-                };
-                for child in children.iter().skip(keep) {
-                    view.list.remove(child);
-                }
-                if v["agent"].is_null() || messages.is_empty() {
-                    view.list.pack_start(
-                        &bubble("t", "Sin conversación de Claude o Codex en esta sesión. Usa la terminal."),
-                        false,
-                        false,
-                        0,
-                    );
-                    shown.clear();
-                } else {
-                    for (role, text) in &messages[keep..] {
-                        view.list.pack_start(&bubble(role, text), false, false, 0);
-                    }
-                    *shown = messages;
-                }
-                view.list.show_all();
-                if pinned {
-                    let scroll = view.scroll.clone();
-                    glib::idle_add_local_once(move || {
-                        let adj = scroll.vadjustment();
-                        adj.set_value(adj.upper() - adj.page_size());
-                    });
-                }
+                app.chat_draw(since.is_empty());
             },
         );
+    }
+    /// Draws the visible slice (the last answer, or everything when expanded), rebuilding
+    /// only from the first message that changed.
+    fn chat_draw(&self, first: bool) {
+        let Some(view) = &*self.chat.view.borrow() else { return };
+        let adj = view.scroll.vadjustment();
+        let from_bottom = adj.upper() - adj.value();
+        let pinned = first || adj.upper() - adj.value() - adj.page_size() < 120.;
+        let messages = self.chat.messages.borrow();
+        let folded = cut(&messages);
+        let from = if self.chat.expanded.get() { 0 } else { folded };
+        let slice = &messages[from..];
+        let children = view.list.children();
+        let mut shown = self.chat.shown.borrow_mut();
+        let keep = if children.len() == shown.len() {
+            shown.iter().zip(slice).take_while(|(a, b)| a == b).count()
+        } else {
+            0
+        };
+        for child in children.iter().skip(keep) {
+            view.list.remove(child);
+        }
+        if slice.is_empty() {
+            view.list.pack_start(&bubble("t", "Sin conversación todavía. Escribe abajo o vuelve a la terminal."), false, false, 0);
+            shown.clear();
+        } else {
+            for (role, text) in &slice[keep..] {
+                view.list.pack_start(&bubble(role, text), false, false, 0);
+            }
+            *shown = slice.to_vec();
+        }
+        view.list.show_all();
+        view.more.set_label(&match (self.chat.expanded.get(), folded) {
+            (true, _) => "Ocultar mensajes anteriores".to_owned(),
+            (false, 1) => "Ver 1 mensaje anterior".to_owned(),
+            (false, n) => format!("Ver {n} mensajes anteriores"),
+        });
+        view.more.set_visible(folded > 0);
+        drop(shown);
+        drop(messages);
+        self.chat_typing();
+        let scroll = view.scroll.clone();
+        let expanded = self.chat.expanded.get();
+        glib::idle_add_local_once(move || {
+            let adj = scroll.vadjustment();
+            if pinned {
+                adj.set_value(adj.upper() - adj.page_size());
+            } else if expanded {
+                adj.set_value(adj.upper() - from_bottom);
+            }
+        });
+    }
+    /// «Working» while the transcript moved in the last 90 s and does not end in an answer.
+    fn chat_typing(&self) {
+        let Some(view) = &*self.chat.view.borrow() else { return };
+        let busy = self.chat.age.get() < 90 && self.chat.messages.borrow().last().is_some_and(|(r, _)| r != "a");
+        view.typing.set_visible(busy);
     }
     fn chat_send(self: &Rc<Self>) {
         let text = {
@@ -409,10 +570,19 @@ impl App {
                 return;
             }
             buffer.set_text("");
-            view.list.pack_start(&bubble("u", &text), false, false, 0);
+            let pending = bubble("u", &text);
+            pending.set_opacity(0.6);
+            view.list.pack_start(&pending, false, false, 0);
+            // The pending bubble breaks the list↔shown pairing, so the next draw rebuilds.
             view.list.show_all();
+            view.typing.show();
+            view.send.set_sensitive(false);
+            view.send.set_label("Enviando…");
+            let adj = view.scroll.vadjustment();
+            glib::idle_add_local_once(move || adj.set_value(adj.upper() - adj.page_size()));
             text
         };
+        self.chat.age.set(0);
         self.chat_post("/send", json!({"text": text}));
     }
     fn chat_post(self: &Rc<Self>, path: &'static str, mut body: Value) {
@@ -429,6 +599,12 @@ impl App {
                 let Some(app) = weak.upgrade() else { return };
                 if let Err(error) = result {
                     app.status.set_text(&format!("Chat: {error:?}"));
+                }
+                if path == "/send" {
+                    if let Some(view) = &*app.chat.view.borrow() {
+                        view.send.set_sensitive(true);
+                        view.send.set_label("Enviar ↵");
+                    }
                 }
                 app.chat_tick(true);
             },
@@ -449,11 +625,20 @@ mod tests {
     }
 
     #[test]
-    fn code_fences_split_into_their_own_segment() {
-        let parts = segments("# Plan\n- uno\n```rust\nlet x = 1 < 2;\n```\nfin");
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], (false, "<b><big>Plan</big></b>\n  •  uno".into()));
-        assert_eq!(parts[1], (true, "let x = 1 < 2;".into()));
-        assert_eq!(parts[2], (false, "fin".into()));
+    fn markdown_splits_into_prose_code_and_tables() {
+        let parts = blocks("# Plan\n- uno\n2. dos\n```rust\nlet x = 1 < 2;\n```\n| a | b |\n|---|---|\n| 1 | `2` |\nfin");
+        assert_eq!(parts.len(), 4);
+        assert!(matches!(&parts[0], Block::Prose(p) if p == "<b><big>Plan</big></b>\n  <b>•</b>  uno\n  <b>2.</b>  dos"));
+        assert!(matches!(&parts[1], Block::Code(c) if c == "let x = 1 < 2;"));
+        assert!(matches!(&parts[2], Block::Table(t) if t == &vec![vec!["a".to_owned(), "b".to_owned()], vec!["1".to_owned(), "<tt>2</tt>".to_owned()]]));
+        assert!(matches!(&parts[3], Block::Prose(p) if p == "fin"));
+    }
+
+    #[test]
+    fn collapsed_view_starts_at_the_last_answer() {
+        let m = |r: &str| (r.to_owned(), String::new());
+        assert_eq!(cut(&[m("u"), m("a"), m("u"), m("t"), m("a"), m("t")]), 4);
+        assert_eq!(cut(&[m("t"), m("u"), m("t")]), 1);
+        assert_eq!(cut(&[]), 0);
     }
 }

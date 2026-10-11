@@ -2,14 +2,13 @@
 //! a composer that types into its pane, and ‹ › / swipe to move between sessions.
 //! One 1 s timer; it fetches only while the view is visible and the page is shown, and
 //! the server answers `unchanged` when the transcript did not move.
-use comandos_web_view::escape::text as esc;
-use serde_json::Value;
 #[cfg(target_arch = "wasm32")]
 pub use web::install;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{render_messages, render_text};
+use super::{cut, working};
+use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
 use serde_json::json;
@@ -32,7 +31,15 @@ struct Chat {
     busy: Cell<bool>,
     ticks: Cell<u32>,
     swipe: Cell<Option<(f64, f64)>>,
+    /// Older messages are folded behind a button until asked for.
+    expanded: Cell<bool>,
+    /// The transcript as last received (role, server-rendered HTML), and the slice drawn
+    /// into `.cv-list` (one child each): a refresh rewrites only the tail that changed.
+    messages: RefCell<Vec<(String, String)>>,
+    shown: RefCell<Vec<(String, String)>>,
+    age: Cell<f64>,
 }
+const SKELETON: &str = "<div class=\"cv-skel\" role=\"status\" aria-label=\"Cargando conversación\"><i></i><i></i><i></i></div>";
 
 fn text(v: &JsValue) -> String {
     v.as_string().unwrap_or_default()
@@ -105,7 +112,12 @@ impl Chat {
         if moved {
             self.session.replace(session.clone());
             self.token.replace(String::new());
-            let _ = set(&query(&el(), ".cv-feed"), "innerHTML", &"<p class=\"cv-empty\">Cargando conversación…</p>".into());
+            self.expanded.set(false);
+            self.messages.borrow_mut().clear();
+            self.shown.borrow_mut().clear();
+            let _ = set(&query(&el(), ".cv-list"), "innerHTML", &SKELETON.into());
+            attr(&query(&el(), ".cv-more"), "hidden", "");
+            let _ = set(&query(&el(), ".cv-typing"), "hidden", &true.into());
             self.head();
         }
         self.ticks.set(self.ticks.get().wrapping_add(1));
@@ -124,27 +136,92 @@ impl Chat {
             }
             let Ok(reply) = reply else { return };
             let v = to_json(&get(&reply, "body"));
+            me.age.set(v["age"].as_f64().unwrap_or(f64::MAX));
             if v["unchanged"] == true {
+                me.typing();
                 return;
             }
-            let feed = query(&el(), ".cv-feed");
             if v["agent"].is_null() {
-                let _ = set(&feed, "innerHTML", &"<p class=\"cv-empty\">Esta sesión no tiene un agente con historial (Claude o Codex). Usa la terminal.</p>".into());
+                me.shown.borrow_mut().clear();
+                let _ = set(&query(&el(), ".cv-list"), "innerHTML", &"<p class=\"cv-empty\">Esta sesión no tiene un agente con historial (Claude o Codex). Usa la terminal.</p>".into());
                 return;
             }
             me.token.replace(v["token"].as_str().unwrap_or("").into());
-            let pinned = number(&get(&feed, "scrollHeight"))
-                - number(&get(&feed, "scrollTop"))
-                - number(&get(&feed, "clientHeight"))
-                < 120.;
-            let first = since.is_empty();
-            let empty = Vec::new();
-            let html = render_messages(v["messages"].as_array().unwrap_or(&empty));
-            let _ = set(&feed, "innerHTML", &html.into());
-            if pinned || first {
-                let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
-            }
+            let messages = v["messages"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .map(|m| (m["r"].as_str().unwrap_or("t").to_owned(), m["h"].as_str().unwrap_or("").to_owned()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            me.messages.replace(messages);
+            me.draw(since.is_empty());
         });
+    }
+    /// Draws the visible slice into the list, rewriting only from the first message
+    /// that changed, and keeps the reader at the bottom when they were there.
+    fn draw(&self, first: bool) {
+        let feed = query(&el(), ".cv-feed");
+        let list = query(&el(), ".cv-list");
+        let pinned = first
+            || number(&get(&feed, "scrollHeight")) - number(&get(&feed, "scrollTop")) - number(&get(&feed, "clientHeight")) < 120.;
+        let messages = self.messages.borrow();
+        let folded = cut(&messages);
+        let from = if self.expanded.get() { 0 } else { folded };
+        for pending in all(&feed, ":scope > .cv-me.pending") {
+            let _ = call(&pending, "remove", &[]);
+        }
+        let slice = &messages[from..];
+        let mut shown = self.shown.borrow_mut();
+        let children = get(&list, "children");
+        let count = number(&get(&children, "length")) as usize;
+        let keep = if count == shown.len() {
+            shown.iter().zip(slice).take_while(|(a, b)| a == b).count()
+        } else {
+            0
+        };
+        if keep == 0 {
+            let html = if slice.is_empty() {
+                "<p class=\"cv-empty\">Sin conversación todavía. Escribe abajo o vuelve a la terminal.</p>".to_owned()
+            } else {
+                slice.iter().map(|(_, h)| h.as_str()).collect()
+            };
+            let _ = set(&list, "innerHTML", &html.into());
+        } else {
+            for i in (keep..count).rev() {
+                let _ = call(&get(&children, &i.to_string()), "remove", &[]);
+            }
+            let _ = call(&list, "insertAdjacentHTML", &["beforeend".into(), slice[keep..].iter().map(|(_, h)| h.as_str()).collect::<String>().into()]);
+        }
+        *shown = if slice.is_empty() { Vec::new() } else { slice.to_vec() };
+        let more = query(&el(), ".cv-more");
+        let _ = set(&more, "hidden", &(folded == 0).into());
+        let label = match (self.expanded.get(), folded) {
+            (true, _) => "Ocultar mensajes anteriores".to_owned(),
+            (false, 1) => "Ver 1 mensaje anterior".to_owned(),
+            (false, n) => format!("Ver {n} mensajes anteriores"),
+        };
+        let _ = set(&more, "textContent", &label.into());
+        drop(shown);
+        drop(messages);
+        self.typing();
+        if pinned {
+            let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
+        }
+    }
+    fn typing(&self) {
+        let busy = working(&self.messages.borrow(), self.age.get());
+        let _ = set(&query(&el(), ".cv-typing"), "hidden", &(!busy).into());
+    }
+    fn toggle_more(&self) {
+        let feed = query(&el(), ".cv-feed");
+        let from_bottom = number(&get(&feed, "scrollHeight")) - number(&get(&feed, "scrollTop"));
+        self.expanded.set(!self.expanded.get());
+        self.draw(false);
+        if self.expanded.get() {
+            let _ = set(&feed, "scrollTop", &(number(&get(&feed, "scrollHeight")) - from_bottom).into());
+        }
     }
     fn send(self: &Rc<Self>) {
         let area = query(&el(), ".cv-compose textarea");
@@ -155,15 +232,26 @@ impl Chat {
         }
         let _ = set(&area, "value", &"".into());
         let feed = query(&el(), ".cv-feed");
-        let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\">{}</div>", render_text(&value)).into()]);
+        let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\"><p>{}</p></div>", esc(&value)).into()]);
+        let _ = set(&query(&el(), ".cv-typing"), "hidden", &false.into());
+        let _ = call(&feed, "append", &[query(&el(), ".cv-typing")]);
         let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
+        let button = query(&el(), ".cv-compose button");
+        classes(&button, "busy", true);
         let me = self.clone();
         spawn_local(async move {
             let body = from_json(&json!({"session":session,"text":value})).unwrap_or(JsValue::NULL);
             match request("POST", "/send", body).await {
                 Ok(r) if number(&get(&r, "status")) < 300. => {}
-                _ => toast("No se pudo enviar el mensaje a la sesión"),
+                _ => {
+                    toast("No se pudo enviar el mensaje a la sesión");
+                    for pending in all(&query(&el(), ".cv-feed"), ":scope > .cv-me.pending") {
+                        let _ = call(&pending, "remove", &[]);
+                    }
+                }
             }
+            classes(&button, "busy", false);
+            me.age.set(0.);
             me.tick(true);
         });
     }
@@ -188,7 +276,7 @@ pub fn install() -> Result<(), JsValue> {
     if !truthy(&area) || truthy(&el()) {
         return Ok(());
     }
-    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><header class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div class="cv-feed" aria-live="polite"></div><div class="cv-keys" role="toolbar" aria-label="Teclas rápidas"><button type="button" class="y" data-cv-key="Enter">Sí</button><button type="button" class="n" data-cv-key="Escape">No</button><button type="button" data-cv-key="Escape">Esc</button><button type="button" data-cv-key="Up">↑</button><button type="button" data-cv-key="Down">↓</button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button><button type="button" data-cv-key="Tab">Tab</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></section>"#.into()])?;
+    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><header class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div class="cv-feed"><button type="button" class="cv-more" data-cv="more" hidden></button><div class="cv-list" aria-live="polite"></div><div class="cv-typing" role="status" aria-label="El agente está trabajando" hidden><i></i><i></i><i></i></div></div><div class="cv-keys" role="toolbar" aria-label="Teclas rápidas"><button type="button" class="y" data-cv-key="Enter">Sí</button><button type="button" class="n" data-cv-key="Escape">No</button><button type="button" data-cv-key="Escape">Esc</button><button type="button" data-cv-key="Up">↑</button><button type="button" data-cv-key="Down">↓</button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button><button type="button" data-cv-key="Tab">Tab</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></section>"#.into()])?;
     let open = id("tab-open");
     if truthy(&open) {
         call(&open, "insertAdjacentHTML", &["beforebegin".into(), format!(r#"<button type="button" id="tab-chat" class="tab-nav-btn" aria-pressed="false" aria-label="Ver como chat" title="Ver como chat">{BUBBLE}</button>"#).into()])?;
@@ -214,6 +302,7 @@ pub fn install() -> Result<(), JsValue> {
         match text(&get(&data, "cv")).as_str() {
             "prev" => step(-1),
             "next" => step(1),
+            "more" => me.toggle_more(),
             _ => {}
         }
         let key = text(&get(&data, "cvKey"));
@@ -278,98 +367,34 @@ fn has_term() -> bool {
 }
 }
 
-/// Inline markdown of one escaped line: `code`, **bold**.
-fn inline(line: &str) -> String {
-    let mut out = String::new();
-    for (j, seg) in line.split('`').enumerate() {
-        if j % 2 == 1 {
-            out.push_str(&format!("<code>{seg}</code>"));
-            continue;
-        }
-        for (k, b) in seg.split("**").enumerate() {
-            if k % 2 == 1 {
-                out.push_str(&format!("<b>{b}</b>"));
-            } else {
-                out.push_str(b);
-            }
-        }
-    }
-    out
+/// Where the collapsed view starts: the last agent answer (and what followed it), or
+/// the last prompt while no answer exists yet.
+pub fn cut(messages: &[(String, String)]) -> usize {
+    messages
+        .iter()
+        .rposition(|(r, _)| r == "a")
+        .or_else(|| messages.iter().rposition(|(r, _)| r == "u"))
+        .unwrap_or(0)
 }
-
-/// Escaped text with fenced code, headings, bullets, `code`, **bold** and line breaks.
-pub fn render_text(raw: &str) -> String {
-    let mut out = String::new();
-    for (i, part) in raw.split("```").enumerate() {
-        if i % 2 == 1 {
-            let body = part.split_once('\n').map_or(part, |(_, b)| b);
-            out.push_str(&format!("<pre>{}</pre>", esc(body.trim_end())));
-            continue;
-        }
-        let escaped = esc(part);
-        for (n, line) in escaped.split('\n').enumerate() {
-            let t = line.trim_start();
-            if let Some(h) = t.strip_prefix("### ").or(t.strip_prefix("## ")).or(t.strip_prefix("# ")) {
-                out.push_str(&format!("<b class=\"cv-h\">{}</b>", inline(h)));
-                continue;
-            }
-            if n > 0 {
-                out.push_str("<br>");
-            }
-            match t.strip_prefix("- ").or(t.strip_prefix("* ")) {
-                Some(item) => out.push_str(&format!("<span class=\"cv-li\">{}</span>", inline(item))),
-                None => out.push_str(&inline(line)),
-            }
-        }
-    }
-    out
+/// The agent is still on it: the transcript moved recently and does not end in an answer.
+pub fn working(messages: &[(String, String)], age: f64) -> bool {
+    age < 90. && messages.last().is_some_and(|(r, _)| r != "a")
 }
-pub fn render_messages(messages: &[Value]) -> String {
-    if messages.is_empty() {
-        return "<p class=\"cv-empty\">Sin conversación todavía. Escribe abajo o vuelve a la terminal.</p>".into();
-    }
-    let mut out = String::new();
-    for m in messages {
-        let t = m["t"].as_str().unwrap_or("");
-        match m["r"].as_str() {
-            Some("u") => out.push_str(&format!("<div class=\"cv-me\">{}</div>", render_text(t))),
-            Some("a") => out.push_str(&format!("<div class=\"cv-ai\">{}</div>", render_text(t))),
-            _ => {
-                out.push_str("<div class=\"cv-tool\">");
-                for line in t.lines() {
-                    out.push_str(&format!("<span>{}</span>", esc(line)));
-                }
-                out.push_str("</div>");
-            }
-        }
-    }
-    out
-}
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    #[test]
-    fn text_escapes_and_formats_light_markdown() {
-        assert_eq!(
-            render_text("<b>x</b> **ok** `a<b`\nfin"),
-            "&lt;b&gt;x&lt;/b&gt; <b>ok</b> <code>a&lt;b</code><br>fin"
-        );
-        assert_eq!(render_text("ver:\n```rust\nlet a = 1;\n```"), "ver:<br><pre>let a = 1;</pre>");
-        assert_eq!(
-            render_text("## Plan\n- uno\n- **dos**"),
-            "<b class=\"cv-h\">Plan</b><br><span class=\"cv-li\">uno</span><br><span class=\"cv-li\"><b>dos</b></span>"
-        );
+    fn m(r: &str, t: &str) -> (String, String) {
+        (r.into(), t.into())
     }
     #[test]
-    fn roles_render_as_bubbles_and_tool_lines() {
-        let html = render_messages(&[
-            json!({"r":"u","t":"hola"}),
-            json!({"r":"t","t":"Bash · ls\nRead · a.rs"}),
-            json!({"r":"a","t":"listo"}),
-        ]);
-        assert_eq!(html, "<div class=\"cv-me\">hola</div><div class=\"cv-tool\"><span>Bash · ls</span><span>Read · a.rs</span></div><div class=\"cv-ai\">listo</div>");
+    fn collapsed_view_starts_at_the_last_answer() {
+        let list = [m("u", "a"), m("a", "b"), m("u", "c"), m("t", "Bash"), m("a", "d"), m("t", "Read")];
+        assert_eq!(cut(&list), 4);
+        assert_eq!(cut(&list[..4]), 1);
+        assert_eq!(cut(&[m("t", "x"), m("u", "y")]), 1);
+        assert!(working(&list, 5.));
+        assert!(!working(&list, 600.));
+        assert!(!working(&list[..5], 5.));
     }
 }

@@ -146,12 +146,18 @@ paned separator { background: @LINE@; min-width: 2px; }
 /* Vista chat (escritorio): la conversación del agente en lugar de la terminal. */
 .cv-root { background-color: @BG@; }
 .cv-title { padding: 8px 14px; color: @TEXT@; font-weight: 600; border-bottom: 1px solid @LINE@; background-color: @BAR@; }
-.cv-list { padding: 14px 18px; }
-.cv-me { background-color: @BRAND@; padding: 9px 14px; border-radius: 16px 16px 4px 16px; margin-left: 80px; }
+.cv-feed { padding: 16px 20px 20px; }
+.cv-me { background-color: @BRAND@; padding: 10px 15px; border-radius: 18px 18px 4px 18px; margin-left: 80px; }
 .cv-me .cv-text { color: #ffffff; }
-.cv-ai { background-color: @BAR@; padding: 11px 15px; border-radius: 16px 16px 16px 4px; border: 1px solid @LINE@; margin-right: 60px; }
+.cv-ai { background-color: @BAR@; padding: 13px 17px; border-radius: 18px 18px 18px 4px; border: 1px solid @LINE@; margin-right: 60px; }
 .cv-text { color: @TEXT@; font-size: 14px; }
-.cv-code { font-family: monospace; font-size: 12px; color: @TEXT@; background-color: @BG@; border: 1px solid @LINE@; border-radius: 8px; padding: 8px 10px; }
+.cv-code { font-family: monospace; font-size: 12px; color: @TEXT@; background-color: @BG@; border: 1px solid @LINE@; border-radius: 10px; padding: 10px 12px; }
+.cv-table { border: 1px solid @LINE@; border-radius: 8px; }
+.cv-cell { color: @TEXT@; font-size: 13px; padding: 6px 9px; border-right: 1px solid @LINE@; border-bottom: 1px solid @LINE@; }
+.cv-more { background-image: none; background-color: @BAR@; color: @DIM@; border: 1px solid @LINE2@; border-radius: 999px; padding: 4px 16px; font-weight: 600; font-size: 12px; }
+.cv-more:hover { color: @TEXT@; border-color: @BRAND@; }
+.cv-typing { background-color: @BAR@; border: 1px solid @LINE@; border-radius: 18px 18px 18px 4px; padding: 9px 15px; color: @DIM@; font-size: 13px; }
+.cv-loading { padding: 40px 0; color: @DIM@; }
 .cv-tool { color: @FAINT@; font-family: monospace; font-size: 11px; padding: 2px 10px; border-left: 2px solid @LINE2@; }
 .cv-keys { padding: 6px 10px; border-top: 1px solid @LINE@; background-color: @BAR@; }
 .cv-key { background-image: none; background-color: @BG@; color: @TEXT@; border: 1px solid @LINE2@; border-radius: 8px; min-height: 30px; min-width: 40px; padding: 0 10px; font-family: monospace; font-weight: 600; }
@@ -162,4 +168,5 @@ paned separator { background: @LINE@; min-width: 2px; }
 .cv-input, .cv-input text { background-color: @BG@; color: @TEXT@; }
 .cv-input { border: 1px solid @LINE2@; border-radius: 10px; padding: 8px 10px; min-height: 40px; font-size: 14px; }
 .cv-send { background-image: none; background-color: @BRAND@; color: #ffffff; border: 0; border-radius: 10px; padding: 0 16px; font-weight: 600; }
+.cv-send:disabled { opacity: 0.6; }
 .cc-key.cv-on { background-color: mix(@BAR@, @BRAND@, 0.22); }

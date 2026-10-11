@@ -7,6 +7,7 @@ use comandos_runtime::{
     session_configuration,
 };
 use http::StatusCode;
+use comandos_web_view::chat_markdown::render_message;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -97,7 +98,8 @@ pub fn parse(records: &str) -> Vec<(&'static str, String)> {
         let Ok(record) = serde_json::from_str::<Value>(row) else {
             continue;
         };
-        if record["isSidechain"] == true || record["isMeta"] == true {
+        // Compaction summaries are context for the model, not something the person said.
+        if record["isSidechain"] == true || record["isMeta"] == true || record["isCompactSummary"] == true {
             continue;
         }
         if record["type"] == "response_item" {
@@ -260,16 +262,18 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
             return json!({"ok":true,"agent":null,"messages":[]});
         };
         let token = format!("{}:{}:{}", meta.ino(), meta.len(), meta.mtime_nsec());
+        // Seconds since the transcript last moved; clients show «working» while it is fresh.
+        let age = meta.modified().ok().and_then(|m| m.elapsed().ok()).map_or(0, |d| d.as_secs());
         if token == since {
-            return json!({"ok":true,"unchanged":true,"token":token,"pane":pane});
+            return json!({"ok":true,"unchanged":true,"token":token,"pane":pane,"age":age});
         }
         let messages: Vec<Value> = read_tail(&path)
             .map(|records| parse(&records))
             .unwrap_or_default()
             .into_iter()
-            .map(|(r, t)| json!({"r":r,"t":t}))
+            .map(|(r, t)| json!({"r":r,"h":render_message(r, &t),"t":t}))
             .collect();
-        json!({"ok":true,"agent":agent,"pane":pane,"token":token,"messages":messages})
+        json!({"ok":true,"agent":agent,"pane":pane,"token":token,"age":age,"messages":messages})
     })
     .await
     .map_err(|_| super::Fault::Error(crate::HandlerError::Failure))?;
@@ -288,6 +292,7 @@ mod tests {
             r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a.rs"}}]}}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
             r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"sub"}]}}"#,
+            r#"{"type":"user","isCompactSummary":true,"message":{"content":"This session is being continued"}}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Listo."}]}}"#,
         ]
         .join("\n");
