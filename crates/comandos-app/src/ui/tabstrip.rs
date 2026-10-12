@@ -331,11 +331,13 @@ impl TabStripLayout {
         if r.width() <= 1 {
             return;
         }
-        if f64::from(r.x()) < a.value() {
-            a.set_value(f64::from(r.x()));
-        } else if f64::from(r.x() + r.width()) > a.value() + a.page_size() {
-            a.set_value(f64::from(r.x() + r.width()) - a.page_size());
-        }
+        // The active tab sits in the middle of the strip, like the remote carousel.
+        let center = f64::from(r.x()) + f64::from(r.width()) / 2. - a.page_size() / 2.;
+        a.set_value(
+            center
+                .max(a.lower())
+                .min((a.upper() - a.page_size()).max(a.lower())),
+        );
     }
     fn attach(&self) {
         for (_, item) in self.0.items.borrow().iter() {

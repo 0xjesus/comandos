@@ -59,7 +59,7 @@ fn make_tab(
     }
     if !truthy(&query(t, ".lbl")) || get(t, "_closable") != closable {
         set(t, "_closable", &closable.into())?;
-        set(t,"innerHTML",&format!("<span class=\"dot\"></span><span class=\"lbl\"></span><span class=\"mdl\"></span><span class=\"ws-count\" hidden></span>{}",if closable{"<button type=\"button\" class=\"tab-fav\"></button><span class=\"x\">×</span>"}else{""}).into())?;
+        set(t,"innerHTML",&format!("<span class=\"dot\"></span><span class=\"lbl\"></span><span class=\"mdl\"></span><span class=\"ws-count\" hidden></span>{}",if closable{"<span class=\"x\">×</span>"}else{""}).into())?;
         let tab = t.clone();
         set(
             t,
@@ -277,7 +277,16 @@ fn render_bar() -> Result<(), JsValue> {
             call(&bar, "insertBefore", &[el, default(next, JsValue::NULL)])?;
         }
     }
+    // Center the active tab whenever it changes, whatever changed it (arrows, swipe,
+    // another device); repeated renders of the same tab leave manual scrolling alone.
+    let key = text(&selected);
+    if CENTERED.with(|c| c.replace(key.clone())) != key {
+        reveal(bar)?;
+    }
     navigation()
+}
+thread_local! {
+    static CENTERED: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 // Compatibility hook: CSS owns the row height, including viewport shrinkage.
 fn hold_height() -> Result<(), JsValue> {
@@ -314,19 +323,28 @@ fn reveal(bar: JsValue) -> Result<(), JsValue> {
             }
             let target = call(&tab, "getBoundingClientRect", &[])?;
             let bounds = call(&bar, "getBoundingClientRect", &[])?;
+            if number(&get(&bounds, "width")) < 1.0 {
+                // Not laid out yet: let the next render center it.
+                CENTERED.with(|c| c.borrow_mut().clear());
+                return Ok(JsValue::UNDEFINED);
+            }
             let (start, end, scroll) = if has_class(&body(), "tabs-rows") {
                 ("top", "bottom", "scrollTop")
             } else {
                 ("left", "right", "scrollLeft")
             };
-            let shift = if number(&get(&target, start)) < number(&get(&bounds, start)) {
+            // A single row keeps the active tab in the middle; the grid only scrolls it into view.
+            let shift = if scroll == "scrollLeft" {
+                (number(&get(&target, start)) + number(&get(&target, end))) / 2.0
+                    - (number(&get(&bounds, start)) + number(&get(&bounds, end))) / 2.0
+            } else if number(&get(&target, start)) < number(&get(&bounds, start)) {
                 number(&get(&target, start)) - number(&get(&bounds, start))
             } else if number(&get(&target, end)) > number(&get(&bounds, end)) {
                 number(&get(&target, end)) - number(&get(&bounds, end))
             } else {
                 0.0
             };
-            if shift != 0.0 {
+            if shift.abs() >= 1.0 {
                 set(&bar, scroll, &(number(&get(&bar, scroll)) + shift).into())?;
             }
             navigation()?;
@@ -945,7 +963,7 @@ fn init_sort() -> Result<(), JsValue> {
             set(&menu, "className", &"tab-sort-menu".into())?;
             attr(&menu, "role", "menu");
             set(&state, "menu", &menu)?;
-            set(&menu,"innerHTML",&format!("{}{}",[("fav","★ Favoritas primero"),("recent","⏱ Actividad reciente"),("need","▶ Te necesita primero"),("alpha","A→Z")].iter().map(|(k,label)|format!("<button type=\"button\" role=\"menuitem\" data-sort=\"{k}\">{label}</button>")).collect::<String>(),if truthy(&get(&state,"previous")){format!("<button type=\"button\" role=\"menuitem\" data-sort=\"undo\">↶ {}</button>",text(&translate("Deshacer","Undo")))}else{String::new()}).into())?;
+            set(&menu,"innerHTML",&format!("{}{}",[("recent","⏱ Actividad reciente"),("need","▶ Te necesita primero"),("alpha","A→Z")].iter().map(|(k,label)|format!("<button type=\"button\" role=\"menuitem\" data-sort=\"{k}\">{label}</button>")).collect::<String>(),if truthy(&get(&state,"previous")){format!("<button type=\"button\" role=\"menuitem\" data-sort=\"undo\">↶ {}</button>",text(&translate("Deshacer","Undo")))}else{String::new()}).into())?;
             let rect = call(&b, "getBoundingClientRect", &[])?;
             set(
                 &get(&menu, "style"),

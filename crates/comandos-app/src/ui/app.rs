@@ -181,29 +181,8 @@ impl App {
         plus.style_context().add_class("cc-key");
         plus.style_context().add_class("cc-key-plus");
         self.tab_layout.actions().pack_start(&plus, false, false, 0);
-        let quick = ui::icons::button("terminal", 16, "Terminal en carpeta nueva fechada");
-        quick.style_context().add_class("cc-key");
-        quick.style_context().add_class("cc-key-term");
-        let weak = Rc::downgrade(self);
-        quick.connect_clicked(move |_| {
-            if let Some(app) = weak.upgrade() {
-                app.quick_terminal();
-            }
-        });
-        self.tab_layout
-            .actions()
-            .pack_start(&quick, false, false, 0);
-        self.tab_layout.actions().reorder_child(&quick, 0);
-        let sort = ui::icons::button("arrow-up-down", 16, "Ordenar pestañas una vez");
-        sort.style_context().add_class("cc-key");
-        sort.style_context().add_class("cc-key-sort");
-        let weak = Rc::downgrade(self);
-        sort.connect_clicked(move |button| {
-            if let Some(app) = weak.upgrade() {
-                app.sort_menu(Some(button.upcast_ref()));
-            }
-        });
-        self.tab_layout.actions().pack_start(&sort, false, false, 0);
+        // Quick terminal and sort buttons are retired (11-oct): «+» is the only way to
+        // create, and its dialog has «Solo terminal».
         let rows = ui::icons::button("rows", 18, "Varias filas");
         rows.set_widget_name("tabs-layout-rows");
         rows.style_context().add_class("cc-key");

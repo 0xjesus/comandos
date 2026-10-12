@@ -524,6 +524,10 @@ fn indicator(host: JsValue, target: JsValue, before: JsValue) -> Result<(), JsVa
     Ok(())
 }
 fn decorate() -> Result<JsValue, JsValue> {
+    // Status lights and favorites are retired (11-oct): tabs and rows carry no indicator.
+    if true {
+        return Ok(JsValue::UNDEFINED);
+    }
     for tab in all(&doc(), "#tabbar .apptab") {
         let session = get(&tab, "_session");
         let k = string(&get(&get(&tab, "dataset"), "tabKey"));

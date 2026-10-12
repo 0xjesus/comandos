@@ -42,6 +42,8 @@ impl TabLabel {
         let dot = gtk::EventBox::new();
         dot.set_visible_window(false);
         dot.add(&indicator);
+        // Status lights are retired (11-oct): the AI indicator never shows.
+        dot.set_no_show_all(true);
         row.pack_start(&dot, false, false, 0);
         let text = gtk::Label::new(Some(text));
         text.set_xalign(0.);
@@ -74,15 +76,8 @@ impl TabLabel {
             row.pack_start(&b, false, false, 0);
             b
         });
-        let favorite = (!local).then(|| {
-            let b = gtk::Button::with_label("☆");
-            b.set_relief(gtk::ReliefStyle::None);
-            b.set_focus_on_click(false);
-            b.style_context().add_class("tabfav");
-            b.set_valign(gtk::Align::Center);
-            row.pack_start(&b, false, false, 0);
-            b
-        });
+        // Favorites are retired (11-oct): no star on tabs.
+        let favorite: Option<gtk::Button> = None;
         let close = closable.then(|| {
             let b = gtk::Button::new();
             b.set_image(Some(&super::icons::image("close", 12, "#AAAAAA")));
@@ -187,6 +182,14 @@ impl TabLabel {
     }
     pub fn paint(&self, seconds: f64) {
         self.last_seconds.set(seconds);
+        // Hecho / Aparcado / Esperando and «¿Hecho? ✓» are retired (11-oct).
+        self.sticker.hide();
+        if let Some(suggest) = &self.suggest {
+            suggest.hide();
+        }
+        if !self.dot.is_visible() {
+            return;
+        }
         self.paint_favorite(seconds);
         use comandos_core::work_marks as marks;
         let state = marks::ai_status(&self.state.borrow());
@@ -216,11 +219,6 @@ impl TabLabel {
             "IA: {}",
             marks::ai_label(state, self.english.get())
         )));
-        // Hecho / Aparcado / Esperando and «¿Hecho? ✓» are retired (11-oct).
-        self.sticker.hide();
-        if let Some(suggest) = &self.suggest {
-            suggest.hide();
-        }
     }
     fn paint_favorite(&self, seconds: f64) {
         if !self.favorite_on.get() {

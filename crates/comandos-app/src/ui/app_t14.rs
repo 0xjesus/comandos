@@ -1,6 +1,7 @@
 //! Adaptadores de Task14, con propietario débil y respuestas versionadas.
 use super::*;
 use webkit2gtk::{SettingsExt, WebViewExt};
+const SHOW_FAVORITES: bool = false;
 impl App {
     pub(in crate::ui) fn install_header(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
@@ -289,6 +290,9 @@ impl App {
     ) {
         let menu = gtk::Menu::new();
         self.append_mark_menu(&menu, session, pane);
+        if menu.children().is_empty() {
+            return;
+        }
         menu.show_all();
         menu.popup_at_pointer(Some(event));
     }
@@ -307,6 +311,10 @@ impl App {
         pane: Option<&str>,
         allowed: Rc<dyn Fn() -> bool>,
     ) {
+        // Favorites are retired (11-oct): the work-mark section is empty.
+        if !SHOW_FAVORITES {
+            return;
+        }
         let mut sections = Vec::new();
         if !session.is_empty() && session != "local" {
             sections.push((

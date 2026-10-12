@@ -1106,7 +1106,7 @@
   .apptab .tab-fav:focus-visible{outline:2px solid var(--brand);outline-offset:-3px;border-radius:4px}
   .apptab .tab-fav:disabled{opacity:.5;cursor:wait}
   @media(pointer:coarse){.apptab .tab-fav{width:44px}}
-  .apptab .dot{width:7px;height:7px;border-radius:50%;flex:none;box-shadow:0 0 6px currentColor}
+  .apptab .dot{display:none}
   .apptab.plus{font-size:18px;color:var(--faint);padding:8px 15px}
   .apptab.plus:hover{color:var(--brand)}
   #panes{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
@@ -1465,7 +1465,9 @@ body.app #app-navigation #tabbar{order:9;flex:1 0 100%;display:flex;height:auto;
 }
 /* Tablet con «varias filas»: las pestañas bajan a su rejilla y la fila de botones quedaba
    amontonada a la izquierda; ordenar, filas, chat y sesiones van a la derecha. */
-@media (min-width:748px){body.app.tabs-rows #app-navigation > #tab-sort{margin-left:auto}}
+/* Quick terminal and sort are retired (11-oct): «+» creates, its dialog has «Solo terminal». */
+#tab-term,#tab-sort,#btn-terminal{display:none!important}
+@media (min-width:748px){body.app.tabs-rows #app-navigation > #tab-rows{margin-left:auto}}
 </style>
 <link rel="stylesheet" href="/workspace.css?v=sin-ia1">
 <link rel="stylesheet" href="/buttons.css?v=2">
@@ -1597,6 +1599,7 @@ body.app #app-navigation #tabbar{order:9;flex:1 0 100%;display:flex;height:auto;
     <div class="ns-actions">
       <button type="button" id="ns-cancel">Cancelar</button>
       <span id="ns-profile-note" class="sc-note">Sin perfil</span><button type="button" id="ns-profile-open" class="sc-btn">Elegir perfil</button><button type="button" id="ns-profile-clear" class="sc-btn">Quitar perfil</button>
+      <button type="button" id="ns-term" title="Abrir una terminal simple en esta carpeta, sin agente">Solo terminal</button>
       <button type="button" id="ns-go" class="primary">Crear</button>
     </div>
   </div>

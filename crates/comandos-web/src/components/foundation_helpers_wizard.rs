@@ -817,6 +817,20 @@ pub fn attach() -> Result<(), JsValue> {
         }),
     );
     listen(
+        &id("ns-term"),
+        "click",
+        event(|_| {
+            wasm_bindgen_futures::spawn_local(async {
+                // Plain shell in the chosen folder; the agent choice is kept for next time.
+                let previous = get(&ns(), "harness");
+                put("harness", "shell".into());
+                let _ = go().await;
+                put("harness", previous);
+            });
+            Ok(())
+        }),
+    );
+    listen(
         &id("ns-go"),
         "click",
         event(|_| {
