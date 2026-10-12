@@ -1355,7 +1355,7 @@ html[data-native-side-term] #command-sidebar .sec-terms{display:none}
 html[data-native-side-term] #command-sidebar .sec-cmds{flex:1 1 auto!important}
 /* Vista Chat (grill móvil 10-oct): conversación del agente sobre la terminal, ‹ › y deslizar
    cambian de sesión. La terminal sigue conectada detrás pero no se pinta.
-   Cabecera ‹ sesión › y barra inferior (teclas + borrador) son de las dos vistas: van fuera de
+   Cabecera ‹ sesión › (solo en chat, 11-oct) y barra inferior (teclas + borrador) son de las dos vistas: van fuera de
    #term-area, en filas propias de #panes; la terminal oculta su barra («dock», 11-oct). */
 #cv-head,#cv-dock{display:none}
 body.app.chat-on #term-area.on~#cv-head{display:flex}
@@ -1434,8 +1434,6 @@ body.chat-on .termpane{visibility:hidden}
 #cv-dock .cv-compose textarea{flex:1;min-width:0;min-height:44px;max-height:30dvh;resize:none;field-sizing:content;padding:11px 14px;border-radius:14px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:16px/1.3 var(--sans)}
 #cv-dock .cv-compose textarea:focus{outline:none;border-color:var(--brand)}
 #cv-dock .cv-compose button{flex:none;width:44px;height:44px;border:0;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;cursor:pointer}
-#cv-dock .cv-compose .cv-insert{width:auto;padding:0 14px;border:1px solid var(--line2);border-radius:14px;background:var(--bg);color:var(--dim);font:600 13px var(--sans)}
-#cv-dock .cv-compose .cv-insert:hover{color:var(--text);border-color:var(--brand)}
 /* Carrusel en celular: aunque la preferencia sea «varias filas», la lista no se come la
    pantalla; las sesiones son una tira de píldoras que se desliza de lado. */
 @media (max-width:747px){
@@ -1453,7 +1451,6 @@ body.app #app-navigation #tabbar{order:9;flex:1 0 100%;display:flex;height:auto;
   body.app.tabs-rows :is(#tab-left,#tab-panel,#tab-term,#tab-new,#tab-sort,#tab-rows,#tab-open){align-self:center}
   body.app #app-navigation :is(#tab-sort,#tab-rows){display:none}
   body.app .apptab:not(.on) .x{display:none}
-  body.app #term-area.on~#cv-head{display:flex}
 }
 /* Tablet con «varias filas»: las pestañas bajan a su rejilla y la fila de botones quedaba
    amontonada a la izquierda; ordenar, filas, chat y sesiones van a la derecha. */

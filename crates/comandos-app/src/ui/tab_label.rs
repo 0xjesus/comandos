@@ -216,24 +216,10 @@ impl TabLabel {
             "IA: {}",
             marks::ai_label(state, self.english.get())
         )));
-        let mark = self.mark.borrow();
-        let text = marks::sticker(mark.as_str());
-        for m in ["frozen", "awaiting_reply", "resolved"] {
-            self.sticker
-                .style_context()
-                .remove_class(&format!("st-{m}"));
-        }
-        if let Some(text) = text {
-            self.sticker.set_text(text);
-            self.sticker
-                .style_context()
-                .add_class(&format!("st-{mark}"));
-            self.sticker.show();
-        } else {
-            self.sticker.hide();
-        }
+        // Hecho / Aparcado / Esperando and «¿Hecho? ✓» are retired (11-oct).
+        self.sticker.hide();
         if let Some(suggest) = &self.suggest {
-            suggest.set_visible(state == "done" && text.is_none());
+            suggest.hide();
         }
     }
     fn paint_favorite(&self, seconds: f64) {

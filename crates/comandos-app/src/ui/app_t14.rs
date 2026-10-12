@@ -340,36 +340,7 @@ impl App {
                 menu.append(&head);
             }
             let row = self.work_marks.borrow().row(scope, key);
-            for mark in comandos_core::work_marks::MARKS {
-                let item = ui::marks::menu_item(
-                    mark,
-                    comandos_core::work_marks::label(mark, self.english).unwrap_or(""),
-                    row.get("mark").and_then(Value::as_str) == Some(mark),
-                );
-                let weak = Rc::downgrade(self);
-                let key = key.clone();
-                let scope = *scope;
-                let session = session.to_string();
-                let pane = pane.map(str::to_string);
-                let allowed = allowed.clone();
-                item.connect_activate(move |_| {
-                    if let Some(app) = weak.upgrade().filter(|a| a.writable() && allowed()) {
-                        if scope == "pane"
-                            && pane.as_deref().is_none_or(|p| {
-                                app.work_marks.borrow().pane_key(&session, p).as_deref()
-                                    != Some(&key)
-                            })
-                        {
-                            app.status
-                                .set_text("El pane cambió; abre de nuevo el menú.");
-                            return;
-                        }
-                        app.set_work_mark(scope, &key, &json!(mark));
-                    }
-                });
-                menu.append(&item);
-            }
-            menu.append(&gtk::SeparatorMenuItem::new());
+            // Hecho / Aparcado / Esperando are retired (11-oct); only the favorite stays.
             let enabled = if *scope == "pane" {
                 row.get("favorite")
                     .and_then(Value::as_bool)

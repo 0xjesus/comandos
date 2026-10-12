@@ -45,7 +45,7 @@ struct Chat {
     titled: RefCell<String>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
-const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="button" class="cv-insert" data-cv="insert" title="Insertar en la terminal sin Enter">Insertar</button><button type="submit" aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
+const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
 const SKELETON: &str = "<div class=\"cv-skel\" role=\"status\" aria-label=\"Cargando conversación\"><i></i><i></i><i></i></div>";
 
 fn text(v: &JsValue) -> String {
@@ -267,7 +267,13 @@ impl Chat {
         let area = query(&id("cv-dock"), "textarea");
         let value = text(&get(&area, "value"));
         let session = text(&global("activeTerm"));
-        if value.trim().is_empty() || session.is_empty() {
+        if session.is_empty() {
+            return;
+        }
+        // An empty draft makes the arrow a plain Enter: confirms the option highlighted in
+        // the agent's menu (a model, a permission, …).
+        if value.trim().is_empty() {
+            self.press("yes");
             return;
         }
         let _ = set(&area, "value", &"".into());
@@ -297,25 +303,13 @@ impl Chat {
             me.tick(true);
         });
     }
-    /// Inserts the draft into the terminal without Enter.
-    fn insert(&self) {
-        let area = query(&id("cv-dock"), "textarea");
-        let value = text(&get(&area, "value"));
-        if value.is_empty() {
-            return;
-        }
-        if toolbar(json!({"type":"paste","text":value})) {
-            let _ = set(&area, "value", &"".into());
-        } else {
-            toast("Abre una sesión primero");
-        }
-    }
     /// A terminal key: sent by the session's frame (it stays connected under the chat).
     fn press(&self, key: &str) {
         if toolbar(json!({"type":"toolbar","key":key})) {
             return;
         }
         match key {
+            "yes" => self.key("Enter"),
             "escape" => self.key("Escape"),
             "tab" => self.key("Tab"),
             "up" => self.key("Up"),
@@ -421,7 +415,6 @@ pub fn install() -> Result<(), JsValue> {
                 me.tick(true);
             }
             "more" => me.toggle_more(),
-            "insert" => me.insert(),
             _ => {}
         }
         let key = text(&get(&data, "cvKey"));

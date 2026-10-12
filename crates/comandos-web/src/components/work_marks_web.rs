@@ -169,8 +169,10 @@ fn paint(button: JsValue, target: JsValue) -> Result<JsValue, JsValue> {
     let mark = string(&get(&r, "mark"));
     let c = channels(&mark, activity.as_str().unwrap_or_default());
     let ai = c.get("ai").and_then(Value::as_str).unwrap_or("idle");
-    let sticker = c.get("sticker").and_then(Value::as_str);
-    let suggest = c.get("suggest").and_then(Value::as_bool).unwrap_or(false);
+    // Hecho / Aparcado / Esperando and «¿Hecho? ✓» are retired (11-oct): the tab only
+    // shows the AI state and the star.
+    let sticker: Option<&str> = None;
+    let suggest = false;
     let fav = scope == "pane" && truthy(&get(&r, "favorite"));
     let signature = format!("{ai}|{}|{suggest}|{fav}", sticker.unwrap_or_default());
     set(&button, "_wmTarget", &target)?;
@@ -342,11 +344,9 @@ fn open_menu(button: JsValue) -> Result<JsValue, JsValue> {
     close_menu(false)?;
     let scope = string(&get(&target, "scope"));
     let name = string(&get(&target, "key"));
-    let items = from_json(&view::menu_items(
-        &scope,
-        &to_json(&row(&scope, &name)),
-        favorite(&name),
-        english(),
+    let items = view::menu_items(&scope, &to_json(&row(&scope, &name)), favorite(&name), english());
+    let items = from_json(&Value::Array(
+        items.as_array().into_iter().flatten().filter(|i| i["kind"] != "mark").cloned().collect(),
     ))?;
     let el = call(&doc(), "createElement", &["div".into()])?;
     set(&el, "className", &"wm-menu".into())?;
