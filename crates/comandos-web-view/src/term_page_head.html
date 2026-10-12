@@ -98,6 +98,8 @@
   #paste-dialog button { background:var(--term-panel2); border:1px solid var(--term-line2); color:var(--term-text);
     border-radius:4px; padding:6px 10px; font:inherit; }
   #paste-dialog button:hover { border-color:var(--term-brand); }
+  /* Remoto: la barra de teclas y el borrador los dibuja la página padre (una sola barra en chat y terminal). */
+  html.docked #term-toolbar, html.docked #mobile-compose { display:none !important; }
   #mobile-compose { display:flex; gap:6px; padding:6px; border-top:1px solid var(--term-line2); background:var(--term-panel); min-width:0; }
   #mobile-draft { flex:1; min-width:0; resize:none; max-height:25dvh; box-sizing:border-box; padding:8px;
     border:1px solid var(--term-line2); border-radius:4px; background:var(--term-bg); color:var(--term-text);

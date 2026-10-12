@@ -289,21 +289,9 @@ impl App {
         scroll.add(&feed);
         let keys = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         keys.style_context().add_class("cv-keys");
-        for (label, key, class) in [
-            ("Sí", "Enter", "cv-yes"),
-            ("No", "Escape", "cv-no"),
-            ("Esc", "Escape", ""),
-            ("↑", "Up", ""),
-            ("↓", "Down", ""),
-            ("1", "1", ""),
-            ("2", "2", ""),
-            ("Tab", "Tab", ""),
-        ] {
+        for (label, key) in [("Esc", "Escape"), ("↑", "Up"), ("↓", "Down"), ("1", "1"), ("2", "2"), ("Tab", "Tab")] {
             let button = gtk::Button::with_label(label);
             button.style_context().add_class("cv-key");
-            if !class.is_empty() {
-                button.style_context().add_class(class);
-            }
             let weak = Rc::downgrade(self);
             button.connect_clicked(move |_| {
                 if let Some(app) = weak.upgrade() {

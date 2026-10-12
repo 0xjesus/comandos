@@ -17,6 +17,14 @@ pub enum Command {
     Ctrl,
     Focus,
     Mode(bool),
+    /// The parent page draws the keys and composer; hide this page's own and keep
+    /// focus where the parent has it.
+    Dock(bool),
+    /// A toolbar action button pressed from the parent's bar.
+    Action(String),
+}
+pub fn toolbar_action(action: &str) -> bool {
+    matches!(action, "mode" | "panes" | "history" | "copy" | "paste" | "keyboard" | "ctrl")
 }
 pub fn button_style(style: &str) -> bool {
     matches!(style, "sutil" | "arcade" | "tecla" | "pixel" | "consola")
@@ -49,6 +57,7 @@ pub fn command(data: &Value) -> Option<Command> {
             Command::ButtonStyle(s)
         }
         "session" => Command::Session(text("session")?),
+        "dock" => Command::Dock(comandos_web_dom::api::js_truthy(&data["on"])),
         "select-pane" => {
             let s = text("pane")?;
             if !pane_id(&s) {
@@ -73,6 +82,13 @@ pub fn command(data: &Value) -> Option<Command> {
                 "ctrl" => Command::Ctrl,
                 "focus" => Command::Focus,
                 "mode" => Command::Mode(comandos_web_dom::api::js_truthy(&t["selecting"])),
+                "action" => {
+                    let action = t.get("action")?.as_str()?;
+                    if !toolbar_action(action) {
+                        return None;
+                    }
+                    Command::Action(action.into())
+                }
                 _ => return None,
             }
         }
@@ -116,6 +132,22 @@ mod tests {
         }
         assert_eq!(control_byte(b"1"), None);
         assert_eq!(control_byte(b"abc"), None);
+    }
+    #[test]
+    fn dock_and_actions_validate() {
+        let m = |v| command(&v);
+        assert_eq!(
+            m(serde_json::json!({"source":"comandos","type":"dock","on":true})),
+            Some(Command::Dock(true))
+        );
+        assert_eq!(
+            m(serde_json::json!({"source":"comandos","type":"toolbar","term":{"type":"action","action":"history"}})),
+            Some(Command::Action("history".into()))
+        );
+        assert!(
+            m(serde_json::json!({"source":"comandos","type":"toolbar","term":{"type":"action","action":"x');"}}))
+                .is_none()
+        );
     }
     #[test]
     fn cursor_style_messages_validate_before_applying() {

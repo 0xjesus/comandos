@@ -1,5 +1,8 @@
 //! Chat view over the terminal area: the session's agent transcript as a conversation,
-//! a composer that types into its pane, and ‹ › / swipe to move between sessions.
+//! and ‹ › / swipe to move between sessions.
+//! The session header (‹ name ›) and the bottom bar (keys + composer) live outside the
+//! view and serve both modes: in the terminal the page inside the frame hides its own bar
+//! (`dock`) and the keys and actions are forwarded to it.
 //! One 1 s timer; it fetches only while the view is visible and the page is shown, and
 //! the server answers `unchanged` when the transcript did not move.
 #[cfg(target_arch = "wasm32")]
@@ -38,7 +41,11 @@ struct Chat {
     messages: RefCell<Vec<(String, String)>>,
     shown: RefCell<Vec<(String, String)>>,
     age: Cell<f64>,
+    /// Session whose name the header shows.
+    titled: RefCell<String>,
 }
+/// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
+const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="button" class="cv-insert" data-cv="insert" title="Insertar en la terminal sin Enter">Insertar</button><button type="submit" aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
 const SKELETON: &str = "<div class=\"cv-skel\" role=\"status\" aria-label=\"Cargando conversación\"><i></i><i></i><i></i></div>";
 
 fn text(v: &JsValue) -> String {
@@ -54,6 +61,32 @@ fn tabs() -> Vec<String> {
         .filter(|t| t.starts_with("term:"))
         .collect()
 }
+/// The active session's terminal frame (null when none is open).
+fn frame() -> JsValue {
+    let active = global("activeTerm");
+    if !truthy(&active) {
+        return JsValue::NULL;
+    }
+    get(&call(&global("openTerms"), "get", &[active]).unwrap_or(JsValue::NULL), "frame")
+}
+fn post(frame: &JsValue, message: serde_json::Value) -> bool {
+    let window = get(frame, "contentWindow");
+    truthy(&window)
+        && from_json(&message)
+            .and_then(|m| call(&window, "postMessage", &[m, get(&global("location"), "origin")]))
+            .is_ok()
+}
+fn toolbar(term: serde_json::Value) -> bool {
+    post(&frame(), json!({"source":"comandos","type":"toolbar","term":term}))
+}
+const DOCK: &str = r#"{"source":"comandos","type":"dock","on":true}"#;
+fn dock_all() {
+    let frames = invoke(&get(&global("Array"), "from"), &[call(&global("openTerms"), "values", &[]).unwrap_or(JsValue::NULL)])
+        .unwrap_or(JsValue::NULL);
+    for i in 0..number(&get(&frames, "length")) as u32 {
+        let _ = post(&get(&get(&frames, &i.to_string()), "frame"), serde_json::from_str(DOCK).unwrap_or_default());
+    }
+}
 fn step(delta: i32) {
     let list = tabs();
     if list.is_empty() {
@@ -66,8 +99,7 @@ fn step(delta: i32) {
 }
 
 impl Chat {
-    fn head(&self) {
-        let session = self.session.borrow().clone();
+    fn head(&self, session: String) {
         let row = all(&id("tabbar"), ".apptab")
             .into_iter()
             .find(|t| text(&get(t, "_target")) == format!("term:{session}"));
@@ -78,8 +110,8 @@ impl Chat {
         };
         let model = field(".mdl");
         let name = Some(field(".lbl")).filter(|n| !n.is_empty()).unwrap_or(session);
-        let _ = set(&query(&el(), ".cv-title b"), "textContent", &name.into());
-        let _ = set(&query(&el(), ".cv-title span"), "textContent", &model.into());
+        let _ = set(&query(&id("cv-head"), ".cv-title b"), "textContent", &name.into());
+        let _ = set(&query(&id("cv-head"), ".cv-title span"), "textContent", &model.into());
     }
     fn show(self: &Rc<Self>, on: bool) {
         self.on.set(on);
@@ -101,11 +133,21 @@ impl Chat {
         }
     }
     fn tick(self: &Rc<Self>, force: bool) {
-        if !self.on.get() || text(&get(&doc(), "visibilityState")) == "hidden" {
+        if text(&get(&doc(), "visibilityState")) == "hidden" {
             return;
         }
         let session = text(&global("activeTerm"));
         if session.is_empty() {
+            return;
+        }
+        self.ticks.set(self.ticks.get().wrapping_add(1));
+        // The header also shows over the terminal on phones; names and models change
+        // rarely, so it is refreshed on a session move and every few seconds.
+        if *self.titled.borrow() != session || self.ticks.get() % 5 == 0 {
+            self.titled.replace(session.clone());
+            self.head(session.clone());
+        }
+        if !self.on.get() {
             return;
         }
         let moved = *self.session.borrow() != session;
@@ -118,9 +160,7 @@ impl Chat {
             let _ = set(&query(&el(), ".cv-list"), "innerHTML", &SKELETON.into());
             attr(&query(&el(), ".cv-more"), "hidden", "");
             let _ = set(&query(&el(), ".cv-typing"), "hidden", &true.into());
-            self.head();
         }
-        self.ticks.set(self.ticks.get().wrapping_add(1));
         if self.busy.get() || !(force || moved || self.ticks.get() % 2 == 0) {
             return;
         }
@@ -224,19 +264,21 @@ impl Chat {
         }
     }
     fn send(self: &Rc<Self>) {
-        let area = query(&el(), ".cv-compose textarea");
+        let area = query(&id("cv-dock"), "textarea");
         let value = text(&get(&area, "value"));
         let session = text(&global("activeTerm"));
         if value.trim().is_empty() || session.is_empty() {
             return;
         }
         let _ = set(&area, "value", &"".into());
-        let feed = query(&el(), ".cv-feed");
-        let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\"><p>{}</p></div>", esc(&value)).into()]);
-        let _ = set(&query(&el(), ".cv-typing"), "hidden", &false.into());
-        let _ = call(&feed, "append", &[query(&el(), ".cv-typing")]);
-        let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
-        let button = query(&el(), ".cv-compose button");
+        if self.on.get() {
+            let feed = query(&el(), ".cv-feed");
+            let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\"><p>{}</p></div>", esc(&value)).into()]);
+            let _ = set(&query(&el(), ".cv-typing"), "hidden", &false.into());
+            let _ = call(&feed, "append", &[query(&el(), ".cv-typing")]);
+            let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
+        }
+        let button = query(&id("cv-dock"), "button[type=submit]");
         classes(&button, "busy", true);
         let me = self.clone();
         spawn_local(async move {
@@ -254,6 +296,61 @@ impl Chat {
             me.age.set(0.);
             me.tick(true);
         });
+    }
+    /// Inserts the draft into the terminal without Enter.
+    fn insert(&self) {
+        let area = query(&id("cv-dock"), "textarea");
+        let value = text(&get(&area, "value"));
+        if value.is_empty() {
+            return;
+        }
+        if toolbar(json!({"type":"paste","text":value})) {
+            let _ = set(&area, "value", &"".into());
+        } else {
+            toast("Abre una sesión primero");
+        }
+    }
+    /// A terminal key: sent by the session's frame (it stays connected under the chat).
+    fn press(&self, key: &str) {
+        if toolbar(json!({"type":"toolbar","key":key})) {
+            return;
+        }
+        match key {
+            "escape" => self.key("Escape"),
+            "tab" => self.key("Tab"),
+            "up" => self.key("Up"),
+            "down" => self.key("Down"),
+            _ => toast("Abre una sesión primero"),
+        }
+    }
+    /// A terminal tool (select, panes, history, copy, paste, direct keyboard, Ctrl): it acts
+    /// on the terminal, so the chat gives way to it first. Paste in the chat fills the draft.
+    fn action(self: &Rc<Self>, action: &str) {
+        if self.on.get() && action == "paste" {
+            spawn_local(async move {
+                let read = match call(&get(&global("navigator"), "clipboard"), "readText", &[]) {
+                    Ok(p) => wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&p)).await.ok().map(|v| text(&v)),
+                    Err(_) => None,
+                };
+                match read {
+                    Some(clip) if !clip.is_empty() => {
+                        let area = query(&id("cv-dock"), "textarea");
+                        let _ = set(&area, "value", &format!("{}{clip}", text(&get(&area, "value"))).into());
+                        let _ = call(&area, "focus", &[]);
+                    }
+                    _ => {
+                        toast("No se pudo leer el portapapeles; mantén presionado el campo para pegar");
+                    }
+                }
+            });
+            return;
+        }
+        if self.on.get() {
+            self.show(false);
+        }
+        if !toolbar(json!({"type":"action","action":action})) {
+            toast("Abre una sesión primero");
+        }
     }
     fn key(&self, key: &str) {
         let session = text(&global("activeTerm"));
@@ -276,12 +373,27 @@ pub fn install() -> Result<(), JsValue> {
     if !truthy(&area) || truthy(&el()) {
         return Ok(());
     }
-    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><header class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div class="cv-feed"><button type="button" class="cv-more" data-cv="more" hidden></button><div class="cv-list" aria-live="polite"></div><div class="cv-typing" role="status" aria-label="El agente está trabajando" hidden><i></i><i></i><i></i></div></div><div class="cv-keys" role="toolbar" aria-label="Teclas rápidas"><button type="button" class="y" data-cv-key="Enter">Sí</button><button type="button" class="n" data-cv-key="Escape">No</button><button type="button" data-cv-key="Escape">Esc</button><button type="button" data-cv-key="Up">↑</button><button type="button" data-cv-key="Down">↓</button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button><button type="button" data-cv-key="Tab">Tab</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></section>"#.into()])?;
+    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><div class="cv-feed"><button type="button" class="cv-more" data-cv="more" hidden></button><div class="cv-list" aria-live="polite"></div><div class="cv-typing" role="status" aria-label="El agente está trabajando" hidden><i></i><i></i><i></i></div></div></section>"#.into()])?;
+    call(&area, "insertAdjacentHTML", &["afterend".into(), BARS.into()])?;
     let open = id("tab-open");
     if truthy(&open) {
         call(&open, "insertAdjacentHTML", &["beforebegin".into(), format!(r#"<button type="button" id="tab-chat" class="tab-nav-btn" aria-pressed="false" aria-label="Ver como chat" title="Ver como chat">{BUBBLE}</button>"#).into()])?;
     }
     let chat = Rc::new(Chat::default());
+    dock_all();
+    // Frames that (re)load after this ask for nothing; they announce `ready`.
+    listen(&js_sys::global(), "message", function(move |args| {
+        let e = args.get(0);
+        let data = get(&e, "data");
+        let data = if data.is_string() { invoke(&get(&global("JSON"), "parse"), &[data]).unwrap_or(JsValue::NULL) } else { data };
+        if text(&get(&data, "source")) == "comandos-term" && text(&get(&data, "type")) == "ready" {
+            let source = get(&e, "source");
+            if let Ok(m) = invoke(&get(&global("JSON"), "parse"), &[DOCK.into()]) {
+                let _ = call(&source, "postMessage", &[m, get(&global("location"), "origin")]);
+            }
+        }
+        Ok(JsValue::UNDEFINED)
+    }));
     let me = chat.clone();
     listen(&id("tab-chat"), "click", function(move |_| {
         if !me.on.get() && !has_term() {
@@ -292,7 +404,7 @@ pub fn install() -> Result<(), JsValue> {
         Ok(JsValue::UNDEFINED)
     }));
     let me = chat.clone();
-    listen(&el(), "click", function(move |args| {
+    let clicks = function(move |args| {
         let target = get(&args.get(0), "target");
         let button = call(&target, "closest", &["button".into()]).unwrap_or(JsValue::NULL);
         if !truthy(&button) {
@@ -300,25 +412,48 @@ pub fn install() -> Result<(), JsValue> {
         }
         let data = get(&button, "dataset");
         match text(&get(&data, "cv")).as_str() {
-            "prev" => step(-1),
-            "next" => step(1),
+            "prev" => {
+                step(-1);
+                me.tick(true);
+            }
+            "next" => {
+                step(1);
+                me.tick(true);
+            }
             "more" => me.toggle_more(),
+            "insert" => me.insert(),
             _ => {}
         }
         let key = text(&get(&data, "cvKey"));
         if !key.is_empty() {
             me.key(&key);
         }
+        let key = text(&get(&data, "key"));
+        if !key.is_empty() {
+            me.press(&key);
+        }
+        let action = text(&get(&data, "action"));
+        if !action.is_empty() {
+            me.action(&action);
+        }
+        Ok(JsValue::UNDEFINED)
+    });
+    for host in [el(), id("cv-head"), id("cv-dock")] {
+        listen(&host, "click", clicks.clone());
+    }
+    // Tapping a key leaves the keyboard and the draft's focus where they were.
+    listen(&query(&id("cv-dock"), ".cv-keys"), "mousedown", function(|args| {
+        let _ = call(&args.get(0), "preventDefault", &[]);
         Ok(JsValue::UNDEFINED)
     }));
     let me = chat.clone();
-    listen(&query(&el(), ".cv-compose"), "submit", function(move |args| {
+    listen(&query(&id("cv-dock"), ".cv-compose"), "submit", function(move |args| {
         stop(&args.get(0));
         me.send();
         Ok(JsValue::UNDEFINED)
     }));
     let me = chat.clone();
-    listen(&query(&el(), ".cv-compose textarea"), "keydown", function(move |args| {
+    listen(&query(&id("cv-dock"), "textarea"), "keydown", function(move |args| {
         let e = args.get(0);
         let coarse = truthy(&call(&js_sys::global(), "matchMedia", &["(pointer:coarse)".into()]).map(|m| get(&m, "matches")).unwrap_or(JsValue::FALSE));
         if text(&get(&e, "key")) == "Enter" && !truthy(&get(&e, "shiftKey")) && !coarse {

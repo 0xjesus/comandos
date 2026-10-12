@@ -1354,16 +1354,34 @@
 html[data-native-side-term] #command-sidebar .sec-terms{display:none}
 html[data-native-side-term] #command-sidebar .sec-cmds{flex:1 1 auto!important}
 /* Vista Chat (grill móvil 10-oct): conversación del agente sobre la terminal, ‹ › y deslizar
-   cambian de sesión. La terminal sigue conectada detrás pero no se pinta. */
+   cambian de sesión. La terminal sigue conectada detrás pero no se pinta.
+   Cabecera ‹ sesión › y barra inferior (teclas + borrador) son de las dos vistas: van fuera de
+   #term-area, en filas propias de #panes; la terminal oculta su barra («dock», 11-oct). */
+#cv-head,#cv-dock{display:none}
+body.app.chat-on #term-area.on~#cv-head{display:flex}
+body.app #term-area.on~#cv-dock{display:flex;flex-direction:column}
+/* filas: pestañas · cabecera · terminal · barra · avisos (workspace.css carga después: `html` gana) */
+html body.app #panes{grid-template-rows:auto min-content minmax(0,1fr) min-content auto}
+html body.app #view-panel{grid-row:2/5}
+html body.app #term-area{grid-row:3}
+html body.app #notices{grid-row:5}
+#cv-head{grid-column:1;grid-row:2;min-width:0}
+#cv-dock{grid-column:1;grid-row:4;min-width:0;border-top:1px solid var(--line);background:var(--panel)}
+@media (min-width:748px){
+  html body.app.split #panes{grid-template-rows:auto min-content minmax(0,1fr) min-content auto;
+    grid-template-areas:"panel split tabs" "panel split head" "panel split term" "panel split dock" "panel split notices"}
+  html body.app.split #cv-head{grid-area:head}
+  html body.app.split #cv-dock{grid-area:dock}
+}
 #chat-view{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;background:var(--bg);color:var(--text)}
 #chat-view[hidden]{display:none}
 body.chat-on .termpane{visibility:hidden}
 #tab-chat[aria-pressed=true]{color:var(--brand)}
-#chat-view .cv-head{flex:none;display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--panel)}
-#chat-view .cv-head button{flex:none;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--text);font:22px/1 var(--sans);cursor:pointer}
-#chat-view .cv-title{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:1px}
-#chat-view .cv-title b{font:600 15px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#chat-view .cv-title span{font:600 10px var(--mono);color:var(--faint)}
+#cv-head{align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--panel)}
+#cv-head button{flex:none;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--text);font:22px/1 var(--sans);cursor:pointer}
+#cv-head .cv-title{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:1px}
+#cv-head .cv-title b{font:600 15px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cv-head .cv-title span{font:600 10px var(--mono);color:var(--faint)}
 #chat-view .cv-feed{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:14px 12px 20px;display:flex;flex-direction:column;gap:12px;touch-action:pan-y;-webkit-overflow-scrolling:touch}
 #chat-view .cv-list{display:flex;flex-direction:column;gap:12px;min-width:0}
 #chat-view .cv-empty{margin:auto;color:var(--dim);font-size:14px;text-align:center;max-width:32ch}
@@ -1403,18 +1421,21 @@ body.chat-on .termpane{visibility:hidden}
 #chat-view .cv-skel i:nth-child(1){width:62%;align-self:flex-end;height:40px}
 #chat-view .cv-skel i:nth-child(2){width:88%;height:96px;animation-delay:.2s}
 #chat-view .cv-skel i:nth-child(3){width:54%;animation-delay:.4s}
-#chat-view .cv-compose button.busy svg{display:none}
-#chat-view .cv-compose button.busy::after{content:"";width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.35);border-top-color:#fff;animation:cv-spin .7s linear infinite}
-@media (prefers-reduced-motion:reduce){#chat-view :is(.cv-typing i,.cv-skel i,.cv-compose button.busy::after){animation-duration:2.4s}}
-#chat-view .cv-keys{flex:none;display:flex;gap:6px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;border-top:1px solid var(--line);background:var(--panel)}
-#chat-view .cv-keys::-webkit-scrollbar{display:none}
-#chat-view .cv-keys button{flex:none;min-width:44px;height:36px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg);color:var(--text);font:600 13px var(--mono);cursor:pointer}
-#chat-view .cv-keys .y{color:var(--done,#3ccf7e)}
-#chat-view .cv-keys .n{color:#f2727a}
-#chat-view .cv-compose{flex:none;display:flex;gap:8px;align-items:flex-end;padding:6px 8px calc(8px + env(safe-area-inset-bottom,0px));background:var(--panel)}
-#chat-view .cv-compose textarea{flex:1;min-width:0;min-height:44px;max-height:30dvh;resize:none;field-sizing:content;padding:11px 14px;border-radius:14px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:16px/1.3 var(--sans)}
-#chat-view .cv-compose textarea:focus{outline:none;border-color:var(--brand)}
-#chat-view .cv-compose button{flex:none;width:44px;height:44px;border:0;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;cursor:pointer}
+#cv-dock .cv-compose button.busy svg{display:none}
+#cv-dock .cv-compose button.busy::after{content:"";width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.35);border-top-color:#fff;animation:cv-spin .7s linear infinite}
+@media (prefers-reduced-motion:reduce){#chat-view :is(.cv-typing i,.cv-skel i),#cv-dock .cv-compose button.busy::after{animation-duration:2.4s}}
+#cv-dock .cv-keys{flex:none;display:flex;gap:6px;padding:6px 8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;touch-action:pan-x}
+#cv-dock .cv-keys::-webkit-scrollbar{display:none}
+#cv-dock .cv-keys button{flex:none;display:grid;place-items:center;min-width:44px;height:36px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg);color:var(--text);font:600 13px var(--mono);white-space:nowrap;cursor:pointer;touch-action:manipulation}
+#cv-dock .cv-keys button:active{border-color:var(--brand);color:var(--brand)}
+#cv-dock .cv-keys .hot{border-color:color-mix(in srgb,var(--brand) 55%,var(--line2))}
+#cv-dock .cv-keys svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+#cv-dock .cv-compose{flex:none;display:flex;gap:8px;align-items:flex-end;padding:2px 8px calc(8px + env(safe-area-inset-bottom,0px))}
+#cv-dock .cv-compose textarea{flex:1;min-width:0;min-height:44px;max-height:30dvh;resize:none;field-sizing:content;padding:11px 14px;border-radius:14px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:16px/1.3 var(--sans)}
+#cv-dock .cv-compose textarea:focus{outline:none;border-color:var(--brand)}
+#cv-dock .cv-compose button{flex:none;width:44px;height:44px;border:0;border-radius:50%;background:var(--brand);color:#fff;display:grid;place-items:center;cursor:pointer}
+#cv-dock .cv-compose .cv-insert{width:auto;padding:0 14px;border:1px solid var(--line2);border-radius:14px;background:var(--bg);color:var(--dim);font:600 13px var(--sans)}
+#cv-dock .cv-compose .cv-insert:hover{color:var(--text);border-color:var(--brand)}
 /* Carrusel en celular: aunque la preferencia sea «varias filas», la lista no se come la
    pantalla; las sesiones son una tira de píldoras que se desliza de lado. */
 @media (max-width:747px){
@@ -1432,4 +1453,8 @@ body.app #app-navigation #tabbar{order:9;flex:1 0 100%;display:flex;height:auto;
   body.app.tabs-rows :is(#tab-left,#tab-panel,#tab-term,#tab-new,#tab-sort,#tab-rows,#tab-open){align-self:center}
   body.app #app-navigation :is(#tab-sort,#tab-rows){display:none}
   body.app .apptab:not(.on) .x{display:none}
+  body.app #term-area.on~#cv-head{display:flex}
 }
+/* Tablet con «varias filas»: las pestañas bajan a su rejilla y la fila de botones quedaba
+   amontonada a la izquierda; ordenar, filas, chat y sesiones van a la derecha. */
+@media (min-width:748px){body.app.tabs-rows #app-navigation > #tab-sort{margin-left:auto}}

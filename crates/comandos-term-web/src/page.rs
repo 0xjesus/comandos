@@ -47,6 +47,7 @@ pub struct Page {
     last_interaction: f64,
     ctrl: bool,
     pasting: bool,
+    docked: bool,
     known: bool,
     busy: bool,
     selecting: bool,
@@ -646,7 +647,9 @@ fn handle(page: &Rc<RefCell<Page>>, command: Command) {
             if let Some(bytes) = parent::toolbar_key(&key) {
                 send_input(page, bytes, true);
             }
-            if let Some(t) = term(page) {
+            if !page.borrow().docked
+                && let Some(t) = term(page)
+            {
                 t.borrow().focus();
             }
         }
@@ -659,9 +662,12 @@ fn handle(page: &Rc<RefCell<Page>>, command: Command) {
                 return;
             }
             page.borrow_mut().pasting = true;
+            let docked = page.borrow().docked;
             if let Some(t) = term(page) {
                 t.borrow_mut().paste(&text);
-                t.borrow().focus();
+                if !docked {
+                    t.borrow().focus();
+                }
             }
             page.borrow_mut().pasting = false;
         }
@@ -683,6 +689,22 @@ fn handle(page: &Rc<RefCell<Page>>, command: Command) {
             }
             if let Some(t) = term(page) {
                 t.borrow().focus();
+            }
+        }
+        Command::Dock(on) => {
+            page.borrow_mut().docked = on;
+            if let Some(root) = window().ok().and_then(|w| w.document()).and_then(|d| d.document_element()) {
+                let _ = root.class_list().toggle_with_force("docked", on);
+            }
+        }
+        Command::Action(action) => {
+            if let Some(button) = window()
+                .ok()
+                .and_then(|w| w.document())
+                .and_then(|d| d.query_selector(&format!("[data-action='{action}']")).ok().flatten())
+                .and_then(|e| e.dyn_into::<HtmlElement>().ok())
+            {
+                button.click();
             }
         }
         Command::Mode(selecting) => {
@@ -1099,6 +1121,7 @@ fn attach_main() -> Result<(), JsValue> {
         last_interaction: f64::NEG_INFINITY,
         ctrl: false,
         pasting: false,
+        docked: false,
         known: false,
         busy: false,
         selecting: false,

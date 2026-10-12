@@ -162,8 +162,6 @@ paned separator { background: @LINE@; min-width: 2px; }
 .cv-keys { padding: 6px 10px; border-top: 1px solid @LINE@; background-color: @BAR@; }
 .cv-key { background-image: none; background-color: @BG@; color: @TEXT@; border: 1px solid @LINE2@; border-radius: 8px; min-height: 30px; min-width: 40px; padding: 0 10px; font-family: monospace; font-weight: 600; }
 .cv-key:hover { border-color: @BRAND@; }
-.cv-key.cv-yes label { color: #3ccf7e; }
-.cv-key.cv-no label { color: #f2727a; }
 .cv-compose { padding: 8px 10px 10px; background-color: @BAR@; }
 .cv-input, .cv-input text { background-color: @BG@; color: @TEXT@; }
 .cv-input { border: 1px solid @LINE2@; border-radius: 10px; padding: 8px 10px; min-height: 40px; font-size: 14px; }
