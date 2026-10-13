@@ -217,6 +217,31 @@ impl<'a> OperationStore<'a> {
         }
         Ok(None)
     }
+    /// The operation that still holds `pane_key` (the unique active-pane index).
+    pub fn active_for_pane(&self, pane_key: &str) -> Result<Option<Value>> {
+        let id:Option<String>=self.connection.query_row("SELECT id FROM session_operations WHERE pane_key=? AND state NOT IN ('confirmed','failed','rolled_back') ORDER BY updated DESC LIMIT 1",[pane_key],|row|row.get(0)).optional()?;
+        match id {
+            Some(id) => self.get(&id),
+            None => Ok(None),
+        }
+    }
+    /// Retires a parked row (`recovery_required`/`awaiting_confirmation`) the pane has
+    /// already left behind; only if it is still in `state`, so a concurrent recovery wins.
+    pub fn supersede(&self, id: &str, state: &str, result: &Value) -> Result<bool> {
+        if !matches!(state, "recovery_required" | "awaiting_confirmation") {
+            return Ok(false);
+        }
+        atomic(self.connection, |tx| {
+            let current: Option<String> = tx
+                .query_row("SELECT state FROM session_operations WHERE id=?", [id], |row| row.get(0))
+                .optional()?;
+            if current.as_deref() != Some(state) {
+                return Ok(false);
+            }
+            stage_in(tx, id, "failed", None, Some(result), (self.clock)(), (self.clock)())?;
+            Ok(true)
+        })
+    }
     pub fn latest_for_target(&self, session: &str, pane: &str) -> Result<Option<Value>> {
         let id:Option<String>=self.connection.query_row("SELECT id FROM session_operations WHERE json_extract(request,'$.session')=? AND json_extract(request,'$.pane')=? ORDER BY updated DESC LIMIT 1",params![session,pane],|row|row.get(0)).optional()?;
         match id {

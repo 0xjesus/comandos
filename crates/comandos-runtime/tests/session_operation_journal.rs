@@ -921,3 +921,27 @@ fn ascii(s: &str) -> String {
     }
     out
 }
+
+#[test]
+fn a_parked_operation_left_behind_releases_its_pane() {
+    // 13-oct: rows stuck in recovery_required/awaiting_confirmation blocked every
+    // later account switch on the pane with «operación pendiente».
+    let f = Fixture::new();
+    let s = store(&f.conn);
+    assert!(s.claim("parked", "pane", &json!({"pane":"%2"})).unwrap());
+    s.stage("parked", "recovery_required", None, None).unwrap();
+    assert!(matches!(
+        s.claim("next", "pane", &json!({"pane":"%2","alias":"relotto"})),
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(s.active_for_pane("pane").unwrap().unwrap()["id"], "parked");
+    // Only from the state it was read in: a concurrent recovery keeps the row.
+    assert!(!s.supersede("parked", "awaiting_confirmation", &json!({})).unwrap());
+    let result = json!({"ok":false,"superseded":true});
+    assert!(s.supersede("parked", "recovery_required", &result).unwrap());
+    assert_eq!(s.get("parked").unwrap().unwrap()["state"], "failed");
+    assert!(s.active_for_pane("pane").unwrap().is_none());
+    assert!(s.claim("next", "pane", &json!({"pane":"%2","alias":"relotto"})).unwrap());
+    // Running operations are never superseded.
+    assert!(!s.supersede("next", "validating", &result).unwrap());
+}

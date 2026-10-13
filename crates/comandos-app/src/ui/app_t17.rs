@@ -235,7 +235,9 @@ impl App {
                     .post(path, &payload, Duration::from_secs(20))
                     .map_err(|_| "No se pudo completar la petición de cuenta".to_string())?;
                 if !(200..300).contains(&status) || data.get("ok") == Some(&json!(false)) {
-                    return Err("No se pudo completar la petición de cuenta".into());
+                    // The server's reason («el panel tiene una operación pendiente…») is
+                    // what tells the user why; the generic line hid it (13-oct).
+                    return Err(accounts::request_error(&data));
                 }
                 accounts::pane_identity_when(&tmux, &session, &pane, Some(&identity), || {
                     work_ticket.current() && !instance.load(Ordering::Acquire)

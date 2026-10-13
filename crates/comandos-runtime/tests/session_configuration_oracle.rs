@@ -861,3 +861,31 @@ fn extension_apply_relaunches_only_private_stub_and_preserves_selection_on_model
     );
     assert_eq!(original_config, std::fs::read(&config).unwrap());
 }
+
+/// 13-oct: a parked row only lets go of its pane when that pane already runs an
+/// agent the operation neither launched nor started from.
+#[test]
+fn parked_operation_is_left_behind_only_by_a_foreign_agent() {
+    let Some(lab) = OpsLab::start("parked") else {
+        return;
+    };
+    let env = lab.env();
+    let info = sc::agent_info_for_pane(&env, &lab.pane).unwrap().unwrap();
+    let start = agent_procs::process_start(Path::new("/proc"), info.pid);
+    let row = |origin: Value, destination: Value| {
+        json!({"id": "parked-op", "state": "recovery_required",
+            "snapshot": {"origin": origin, "destinationProcess": destination}})
+    };
+    let foreign = row(json!({"agent_pid": null}), json!({"pid": 1, "start": "1"}));
+    assert!(sc::operation_left_behind(&env, &lab.pane, &foreign));
+    let mut waiting = foreign.clone();
+    waiting["state"] = json!("awaiting_confirmation");
+    assert!(sc::operation_left_behind(&env, &lab.pane, &waiting));
+    let mut running = foreign.clone();
+    running["state"] = json!("verifying");
+    assert!(!sc::operation_left_behind(&env, &lab.pane, &running));
+    let its_destination = row(json!({}), json!({"pid": info.pid, "start": start}));
+    assert!(!sc::operation_left_behind(&env, &lab.pane, &its_destination));
+    let its_origin = row(json!({"agent_pid": info.pid, "agent_start": start}), json!({}));
+    assert!(!sc::operation_left_behind(&env, &lab.pane, &its_origin));
+}

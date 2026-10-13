@@ -580,6 +580,7 @@ pub async fn session_configure(
         blocking(move || {
             // `__init__` lee el agente del pane; sus excepciones (tmux) son 500.
             let kind = if req.get("extensionsOnly").is_some_and(truthy) { Kind::Extensions } else { Kind::Session };
+            let check = env.clone();
             let adapter =
                 SessionConfiguration::new(kind, req.clone(), identity.clone(), env)
                     .map_err(decline)?;
@@ -588,6 +589,17 @@ pub async fn session_configure(
             let opts = native.options();
             let conn = open_store(opts)?;
             let pane_key = sc::identity_key(&identity);
+            let pane = req.get("pane").and_then(Value::as_str).unwrap_or_default();
+            if let Ok(Some(parked)) = with_store(&conn, opts, |s| s.active_for_pane(&pane_key))
+                && sc::operation_left_behind(&check, pane, &parked)
+            {
+                let state = parked["state"].as_str().unwrap_or_default();
+                let result = json!({"ok": false, "superseded": true, "recoveryRequired": false,
+                    "error": "el panel ya corre otro agente; la operación quedó atrás"});
+                let _ = with_store(&conn, opts, |s| {
+                    s.supersede(parked["id"].as_str().unwrap_or_default(), state, &result)
+                });
+            }
             match with_store(&conn, opts, |s| s.claim(&id, &pane_key, &req)) {
                 // La conexión va al hilo: abrirla allí podría fallar con la fila
                 // ya reclamada.

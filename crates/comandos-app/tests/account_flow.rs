@@ -234,3 +234,17 @@ fn confirmed_without_ok_is_terminal_failure_instead_of_120_more_requests() {
     assert_eq!(flow.stage, AccountStage::Failed);
     assert_eq!(flow.next_poll(), None);
 }
+
+#[test]
+fn a_rejected_switch_shows_the_server_reason() {
+    use comandos_app::ui::accounts::request_error;
+    let data = serde_json::json!({"ok":false,"error":"el panel tiene una operación pendiente\n o necesita recuperación"});
+    assert_eq!(
+        request_error(&data),
+        "el panel tiene una operación pendiente o necesita recuperación"
+    );
+    assert_eq!(
+        request_error(&serde_json::json!({})),
+        "No se pudo completar la petición de cuenta"
+    );
+}

@@ -60,6 +60,15 @@ pub fn account_bar_class(percent: i64) -> &'static str {
         ""
     }
 }
+/// The reason a rejected account request gives, bounded to one readable line.
+pub fn request_error(data: &Value) -> String {
+    data.get("error")
+        .and_then(Value::as_str)
+        .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(240).collect())
+        .unwrap_or_else(|| "No se pudo completar la petición de cuenta".into())
+}
 pub fn awaiting(alias: &str, english: bool) -> String {
     if english {
         format!(

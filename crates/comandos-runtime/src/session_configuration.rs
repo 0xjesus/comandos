@@ -394,6 +394,44 @@ pub fn agent_info_for_pane(env: &Env, pane: &str) -> Result<Option<Proc>, Fail> 
         .map(Proc::from))
 }
 
+/// A parked operation (`recovery_required`/`awaiting_confirmation`) holds its pane
+/// until someone recovers it. When the pane already runs an agent this operation did
+/// not launch (no `COMANDOS_OPERATION_ID` of its own) and that is not the original,
+/// the user moved on by hand: neither confirming nor recovering applies, and keeping
+/// the row only rejected every later account or model switch on that pane (13-oct).
+pub fn operation_left_behind(env: &Env, pane: &str, row: &Value) -> bool {
+    let state = row.get("state").and_then(Value::as_str).unwrap_or("");
+    let Some(id) = row.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    if !matches!(state, "recovery_required" | "awaiting_confirmation") {
+        return false;
+    }
+    let Ok(Some(info)) = agent_info_for_pane(env, pane) else {
+        return false;
+    };
+    let marker = agent_procs::read_environ(&env.proc_root, info.pid)
+        .get(b"COMANDOS_OPERATION_ID".as_slice())
+        .cloned()
+        .unwrap_or_default();
+    if marker == id.as_bytes() {
+        return false;
+    }
+    let snapshot = row.get("snapshot").unwrap_or(&Value::Null);
+    let pinned = |record: &Value, pid: &str, start: &str| {
+        record.get(pid).and_then(Value::as_i64) == Some(info.pid)
+            && record.get(start).filter(|v| truthy(v)).is_none_or(|v| {
+                let start = match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                start == agent_procs::process_start(&env.proc_root, info.pid)
+            })
+    };
+    !pinned(&snapshot["origin"], "agent_pid", "agent_start")
+        && !pinned(&snapshot["destinationProcess"], "pid", "start")
+}
+
 /// Los campos de `_pane_identity`, en su orden. Única implementación: GET y
 /// POST del frente (`dash::native::target`) usan estas mismas piezas.
 pub const IDENTITY_FIELDS: [&str; 8] = [
