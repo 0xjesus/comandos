@@ -441,7 +441,10 @@ impl App {
             return;
         }
         *owner.signature.borrow_mut() = signature;
-        for pill in owner.pills.borrow_mut().drain(..) {
+        // Take the list first: removing a widget re-enters `reposition`,
+        // which borrows `pills` again (panic on account switch, 13-oct).
+        let old = std::mem::take(&mut *owner.pills.borrow_mut());
+        for pill in old {
             owner.widget.remove(&pill.widget);
         }
         owner.ai.borrow_mut().clear();
@@ -678,7 +681,8 @@ impl App {
         owner.drag.borrow_mut().take();
         owner.wanted.borrow_mut().take();
         owner.hot.set(None);
-        for grip in owner.grips.borrow_mut().drain(..) {
+        let old = std::mem::take(&mut *owner.grips.borrow_mut());
+        for grip in old {
             owner.widget.remove(&grip);
         }
         for (index, gutter) in gutters.iter().enumerate() {
