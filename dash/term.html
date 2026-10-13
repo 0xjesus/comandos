@@ -398,12 +398,14 @@
         const found = [];
         const re = /https?:\/\/[^\s'"<>\])]+/g; let m;
         while ((m = re.exec(joined))){
-          const s = m.index, e = m.index + m[0].length;
+          // El punto o la coma que cierran la oración no son parte del link.
+          const text = m[0].replace(/[.,;:!?]+$/, '');
+          const s = m.index, e = m.index + text.length;
           const sr = rows.filter(r => r.off <= s).pop(), er = rows.filter(r => r.off < e).pop();
           if (!sr || !er || sr.i === er.i) continue;         // solo spans multi-fila
           if (y < sr.i || y > er.i) continue;                // debe tocar la fila pedida
           found.push({
-            text: m[0],
+            text,
             range: {start: {x: s - sr.off + 1, y: sr.i + 1}, end: {x: e - er.off, y: er.i + 1}},
             activate: (_e, text) => openWebLink(_e, text),
           });

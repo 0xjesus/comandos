@@ -19,6 +19,11 @@ fn patterns() -> Option<&'static [Regex; 2]> {
         .as_ref()
         .ok()
 }
+/// Sentence punctuation right after a link is prose, not part of it
+/// («…subtitulado.mp4.» gave «Ruta local invalida», 13-oct).
+pub fn trim_trailing_punctuation(link: &str) -> &str {
+    link.trim_end_matches(['.', ',', ';', ':', '!', '?'])
+}
 pub fn normalize_wrapped_url_text(text: &str) -> String {
     let (Some(patterns), Some(wrap)) = (patterns(), wrap()) else {
         return text.to_owned();
@@ -55,7 +60,8 @@ pub fn url_from_wrapped_text(
     let mut candidates = Vec::new();
     for pattern in patterns {
         for m in pattern.find_iter(text) {
-            let joined = wrap.replace_all(m.as_str(), "").into_owned();
+            let joined =
+                trim_trailing_punctuation(&wrap.replace_all(m.as_str(), "")).to_owned();
             let body = joined
                 .rsplit_once(':')
                 .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
@@ -107,22 +113,44 @@ pub fn complete_from_pane(
     if frag.is_empty() {
         return None;
     }
+    let frag = trim_trailing_punctuation(&frag).to_owned();
     let mut best: Option<String> = None;
+    let mut keep = |candidate: String| {
+        if best.as_ref().is_none_or(|b| candidate.len() > b.len()) {
+            best = Some(candidate);
+        }
+    };
+    let found = |joined: &str| {
+        let body = joined
+            .split_once(':')
+            .filter(|(_, n)| n.split(':').all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
+            .map_or(joined, |(body, _)| body);
+        exists(body)
+    };
     for (index, pattern) in patterns.iter().enumerate() {
         for m in pattern.find_iter(text) {
-            let joined = wrap.replace_all(m.as_str(), "").into_owned();
+            let joined =
+                trim_trailing_punctuation(&wrap.replace_all(m.as_str(), "")).to_owned();
             if !joined.contains(&frag) {
                 continue;
             }
-            let accepted = index == 0 || {
-                let body = joined
-                    .split_once(|c: char| c == ':')
-                    .filter(|(_, n)| n.split(':').all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
-                    .map_or(joined.as_str(), |(body, _)| body);
-                exists(body)
-            };
-            if accepted && best.as_ref().is_none_or(|b| joined.len() > b.len()) {
-                best = Some(joined);
+            if index == 0 {
+                keep(joined);
+                continue;
+            }
+            // A hard wrap may glue the next line onto the path («notes.md» + «- item»):
+            // try the path up to each line break, longest first, and keep one that exists.
+            let heads = wrap.find_iter(m.as_str()).map(|brk| {
+                trim_trailing_punctuation(&wrap.replace_all(&m.as_str()[..brk.start()], ""))
+                    .to_owned()
+            });
+            let mut prefixes: Vec<String> = heads.collect();
+            prefixes.push(joined);
+            for prefix in prefixes.into_iter().rev() {
+                if found(&prefix) {
+                    keep(prefix);
+                    break;
+                }
             }
         }
     }

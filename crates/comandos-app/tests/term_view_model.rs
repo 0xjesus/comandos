@@ -311,3 +311,71 @@ fn link_split_across_two_lines_is_completed_from_the_clicked_pane() {
     let with_line = format!("{file}:12\n");
     assert_eq!(complete_from_pane(&with_line, &file[..30], exists), Some(format!("{file}:12")));
 }
+
+#[test]
+fn sentence_punctuation_after_a_link_is_not_part_of_it() {
+    use comandos_app::term::{
+        engine::{Palette, TermEngine},
+        links::{complete_from_pane, link_at},
+    };
+    // 13-oct: «…subtitulado.mp4.» at the end of a sentence gave «Ruta local invalida».
+    for (text, link) in [
+        ("El video: /home/test/v-subtitulado.mp4. Junto", "/home/test/v-subtitulado.mp4"),
+        ("ver /home/test/a.rs, /home/test/b.rs", "/home/test/a.rs"),
+        ("en ~/demos/gaas/.", "~/demos/gaas/"),
+        ("abre https://example.org/docs.", "https://example.org/docs"),
+    ] {
+        assert_eq!(
+            url_from_wrapped_text(text, "", Some(0), Some(text.find(['/', '~', 'h']).unwrap() + 3)),
+            Some(link.into()),
+            "{text}"
+        );
+    }
+    let file = "/home/test/Videos/gaas/gaas-flujo-completo-v2-subtitulado.mp4";
+    let exists = |p: &str| p == file;
+    assert_eq!(
+        complete_from_pane(&format!("ver {file}.\n"), &format!("{file}."), exists),
+        Some(file.into())
+    );
+    // An agent hard wrap in the middle of the path, ending a sentence.
+    let now = std::time::Instant::now();
+    let palette = Palette::xterm_default([255; 3], [0; 3], [255; 3], [0; 3], [255; 3]);
+    let mut engine = TermEngine::new(60, 4, 10, palette, false, now);
+    engine.feed(
+        format!("● Video: {}\r\n  {}. Junto a él.", &file[..48], &file[48..]).as_bytes(),
+        now,
+    );
+    for (row, col) in [(0u16, 20u16), (1, 4)] {
+        assert_eq!(
+            link_at(&engine, (i32::from(row), col), row, col),
+            Some(file.into()),
+            "row {row}"
+        );
+    }
+}
+
+#[test]
+fn a_path_glued_to_the_next_line_falls_back_to_the_part_that_exists() {
+    use comandos_app::term::links::complete_from_pane;
+    let file = "/home/test/notes.md";
+    let text = format!("  {file}\n  - otro punto\n");
+    assert_eq!(
+        complete_from_pane(&text, &format!("{file}-"), |p| p == file),
+        Some(file.into())
+    );
+}
+
+#[test]
+fn opening_a_path_ignores_a_trailing_period() {
+    let dir = std::env::temp_dir().join(format!("links-period-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("video.mp4");
+    std::fs::write(&file, b"x").unwrap();
+    let raw = format!("{}.", file.display());
+    assert_eq!(comandos_app::ui::menu::clean_local_path(&raw), Some(file.clone()));
+    let plan =
+        comandos_app::ui::menu::open_plan(&raw, comandos_app::ui::menu::OpenIntent::Reveal)
+            .unwrap();
+    assert_eq!(plan.reveal, Some(file));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

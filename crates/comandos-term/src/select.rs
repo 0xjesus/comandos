@@ -647,12 +647,17 @@ fn provider_matches(text: &[Glyph]) -> Vec<(usize, usize)> {
     while i < text.len() {
         let Some(rest) = text.get(i..) else { break };
         if let Some(head) = scheme_len(rest, false) {
-            let run = rest
-                .get(head..)
-                .unwrap_or_default()
-                .iter()
-                .take_while(|g| class(g.ch))
-                .count();
+            let body = rest.get(head..).unwrap_or_default();
+            let mut run = body.iter().take_while(|g| class(g.ch)).count();
+            // Like `dash/term.html`: the sentence's closing period or comma is
+            // not part of the link.
+            while run > 0
+                && body
+                    .get(run - 1)
+                    .is_some_and(|g| matches!(g.ch, '.' | ',' | ';' | ':' | '!' | '?'))
+            {
+                run -= 1;
+            }
             if run > 0 {
                 out.push((i, i + head + run));
                 i += head + run;

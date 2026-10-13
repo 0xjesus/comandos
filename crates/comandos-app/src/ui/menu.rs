@@ -210,8 +210,12 @@ pub fn clean_local_path(url: &str) -> Option<PathBuf> {
     } else {
         stripped.into()
     };
-    // Keep real filenames ending in digits; otherwise remove line[:column].
+    // Keep real filenames ending in digits or a period; otherwise remove
+    // sentence punctuation and line[:column].
     let mut raw = raw.as_str();
+    if !std::path::Path::new(raw).exists() {
+        raw = crate::term::links::trim_trailing_punctuation(raw);
+    }
     for _ in 0..2 {
         if std::path::Path::new(raw).exists() {
             break;

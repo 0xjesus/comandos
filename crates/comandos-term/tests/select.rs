@@ -405,3 +405,12 @@ fn alt_click_walks_the_grid_in_the_alternate_screen() {
     assert_eq!(move_to_cell(&e, (3, 4), false, false), arrows(2, "\x1b[B"));
     assert_eq!(move_to_cell(&e, (3, 0), true, false), arrows(2, "\x1bOA"));
 }
+
+#[test]
+fn wrapped_url_does_not_take_the_sentence_period() {
+    let mut e = eng(20);
+    e.advance(b"ver https://ejemplo.mx/un/camino/largo. Listo\r\nfin", 0.0);
+    let urls = find_urls(&e, 1);
+    assert_eq!(urls.len(), 1);
+    assert_eq!(urls[0].url, "https://ejemplo.mx/un/camino/largo");
+}
