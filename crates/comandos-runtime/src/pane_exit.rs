@@ -259,9 +259,21 @@ fn send_scripted_shell_line(env: &Env, pane: &str, command: &str) -> Result<(), 
 /// `_send_configuration_command(pane, command)` (2691): limpia la pantalla
 /// visible tras el eco del comando (el prompt viejo queda en el historial,
 /// fuera de la captura con la que se espera el destino).
+///
+/// Desviación (15-oct, Jesús: «pone comandos muy largos»): el relanzamiento
+/// (`env COMANDOS_OPERATION_ID=… env -u … claude --resume …`) pasa siempre por
+/// el archivo temporal que se lee a sí mismo; en la terminal solo queda
+/// `. /tmp/comandos-shell-…`. Lo corto (un shell, `exit`) se teclea igual.
 pub fn send_configuration_command(env: &Env, pane: &str, command: &str) -> Result<(), String> {
-    send_shell_line(env, pane, &format!("printf '\\033[2J\\033[H'; {command}"))
+    let line = format!("printf '\\033[2J\\033[H'; {command}");
+    if line.len() > SHORT_LINE {
+        return send_scripted_shell_line(env, pane, &line);
+    }
+    send_shell_line(env, pane, &line)
 }
+
+/// Lo más largo que se teclea tal cual en un relanzamiento.
+const SHORT_LINE: usize = 120;
 
 /// `repr(str)` de Python para los mensajes de `TimeoutExpired`.
 pub(crate) fn py_repr(text: &str) -> String {

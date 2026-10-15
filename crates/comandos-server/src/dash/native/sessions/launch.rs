@@ -178,6 +178,63 @@ fn type_later(native: &Native, sess: &str, command: String) {
     }
 }
 
+/// Desviación del Python (15-oct, Jesús: «pone comandos muy largos»): el
+/// comando entero del agente se guarda en `~/.local/share/comandos/launch/<nombre>`
+/// y la terminal solo muestra `. ~/.local/share/comandos/launch/<nombre>`.
+/// El archivo se queda (no se borra) para que ↑ + Enter vuelva a lanzar lo
+/// mismo. Si no se puede escribir, se teclea el comando largo como antes.
+fn launch_line(home: &Path, name: &str, command: &str) -> String {
+    let rel = format!(".local/share/comandos/launch/{name}");
+    let path = home.join(&rel);
+    let written = (|| -> io::Result<()> {
+        let dir = path.parent().ok_or_else(|| io::Error::other("sin carpeta"))?;
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        let tmp = dir.join(format!(".{name}.{}", std::process::id()));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        io::Write::write_all(&mut file, format!("{command}\n").as_bytes())?;
+        drop(file);
+        fs::rename(&tmp, &path)
+    })();
+    match written {
+        Ok(()) => format!(". ~/{rel}"),
+        Err(error) => {
+            eprintln!("comandos dash: no se pudo guardar el lanzador {name}: {error}");
+            command.to_owned()
+        }
+    }
+}
+
+/// Nombre legible del lanzador: `claude-relotto-fable-5-1-high`. Solo letras,
+/// dígitos, `.` y `-`; las partes vacías o `main` se omiten.
+fn launch_name(parts: &[&str]) -> String {
+    let mut words = Vec::new();
+    for part in parts {
+        let part = part.trim().strip_prefix("claude-").unwrap_or(part.trim());
+        let clean: String = part
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let clean = clean.trim_matches('-').to_owned();
+        if !clean.is_empty() && clean != "main" && !words.contains(&clean) {
+            words.push(clean);
+        }
+    }
+    let name = words.join("-");
+    let name: String = name.chars().take(80).collect();
+    if name.is_empty() { "agente".into() } else { name }
+}
+
 /// `register_app_tab(sess, label, kind="project", cwd=cwd)` como efecto.
 async fn register_tab(
     native: &Native,
@@ -1062,7 +1119,21 @@ pub(super) async fn session_new(native: &Native, data: &Map<String, Value>) -> A
         if claude_route {
             inherit_trust(native, &registry, &home, &final_cwd, &alias).await;
         }
-        type_later(native, &new_sess, command);
+        let mut parts = vec![agent.as_str(), alias.as_str()];
+        if motor_alias != alias {
+            parts.push(motor_alias.as_str());
+        }
+        parts.extend([model.as_str(), effort.as_str()]);
+        let profile_id = profile
+            .as_ref()
+            .and_then(|p| p["id"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        parts.push(&profile_id);
+        if data.get("danger").is_some_and(truthy) {
+            parts.push("danger");
+        }
+        let line = launch_line(&opts.home, &launch_name(&parts), &command);
+        type_later(native, &new_sess, line);
     }
     let route_id = match &route {
         Some(route) => route.get("id").cloned().unwrap_or(Value::Null),
@@ -1459,8 +1530,8 @@ pub(super) async fn account_add(native: &Native, data: &Map<String, Value>) -> A
 #[cfg(test)]
 mod tests {
     use super::{
-        Fault, NativeOptions, fnmatch, grok_refusal, include_files, make_worktree, motor_lock,
-        worktree_plan,
+        Fault, NativeOptions, fnmatch, grok_refusal, include_files, launch_line, launch_name,
+        make_worktree, motor_lock, worktree_plan,
     };
     use serde_json::json;
     use std::{fs, path::PathBuf, process::Command};
@@ -1481,6 +1552,31 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn a_launch_is_typed_as_one_short_readable_line() {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            launch_name(&["claude", "relotto", "claude-fable-5-1", "high", "", ""]),
+            "claude-relotto-fable-5-1-high"
+        );
+        assert_eq!(launch_name(&["codex", "main", "gpt/5 ", "", "danger"]), "codex-gpt-5-danger");
+        assert_eq!(launch_name(&["", "main"]), "agente");
+        let home = Scratch::new("launcher");
+        let long = format!("CLAUDE_CONFIG_DIR=/x claude --model a 'b c' {}", "x".repeat(300));
+        let line = launch_line(&home.0, "claude-relotto", &long);
+        assert_eq!(line, ". ~/.local/share/comandos/launch/claude-relotto");
+        let file = home.0.join(".local/share/comandos/launch/claude-relotto");
+        assert_eq!(fs::read_to_string(&file).unwrap(), format!("{long}\n"));
+        assert_eq!(fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        // Relanzar lo mismo reescribe el archivo; ↑ + Enter sigue funcionando.
+        assert_eq!(launch_line(&home.0, "claude-relotto", "otro"), line);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "otro\n");
+        // Sin carpeta escribible se teclea el comando entero, como antes.
+        let blocked = home.0.join("archivo");
+        fs::write(&blocked, "").unwrap();
+        assert_eq!(launch_line(&blocked, "n", &long), long);
     }
 
     fn git(dir: &std::path::Path, args: &[&str]) -> bool {

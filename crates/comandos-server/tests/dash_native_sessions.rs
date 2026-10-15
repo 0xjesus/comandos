@@ -871,6 +871,7 @@ async fn same_typed(t: &Twin, path: &str, body: &str) -> (u16, Vec<Vec<String>>)
     let (status, created) = same_logged(t, path, body).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     let (a, b) = take_mutations(t);
+    let a = unfold_launchers(&t.a, a);
     assert_eq!(a, b, "tecleo de {path} {body}");
     for rel in ACCOUNT_FILES {
         assert_eq!(
@@ -882,6 +883,33 @@ async fn same_typed(t: &Twin, path: &str, body: &str) -> (u16, Vec<Vec<String>>)
     let mut all = created;
     all.extend(a);
     (status, all)
+}
+
+/// El frente teclea `. ~/.local/share/comandos/launch/<nombre>` donde el
+/// Python teclea el comando entero (desviación del 15-oct): se sustituye por
+/// el contenido del lanzador, que debe ser 0600 y terminar en salto de línea.
+fn unfold_launchers(home: &TestHome, log: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    use std::os::unix::fs::PermissionsExt;
+    const PREFIX: &str = ". ~/.local/share/comandos/launch/";
+    log.into_iter()
+        .map(|mut args| {
+            if args.first().is_some_and(|v| v == "send-keys")
+                && let Some(name) = args.get(3).and_then(|c| c.strip_prefix(PREFIX))
+            {
+                assert!(
+                    name.chars().all(|c| c.is_ascii_alphanumeric() || "-.".contains(c)),
+                    "nombre de lanzador ilegible: {name}"
+                );
+                let path = home.root.join(".local/share/comandos/launch").join(name);
+                let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "{name}");
+                let text = std::fs::read_to_string(&path).unwrap();
+                let command = text.strip_suffix('\n').expect("lanzador sin salto final");
+                args[3] = arg_of(home, command);
+            }
+            args
+        })
+        .collect()
 }
 
 /// El comando de cada `send-keys` de un registro comparable.
@@ -1028,6 +1056,18 @@ async fn session_new_and_account_add_match_python() {
     assert!(
         has("GROK_HOME=~/.grok-accounts/g1 grok login"),
         "{commands:#?}"
+    );
+    // El frente tecleó lanzadores cortos (y no el comando entero de respaldo).
+    let launchers: Vec<String> =
+        std::fs::read_dir(t.a.root.join(".local/share/comandos/launch"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+    assert!(
+        launchers.iter().any(|n| n.starts_with("claude-relotto"))
+            && launchers.iter().any(|n| n.starts_with("codex"))
+            && !launchers.iter().any(|n| n.contains("login")),
+        "{launchers:?}"
     );
     // La configuración registrada y la confianza heredada, iguales.
     for table in ["usage_session_configs", "usage_changes"] {

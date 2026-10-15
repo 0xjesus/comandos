@@ -192,3 +192,50 @@ fn enter_failure_removes_script_without_retry() {
 fn shell_ack_timeout_removes_script_without_more_terminal_input() {
     rejected_transport("ack-timeout");
 }
+
+#[test]
+fn a_relaunch_types_only_a_short_source_line() {
+    let Some(lab) = OpsLab::start("short-relaunch") else {
+        return;
+    };
+    let mut env = lab.env();
+    pane_exit::send_shell_line(&env, &lab.other, "exec /bin/zsh -f").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while lab.show(&lab.other, "#{pane_current_command}") != "zsh" {
+        assert!(Instant::now() < deadline, "private zsh did not start");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = lab.home.join("relaunch-output");
+    let quote = comandos_core::text::shlex_quote;
+    let flags = " -u CLAUDECODE -u CODEX_HOME -u GROK_HOME".repeat(6);
+    let command = format!(
+        "env COMANDOS_OPERATION_ID=op-1 env{flags} sh -c {}",
+        quote(&format!(
+            "printf %s \"$COMANDOS_OPERATION_ID\" > {}",
+            quote(output.to_str().unwrap())
+        ))
+    );
+    assert!(command.len() > 250 && command.len() < 4096);
+    let original = env.tmux.clone();
+    let typed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = typed.clone();
+    env.tmux = Arc::new(move |args| {
+        if args.first() == Some(&"send-keys") && args.contains(&"-l") {
+            seen.lock().unwrap().push(args.last().unwrap().to_string());
+        }
+        original(args)
+    });
+    pane_exit::send_configuration_command(&env, &lab.other, &command).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read(&output).ok().as_deref() != Some(b"op-1".as_slice()) {
+        assert!(Instant::now() < deadline, "relaunch did not run");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let typed = typed.lock().unwrap();
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(typed[0].starts_with(". ") && typed[0].len() < 80, "{typed:?}");
+    assert!(!typed[0].contains("COMANDOS_OPERATION_ID"));
+    // Lo corto se sigue tecleando tal cual.
+    drop(typed);
+    pane_exit::send_configuration_command(&env, &lab.other, "exit").ok();
+}
