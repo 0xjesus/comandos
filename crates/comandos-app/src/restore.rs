@@ -97,12 +97,54 @@ pub trait ScopeLauncher {
         crate::resume::exact_resume_command(saved)
     }
     fn argv(&self, pane: &str, command: &str) -> Result<Vec<String>, String>;
+    /// Runs once the exact resume command is known, before it is typed.
+    fn prepare(&self, _saved: &Value, _cwd: &str, _home: &std::path::Path) {}
+}
+
+/// The restored conversation already ran in `cwd` under its own account, so the
+/// folder is trusted there before resuming. Otherwise Claude Code stops at
+/// "Yes, I trust this folder" (whose default is "No, exit" when the folder
+/// pre-approves permissions) and the pane falls back to its shell.
+pub fn trust_restored_cwd(saved: &Value, cwd: &str, home: &std::path::Path) {
+    let account_dir = |field: &str, default: &str| {
+        saved
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                s.strip_prefix("~/")
+                    .map(|s| home.join(s))
+                    .unwrap_or_else(|| std::path::PathBuf::from(s))
+            })
+            .unwrap_or_else(|| home.join(default))
+    };
+    let home_str = home.to_string_lossy();
+    match saved.get("agent").and_then(Value::as_str) {
+        Some("claude") => {
+            let config_dir = account_dir("claude_config_dir", ".claude");
+            let _ = comandos_runtime::claude_trust::ensure_cwd_trusted(
+                cwd,
+                Some(&config_dir.to_string_lossy()),
+                &home_str,
+            );
+        }
+        Some("codex") => {
+            let _ = comandos_runtime::launch_command::ensure_codex_cwd_trusted(
+                &account_dir("codex_home", ".codex"),
+                cwd,
+            );
+        }
+        _ => {}
+    }
 }
 
 pub struct PaneScopes;
 impl ScopeLauncher for PaneScopes {
     fn resume(&self, saved: &Value, home: &std::path::Path) -> Option<String> {
         crate::resume::verified_resume_command(saved, home)
+    }
+    fn prepare(&self, saved: &Value, cwd: &str, home: &std::path::Path) {
+        trust_restored_cwd(saved, cwd, home);
     }
     fn argv(&self, pane: &str, command: &str) -> Result<Vec<String>, String> {
         let mut random = [0u8; 12];
@@ -573,6 +615,7 @@ fn restore_missing<T: RestoreTmux, S: ScopeLauncher + ?Sized>(
                 None,
             )?;
             if let Some(command) = scopes.resume(&saved, home) {
+                scopes.prepare(&saved, &cwd(&saved, home), home);
                 let argv = scopes.argv(&pane, &command)?;
                 let command = argv
                     .iter()

@@ -608,6 +608,34 @@ fn inherit_codex_trust(
     if codex_decision(&data, &cwd)? != Some(json!("trusted")) {
         return Ok(false);
     }
+    codex_stamp(&target, &cwd)
+}
+
+/// Marca `cwd` como `trusted` en el `config.toml` de un `CODEX_HOME` para que
+/// `codex resume` no se detenga en la pregunta de confianza. Lo usa la
+/// restauración: la conversación ya corrió en esa carpeta con esa cuenta.
+/// `Ok(true)` si la carpeta queda confiable (ya lo estaba o se marcó).
+pub fn ensure_codex_cwd_trusted(codex_home: &Path, cwd: &str) -> Result<bool, Unsure> {
+    if !cwd.starts_with('/') || !Path::new(cwd).is_dir() {
+        return Ok(false);
+    }
+    let target = codex_home.join("config.toml");
+    if fs::symlink_metadata(&target).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Ok(false);
+    }
+    let cwd = realpath(cwd.as_bytes());
+    // Una decisión explícita (también `untrusted`) no se toca:
+    // `codex_stamp_locked` solo escribe cuando no hay ninguna.
+    if let Some(data) = extension_launch::read_trust_toml(&target)?
+        && codex_decision(&data, &cwd)? == Some(json!("trusted"))
+    {
+        return Ok(true);
+    }
+    codex_stamp(&target, &cwd)
+}
+
+/// Candado `<target>.lock` y `codex_stamp_locked`.
+fn codex_stamp(target: &Path, cwd: &[u8]) -> Result<bool, Unsure> {
     let Some(parent) = target.parent() else {
         return Ok(false);
     };
@@ -630,7 +658,7 @@ fn inherit_codex_trust(
     if lock.lock().is_err() {
         return Ok(false);
     }
-    let result = codex_stamp_locked(&target, parent, &cwd);
+    let result = codex_stamp_locked(target, parent, cwd);
     let _ = lock.unlock();
     result
 }
