@@ -1,0 +1,34 @@
+{
+  "input": {
+    "script": "\nimport importlib.machinery, importlib.util, json, os, subprocess, sys, time, types\nrepo = sys.argv[1]\nsys.path[:0] = [os.path.join(repo, 'bin'), os.path.join(repo, 'lib')]\nloader = importlib.machinery.SourceFileLoader('cc_dash_oracle', os.path.join(repo, 'bin/cc-dash'))\nspec = importlib.util.spec_from_loader(loader.name, loader)\ndash = importlib.util.module_from_spec(spec)\nloader.exec_module(dash)\nfrom session_operations import OperationStore, run_operation\ntmux_path, socket, home, pane, raw = sys.argv[2:7]\ndef tmux(*args, timeout=5):\n    assert os.path.isdir(os.path.dirname(socket)), 'sin socket privado'\n    return subprocess.run([tmux_path, '-f', '/dev/null', '-S', socket, *map(str, args)],\n                          capture_output=True, text=True, timeout=10)\nregistry = json.load(open(os.path.join(repo, 'config/providers.json')))\nfor name, spec in registry['harnesses'].items():\n    if spec['capabilities'].get('accounts'):\n        spec.update(defaultHome=os.path.join(home, '.' + name), accountsRoot=os.path.join(home, '.' + name + '-accounts'))\nstub = os.path.join(home, 'bin', 'codex')\ndash.tmux = tmux\ndash.read_conf = lambda: {}\ndash.load_provider_registry = lambda: registry\ndash._harness_bin = lambda harness: stub if harness == 'codex' else '/missing/' + harness\nfacts = {'harnesses': {'codex': {'available': True, 'authenticated': True}}, 'motors': {}, 'gateway': {}}\ndash.capability_matrix = lambda: dash.provider_registry.evaluate_capability_matrix(registry, facts)\ndash.time = types.SimpleNamespace(time=time.time, sleep=lambda seconds: time.sleep(min(seconds, .04)))\ndash.cc_usage.record_change = lambda *a, **k: None\nstore = OperationStore(os.path.join(home, 'operations.sqlite3'))\ndash.session_operation_store = lambda: store\ndata = json.loads(raw)\nidentity = dash._pane_identity('audit', pane)\nadapter = dash.SessionConfiguration(data, identity)\nadapter.store = store\nstore.claim(data['requestId'], dash._identity_key(identity), data)\nresult = run_operation(store, data['requestId'], adapter)\nrow = store.get(data['requestId'])\nsnapshot = row['snapshot'] or {}\nobserved = result.get('observed')\nif isinstance(observed, dict):\n    for volatile in ('observedAt', 'evidenceAt', 'pid', 'identity'):\n        observed.pop(volatile, None)\nprint(json.dumps({'result': result, 'state': row['state'],\n                  'command': (snapshot.get('destination') or {}).get('command'),\n                  'resume': (snapshot.get('origin') or {}).get('resume_command'),\n                  'args': dash._proc_cmdline(dash.agent_info_for_pane(pane)['pid'])},\n                 separators=(',', ':'), ensure_ascii=False).replace(home, '~H'))\n",
+    "args": [
+      {
+        "arg": "/usr/bin/tmux",
+        "file": "6684c9b0bd4af08461f9e476e0abee9c3f08daa5d55ed6fb7c663c000e09f83d"
+      },
+      {
+        "arg": "{{FIXTURE}}/tmux/tmux-1000/default",
+        "file": null
+      },
+      {
+        "arg": "{{HOME}}",
+        "file": null
+      },
+      {
+        "arg": "%0",
+        "file": null
+      },
+      {
+        "arg": "{\"session\":\"audit\",\"pane\":\"%0\",\"requestId\":\"private-tmux-operation\",\"toHarness\":\"codex\",\"motor\":\"codex\",\"model\":\"gpt-5.6-sol\",\"effort\":\"low\",\"harnessAccount\":\"main\",\"motorAccount\":\"main\",\"interrupt\":true}",
+        "file": null
+      }
+    ],
+    "bin_inputs": [
+      [
+        "codex",
+        "e05b88f5a2368e907af5aab02ef4217d571febb69dbaa9b429122294bdf9f663"
+      ]
+    ]
+  },
+  "output_b64": "eyJyZXN1bHQiOnsib2siOnRydWUsIm9ic2VydmVkIjp7Imhhcm5lc3MiOiJjb2RleCIsImNvbnZlcnNhdGlvbklkIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwibW9kZWwiOiJncHQtNS42LXNvbCIsImVmZm9ydCI6ImxvdyIsInNvdXJjZSI6ImNvbnZlcnNhdGlvbiIsImhhcm5lc3NBY2NvdW50IjoibWFpbiIsIm1vdG9yIjoiY29kZXgiLCJtb3RvckFjY291bnQiOiJtYWluIiwiY29uZmlybWVkIjp0cnVlLCJhY2NvdW50U291cmNlIjoicHJvY2Vzcy1lbnZpcm9ubWVudCIsImxpbWl0YXRpb25zIjpbXX0sImNvbnRpbnVpdHkiOiJyZXN1bWVkIiwiaGFuZG9mZlJlcXVpcmVkIjpmYWxzZX0sInN0YXRlIjoiY29uZmlybWVkIiwiY29tbWFuZCI6ImVudiAtdSBDTEFVREVfQ09ORklHX0RJUiAtdSBDT0RFWF9IT01FIC11IEdST0tfSE9NRSAtdSBBTlRIUk9QSUNfQkFTRV9VUkwgLXUgQU5USFJPUElDX0RFRkFVTFRfT1BVU19NT0RFTCAtdSBBTlRIUk9QSUNfREVGQVVMVF9TT05ORVRfTU9ERUwgLXUgQU5USFJPUElDX0RFRkFVTFRfSEFJS1VfTU9ERUwgLXUgQU5USFJPUElDX01PREVMIC11IENMQVVERV9DT0RFX1NVQkFHRU5UX01PREVMIH5IL2Jpbi9jb2RleCByZXN1bWUgMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIC1tIGdwdC01LjYtc29sIC1jICdtb2RlbF9yZWFzb25pbmdfZWZmb3J0PVwibG93XCInIC0tc2FuZGJveCByZWFkLW9ubHkgLS1hc2stZm9yLWFwcHJvdmFsIHVudHJ1c3RlZCIsInJlc3VtZSI6ImVudiAtdSBDTEFVREVfQ09ORklHX0RJUiAtdSBDT0RFWF9IT01FIC11IEdST0tfSE9NRSAtdSBBTlRIUk9QSUNfQkFTRV9VUkwgLXUgQU5USFJPUElDX0RFRkFVTFRfT1BVU19NT0RFTCAtdSBBTlRIUk9QSUNfREVGQVVMVF9TT05ORVRfTU9ERUwgLXUgQU5USFJPUElDX0RFRkFVTFRfSEFJS1VfTU9ERUwgLXUgQU5USFJPUElDX01PREVMIC11IENMQVVERV9DT0RFX1NVQkFHRU5UX01PREVMIH5IL2Jpbi9jb2RleCByZXN1bWUgMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIC1tIGdwdC01LjYtc29sIC1jICdtb2RlbF9yZWFzb25pbmdfZWZmb3J0PVwiaGlnaFwiJyAtLXNhbmRib3ggcmVhZC1vbmx5IC0tYXNrLWZvci1hcHByb3ZhbCB1bnRydXN0ZWQiLCJhcmdzIjpbIn5IL2Jpbi9jb2RleCIsInJlc3VtZSIsIjExMTExMTExLTExMTEtMTExMS0xMTExLTExMTExMTExMTExMSIsIi1tIiwiZ3B0LTUuNi1zb2wiLCItYyIsIm1vZGVsX3JlYXNvbmluZ19lZmZvcnQ9XCJsb3dcIiIsIi0tc2FuZGJveCIsInJlYWQtb25seSIsIi0tYXNrLWZvci1hcHByb3ZhbCIsInVudHJ1c3RlZCJdfQo="
+}

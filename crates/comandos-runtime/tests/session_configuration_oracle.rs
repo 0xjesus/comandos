@@ -152,7 +152,7 @@ fn request(mode: &str) -> Value {
     json!({
         "session": "audit", "pane": "", "requestId": "private-tmux-operation",
         "toHarness": "codex", "motor": "codex",
-        "model": if mode == "launch-failure" { "gpt-5.6-luna" } else { "gpt-5.5" },
+        "model": if mode == "launch-failure" { "gpt-5.6-luna" } else { "gpt-5.6-sol" },
         "effort": "low",
         "harnessAccount": if work { "work" } else { "main" },
         "motorAccount": if work { "work" } else { "main" },
@@ -266,7 +266,7 @@ fn direct_account_round_trip_keeps_conversation_model_and_other_pane() {
         assert_eq!(row["state"], json!("confirmed"));
         assert_eq!(result["observed"]["conversationId"], json!(SID));
         assert_eq!(result["observed"]["harnessAccount"], json!(alias));
-        assert_eq!(result["observed"]["model"], json!("gpt-5.5"));
+        assert_eq!(result["observed"]["model"], json!("gpt-5.6-sol"));
         assert_eq!(result["observed"]["effort"], json!("high"));
         assert_eq!(
             lab.show(&lab.other, "#{pane_pid}\t#{pane_current_command}"),
@@ -290,7 +290,7 @@ fn old_prompt_cannot_confirm_delayed_new_cli() {
         .run(&["resize-window", "-t", &lab.pane, "-x", "300", "-y", "50"]);
     let data = json!({
         "session": "audit", "pane": lab.pane, "requestId": "slow-redraw-operation",
-        "toHarness": "codex", "motor": "codex", "model": "gpt-5.5", "effort": "high",
+        "toHarness": "codex", "motor": "codex", "model": "gpt-5.6-sol", "effort": "high",
         "harnessAccount": "work", "motorAccount": "work", "interrupt": true,
     });
     let (result, row) = run_rust(&lab, &data, Some(2));
@@ -558,7 +558,7 @@ fn linger_recovery(tag: &str, seconds: u32) -> Option<(OpsLab, sc::Env, Result<(
             &lab.ctx(),
             "codex",
             "codex",
-            "gpt-5.5",
+            "gpt-5.6-sol",
             "high",
             account,
             SID,
@@ -610,7 +610,7 @@ fn linger_recovery(tag: &str, seconds: u32) -> Option<(OpsLab, sc::Env, Result<(
             "resume_command": command("main"),
         },
         "destination": {
-            "to": "codex", "motor": "codex", "model": "gpt-5.5", "effort": "high",
+            "to": "codex", "motor": "codex", "model": "gpt-5.6-sol", "effort": "high",
             "harnessAccount": "work", "motorAccount": "work", "expectedSid": SID,
         },
         "destinationProcess": {
@@ -829,7 +829,7 @@ fn extension_apply_relaunches_only_private_stub_and_preserves_selection_on_model
     let mut change = request("change");
     change["pane"] = json!(lab.pane);
     change["requestId"] = json!("extension-preserve-change");
-    change["model"] = json!("gpt-5.5");
+    change["model"] = json!("gpt-5.6-sol");
     change["effort"] = json!("low");
     let identity = lab.identity();
     let mut normal =

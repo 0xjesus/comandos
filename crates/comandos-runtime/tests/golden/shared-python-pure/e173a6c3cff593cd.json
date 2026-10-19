@@ -1,0 +1,38 @@
+{
+  "input": {
+    "script": "\nimport importlib.machinery, importlib.util, json, os, subprocess, sys\nrepo = sys.argv[1]\nsys.path[:0] = [os.path.join(repo, 'bin'), os.path.join(repo, 'lib')]\nloader = importlib.machinery.SourceFileLoader('cc_dash_oracle', os.path.join(repo, 'bin/cc-dash'))\nspec = importlib.util.spec_from_loader(loader.name, loader)\ndash = importlib.util.module_from_spec(spec)\nloader.exec_module(dash)\ntmux_path, socket, pane, cwd, sid, transcript = sys.argv[2:8]\ndef tmux(*args, timeout=5):\n    assert os.path.isdir(os.path.dirname(socket)), 'sin socket privado'\n    return subprocess.run([tmux_path, '-f', '/dev/null', '-S', socket, *map(str, args)],\n                          capture_output=True, text=True, timeout=10)\ndash.tmux = tmux\nprint(json.dumps([dash.capture_handoff(pane, 'codex', 'claude', cwd, sid, transcript_path=transcript),\n                  dash.capture_handoff(pane, 'codex', 'grok', '/no/existe', '', '')]))\n",
+    "args": [
+      {
+        "arg": "/usr/bin/tmux",
+        "file": "6684c9b0bd4af08461f9e476e0abee9c3f08daa5d55ed6fb7c663c000e09f83d"
+      },
+      {
+        "arg": "{{FIXTURE}}/tmux/tmux-1000/default",
+        "file": null
+      },
+      {
+        "arg": "%1",
+        "file": null
+      },
+      {
+        "arg": "{{HOME}}/code",
+        "file": null
+      },
+      {
+        "arg": "11111111-1111-1111-1111-111111111111",
+        "file": null
+      },
+      {
+        "arg": "{{HOME}}/t.jsonl",
+        "file": null
+      }
+    ],
+    "bin_inputs": [
+      [
+        "codex",
+        "e05b88f5a2368e907af5aab02ef4217d571febb69dbaa9b429122294bdf9f663"
+      ]
+    ]
+  },
+  "output_b64": "WyIjIEhhbmRvZmYgZGUgQ29tYW5kT1MgXHUyMDE0IGNvZGV4IFx1MjE5MiBjbGF1ZGVcblxuVmllbmVzIGRlIHVuYSBzZXNpXHUwMGYzbiBkZSAqKmNvZGV4KiogZW4gYHt7SE9NRX19L2NvZGVgLiBFcmVzIHVuIENMSSBkaXN0aW50bzogTk8gdGllbmVzIHN1IG1lbW9yaWEgaW50ZXJuYS4gVXNhIGVzdG8gcGFyYSBjb250aW51YXIgbGEgTUlTTUEgdGFyZWEuXG5cbiMjIEVzdGFkbyBnaXQgKHJhbWEgSEVBRClcbmBgYFxuPz8gbnVldm8udHh0XG5cbmBgYFxuXG4jIyBUcmFuc2NyaXB0IGRlIGNvZGV4IChzZSBjb25zZXJ2YSBlbiBkaXNjbylcbkFyY2hpdm86IGB7e0hPTUV9fS90Lmpzb25sYFxuc2Vzc2lvbklkOiBgMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExYCBcdTIwMTQgYWwgVk9MVkVSIGEgY29kZXggQ29tYW5kT1MgbGFuemEgYC0tcmVzdW1lYCBjb24gZXN0ZSBpZC4gTGEgbWVtb3JpYSBpbnRlcm5hIGRlbCBUVUkgTk8gc2UgY29waWEgYSBjbGF1ZGUuXG5cbiMjIFx1MDBkYWx0aW1vcyBwYXNvcyB2aXNpYmxlcyBkZSBsYSBzZXNpXHUwMGYzbiBhbnRlcmlvclxuYGBgXG4kIGVjaG8gJ1x1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMCcgOyBlY2hvIHZpc2libGUgOyBlY1xudmlzaWJsZVxuJFxuYGBgXG5cbkNvbnRpblx1MDBmYWEgZGVzZGUgYXF1XHUwMGVkLiBSZXZpc2EgYXJjaGl2b3MgeSBnaXQgc2kgbmVjZXNpdGFzIG1cdTAwZTFzIGNvbnRleHRvLiBDdWFuZG8gdGVybWluZXMgZGUgbGVlciwgcHVlZGVzIGJvcnJhciBlc3RlIGFyY2hpdm8uXG4iLCAiIyBIYW5kb2ZmIGRlIENvbWFuZE9TIFx1MjAxNCBjb2RleCBcdTIxOTIgZ3Jva1xuXG5WaWVuZXMgZGUgdW5hIHNlc2lcdTAwZjNuIGRlICoqY29kZXgqKiBlbiBgL25vL2V4aXN0ZWAuIEVyZXMgdW4gQ0xJIGRpc3RpbnRvOiBOTyB0aWVuZXMgc3UgbWVtb3JpYSBpbnRlcm5hLiBVc2EgZXN0byBwYXJhIGNvbnRpbnVhciBsYSBNSVNNQSB0YXJlYS5cblxuIyMgRXN0YWRvIGdpdCAocmFtYSA/KVxuYGBgXG4oc2luIGNhbWJpb3Mgc2luIGNvbW1pdGVhcilcblxuYGBgXG5cbiMjIFx1MDBkYWx0aW1vcyBwYXNvcyB2aXNpYmxlcyBkZSBsYSBzZXNpXHUwMGYzbiBhbnRlcmlvclxuYGBgXG4kIGVjaG8gJ1x1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMFx1MjUwMCcgOyBlY2hvIHZpc2libGUgOyBlY1xudmlzaWJsZVxuJFxuYGBgXG5cbkNvbnRpblx1MDBmYWEgZGVzZGUgYXF1XHUwMGVkLiBSZXZpc2EgYXJjaGl2b3MgeSBnaXQgc2kgbmVjZXNpdGFzIG1cdTAwZTFzIGNvbnRleHRvLiBDdWFuZG8gdGVybWluZXMgZGUgbGVlciwgcHVlZGVzIGJvcnJhciBlc3RlIGFyY2hpdm8uXG4iXQo="
+}

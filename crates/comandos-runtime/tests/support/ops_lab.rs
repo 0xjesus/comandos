@@ -34,7 +34,7 @@ const STUB: &str = r#"
 #include <signal.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
-  const char *sid="11111111-1111-1111-1111-111111111111", *model="gpt-5.5";
+  const char *sid="11111111-1111-1111-1111-111111111111", *model="gpt-5.6-sol";
   char effort[40]="high", path[4096];
 #ifdef IGNORES_EXIT
   signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN); signal(SIGQUIT, SIG_IGN);
@@ -196,7 +196,7 @@ impl OpsLab {
             &lab.ctx(),
             "codex",
             "codex",
-            "gpt-5.5",
+            "gpt-5.6-sol",
             "high",
             "main",
             SID,

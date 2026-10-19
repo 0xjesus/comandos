@@ -61,25 +61,14 @@
       "color": "208",
       "models": [
         {
-          "id": "grok-4.6",
-          "name": "Grok 4.6",
-          "tag": "coding recomendado · 500k ctx",
+          "id": "grok-4.7",
+          "name": "Grok 4.7",
+          "tag": "el más reciente · 500k ctx",
           "efforts": [
             "low",
             "medium",
             "high",
             "xhigh"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "grok-4.5",
-          "name": "Grok 4.5",
-          "tag": "500k ctx",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
           ],
           "defaultEffort": "high"
         }
@@ -246,34 +235,8 @@
           "defaultEffort": "high"
         },
         {
-          "id": "claude-fable-5[1m]",
-          "name": "Fable 5",
-          "tag": "más inteligente · 1M ctx",
-          "efforts": [
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "defaultEffort": "high"
-        },
-        {
           "id": "claude-opus-5-5",
           "name": "Opus 5.5",
-          "tag": "potente",
-          "efforts": [
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "claude-opus-5",
-          "name": "Opus 5",
           "tag": "potente",
           "efforts": [
             "low",
@@ -298,9 +261,9 @@
           "defaultEffort": "high"
         },
         {
-          "id": "claude-sonnet-5",
-          "name": "Sonnet 5",
-          "tag": "rápido y barato",
+          "id": "claude-haiku-5-5",
+          "name": "Haiku 5.5",
+          "tag": "el más rápido y barato",
           "efforts": [
             "low",
             "medium",
@@ -318,58 +281,98 @@
       "modelMatch": "^(?:gpt-|o[0-9]|codex)",
       "models": [
         {
-          "id": "gpt-6-astra",
-          "name": "GPT-6 Astra",
-          "tag": "OpenAI lo libera por oleadas · aún no en tu cuenta",
-          "soon": true,
-          "efforts": ["low", "medium", "high", "xhigh"],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "gpt-5.6-sol[1m]",
-          "name": "GPT-5.6 Sol",
-          "tag": "más inteligente · 1M ctx",
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1 Sol",
+          "tag": "el más reciente · código y día a día",
           "efforts": [
             "low",
             "medium",
             "high",
-            "xhigh"
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "gpt-6-astra",
+          "name": "GPT-6 Astra",
+          "tag": "más inteligente · trabajo exigente",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "gpt-6-sol",
+          "name": "GPT-6 Sol",
+          "tag": "generación anterior",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "tag": "rápido y barato",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "tag": "generación vieja",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
           ],
           "defaultEffort": "high"
         },
         {
           "id": "gpt-5.6-terra",
           "name": "GPT-5.6 Terra",
-          "tag": "equilibrado",
+          "tag": "generación vieja · equilibrado",
           "efforts": [
             "low",
             "medium",
             "high",
-            "xhigh"
+            "xhigh",
+            "max",
+            "ultra"
           ],
           "defaultEffort": "high"
         },
         {
           "id": "gpt-5.6-luna",
           "name": "GPT-5.6 Luna",
-          "tag": "rápido y barato",
+          "tag": "generación vieja · rápido",
           "efforts": [
             "low",
             "medium",
             "high",
-            "xhigh"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "gpt-5.5",
-          "name": "GPT-5.5",
-          "tag": "generación anterior",
-          "efforts": [
-            "low",
-            "medium",
-            "high",
-            "xhigh"
+            "xhigh",
+            "max"
           ],
           "defaultEffort": "high"
         }
@@ -381,25 +384,14 @@
       "modelMatch": "^(?:grok-|xai/)",
       "models": [
         {
-          "id": "grok-4.6",
-          "name": "Grok 4.6",
-          "tag": "coding recomendado · 500k ctx",
+          "id": "grok-4.7",
+          "name": "Grok 4.7",
+          "tag": "el más reciente · 500k ctx",
           "efforts": [
             "low",
             "medium",
             "high",
             "xhigh"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "grok-4.5",
-          "name": "Grok 4.5",
-          "tag": "500k ctx",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
           ],
           "defaultEffort": "high"
         }
@@ -485,52 +477,8 @@
     "agy": {
       "label": "Antigravity",
       "icon": "gemini",
-      "modelMatch": "^(?:gemini-|claude-sonnet-4-6|claude-opus-4-6|gpt-oss-)",
+      "modelMatch": "^(?:gemini-|claude-(?:opus|sonnet)-5-5-(?:low|medium|high)$|gpt-oss-)",
       "models": [
-        {
-          "id": "claude-sonnet-4-6",
-          "name": "Claude Sonnet 4.6",
-          "tag": "Claude con tu suscripción Antigravity",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "claude-opus-4-6-thinking",
-          "name": "Claude Opus 4.6 (thinking)",
-          "tag": "Claude con tu suscripción Antigravity",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "gemini-3.1-pro-high",
-          "name": "Gemini 3.1 Pro (high)",
-          "tag": "más inteligente",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "defaultEffort": "high"
-        },
-        {
-          "id": "gemini-3.1-pro-low",
-          "name": "Gemini 3.1 Pro (low)",
-          "tag": "rápido",
-          "efforts": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "defaultEffort": "high"
-        },
         {
           "id": "gemini-3.8-flash-high",
           "name": "Gemini 3.8 Flash (high)",
@@ -565,9 +513,64 @@
           "defaultEffort": "high"
         },
         {
-          "id": "gemini-3.7-flash-high",
-          "name": "Gemini 3.7 Flash (high)",
-          "tag": "estable",
+          "id": "claude-opus-5-5-high",
+          "name": "Claude Opus 5.5 (high)",
+          "tag": "Claude con tu suscripción Antigravity",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "claude-opus-5-5-medium",
+          "name": "Claude Opus 5.5 (medium)",
+          "tag": "Claude con tu suscripción Antigravity",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "claude-opus-5-5-low",
+          "name": "Claude Opus 5.5 (low)",
+          "tag": "Claude con tu suscripción Antigravity",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "claude-sonnet-5-5-high",
+          "name": "Claude Sonnet 5.5 (high)",
+          "tag": "Claude con tu suscripción Antigravity",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "claude-sonnet-5-5-medium",
+          "name": "Claude Sonnet 5.5 (medium)",
+          "tag": "Claude con tu suscripción Antigravity",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "defaultEffort": "high"
+        },
+        {
+          "id": "claude-sonnet-5-5-low",
+          "name": "Claude Sonnet 5.5 (low)",
+          "tag": "Claude con tu suscripción Antigravity",
           "efforts": [
             "low",
             "medium",
