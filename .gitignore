@@ -29,3 +29,9 @@ docs/superpowers/
 /.migration-build/
 
 /.superpowers/
+
+# Local scratch, browser logs and stray tool output — never commit
+/.scratch/
+/.playwright-mcp/
+/~/
+*.deb
