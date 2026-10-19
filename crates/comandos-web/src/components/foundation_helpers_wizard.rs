@@ -377,9 +377,9 @@ async fn open() -> Result<JsValue, JsValue> {
         }
     }
     classes(&id("newsess"), "hidden", false);
-    if !truthy(&global("PROVIDERS"))
-        && let Ok(p) = api("/providers", None).await
-    {
+    // Cada apertura relee las cuentas: una cuenta agregada con el tablero abierto
+    // no aparecía hasta recargar. Si falla, se queda la lista anterior.
+    if let Ok(p) = api("/providers", None).await {
         let _ = global_set("PROVIDERS", &p);
     }
     let mut dirs: Vec<_> = js_rows(&get(&state(), "list"))

@@ -2400,7 +2400,7 @@ function mdStrip(s){ return (s||"").replace(/\*\*|`|^#{1,6} /g, ""); }
 	  if(b.classList.contains("app") && !b.classList.contains("split") && !b.classList.contains("inapp") &&
 	     typeof activeView!=="undefined" && activeView!=="panel" && typeof showView==="function") showView("panel");
 	  const m=$("#newsess");m.classList.remove("hidden");
-	  if(!PROVIDERS) try{PROVIDERS=await api("/providers");}catch(e){}
+	  try{PROVIDERS=await api("/providers");}catch(e){}
 	  const dirs=[...new Set((S.list||[]).map(i=>i.cwd).filter(Boolean))].sort();
 	  $("#ns-dirs").innerHTML=dirs.map(d=>`<option value="${attrEsc(d)}">`).join("");
 	  const sel=pickSel(S.list||[]);if(sel&&sel.cwd&&!$("#ns-cwd").value)$("#ns-cwd").value=sel.cwd;
