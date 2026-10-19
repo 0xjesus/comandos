@@ -161,17 +161,21 @@ fn tmux_failed(stderr: &str) -> Answer {
     )
 }
 
-/// El hilo `_send` del Python: 1,5 s después, `send-keys -t =<s>: <c> Enter`;
-/// su resultado no se mira. Contado en `Native::tasks` (se abandona al apagar,
-/// como el hilo `daemon`).
-fn type_later(native: &Native, sess: &str, command: String) {
+/// El hilo `_send` del Python: 1,5 s después, por cada línea en orden,
+/// `send-keys -t =<s>: <c>` y, si la línea lo pide, `Enter`; su resultado no se
+/// mira. Contado en `Native::tasks` (se abandona al apagar, como el hilo `daemon`).
+fn type_later(native: &Native, sess: &str, lines: Vec<(String, bool)>) {
     let tmux = native.options().tmux.clone();
     let target = format!("={sess}:");
     let spawned = native.tasks().spawn(async move {
         tokio::time::sleep(TYPE_DELAY).await;
-        let _ = tmux
-            .run(&["send-keys", "-t", &target, &command, "Enter"])
-            .await;
+        for (text, enter) in &lines {
+            let mut args = vec!["send-keys", "-t", &target, text.as_str()];
+            if *enter {
+                args.push("Enter");
+            }
+            let _ = tmux.run(&args).await;
+        }
     });
     if let Err(error) = spawned {
         eprintln!("comandos dash: no se pudo programar el tecleo en {sess}: {error}");
@@ -1133,7 +1137,14 @@ pub(super) async fn session_new(native: &Native, data: &Map<String, Value>) -> A
             parts.push("danger");
         }
         let line = launch_line(&opts.home, &launch_name(&parts), &command);
-        type_later(native, &new_sess, line);
+        // «+» deja el lanzador escrito; Jesús lo lanza con su propio Enter. Si es
+        // el corto, antes muestra el comando real como comentario de zsh.
+        let mut lines = Vec::new();
+        if line != command {
+            lines.push((format!("# {command}"), true));
+        }
+        lines.push((line, false));
+        type_later(native, &new_sess, lines);
     }
     let route_id = match &route {
         Some(route) => route.get("id").cloned().unwrap_or(Value::Null),
@@ -1519,7 +1530,7 @@ pub(super) async fn account_add(native: &Native, data: &Map<String, Value>) -> A
     type_later(
         native,
         &new_sess,
-        format!("{LOGIN_ENV}{} {login}", plan.env),
+        vec![(format!("{LOGIN_ENV}{} {login}", plan.env), true)],
     );
     reply(
         StatusCode::OK,

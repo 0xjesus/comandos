@@ -888,10 +888,26 @@ async fn same_typed(t: &Twin, path: &str, body: &str) -> (u16, Vec<Vec<String>>)
 /// El frente teclea `. ~/.local/share/comandos/launch/<nombre>` donde el
 /// Python teclea el comando entero (desviación del 15-oct): se sustituye por
 /// el contenido del lanzador, que debe ser 0600 y terminar en salto de línea.
+/// Segunda desviación del 15-oct: el lanzador queda escrito SIN Enter (Jesús lo
+/// da a mano), precedido del comando real como comentario `# …` con Enter; se
+/// exige ambas cosas, se quita el comentario y se agrega el Enter para comparar
+/// con el Python.
 fn unfold_launchers(home: &TestHome, log: Vec<Vec<String>>) -> Vec<Vec<String>> {
     use std::os::unix::fs::PermissionsExt;
     const PREFIX: &str = ". ~/.local/share/comandos/launch/";
+    let mut comment: Option<String> = None;
     log.into_iter()
+        .filter(|args| {
+            let is_comment = args.first().is_some_and(|v| v == "send-keys")
+                && args.get(3).is_some_and(|c| c.starts_with("# "));
+            if is_comment {
+                assert_eq!(args.get(4).map(String::as_str), Some("Enter"), "{args:?}");
+                comment = args.get(3).cloned();
+            }
+            !is_comment
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
         .map(|mut args| {
             if args.first().is_some_and(|v| v == "send-keys")
                 && let Some(name) = args.get(3).and_then(|c| c.strip_prefix(PREFIX))
@@ -905,7 +921,14 @@ fn unfold_launchers(home: &TestHome, log: Vec<Vec<String>>) -> Vec<Vec<String>> 
                 assert_eq!(mode, 0o600, "{name}");
                 let text = std::fs::read_to_string(&path).unwrap();
                 let command = text.strip_suffix('\n').expect("lanzador sin salto final");
+                assert_eq!(
+                    comment.take().as_deref(),
+                    Some(arg_of(home, &format!("# {command}")).as_str()),
+                    "el «+» muestra el comando real antes del lanzador"
+                );
                 args[3] = arg_of(home, command);
+                assert_eq!(args.len(), 4, "el «+» no debe dar Enter: {args:?}");
+                args.push("Enter".into());
             }
             args
         })
