@@ -1,0 +1,209 @@
+<title>ComandOS Móvil</title>
+<style>
+/* PROTOTIPO desechable — grill de diseño móvil (ronda 1: estructura general).
+   Mock del ComandOS remoto a ~390px; el selector abajo a la derecha cambia de diseño. */
+:root{
+  --bg:#0c0f1a; --pane:#121626; --raise:#191e33; --line:#262c47; --line2:#343b5c;
+  --text:#e6e8f2; --dim:#9aa0bd; --faint:#646a8a; --brand:#8b7cf6; --brand-ink:#c9c1ff;
+  --ok:#3ccf7e; --warn:#f4b740; --bad:#f2727a; --blue:#5b9cf6;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace; --ui:"Inter Tight",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:#05060b;color:var(--text);font-family:var(--ui);display:flex;justify-content:center;overflow:hidden}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:focus-visible,textarea:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+#phone{position:relative;width:100%;max-width:430px;height:100%;background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
+@media (min-width:600px){#phone{height:min(900px,calc(100% - 32px));margin-block:16px;border-radius:34px;border:8px solid #1c2033;box-shadow:0 30px 80px #0009}}
+.app{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+.kbd{flex:none;height:270px;background:#1d2030;border-top:1px solid var(--line);display:grid;grid-template-rows:repeat(4,1fr);gap:8px;padding:10px 6px 14px}
+.kbd div{display:flex;gap:6px;justify-content:center}.kbd span{flex:1;max-width:36px;background:#2c3047;border-radius:6px}
+.kbd div:last-child span{max-width:none}.kbd div:last-child span:nth-child(2){flex:4}
+
+/* piezas comunes */
+.term{font:12px/1.45 var(--mono);color:#cfd3e6;padding:10px 12px;white-space:pre-wrap;word-break:break-word;overflow:auto;flex:1;min-height:0}
+.term .p{color:var(--bad)} .term .g{color:var(--ok)} .term .d{color:var(--faint)} .term .b{color:var(--brand-ink)} .term .y{color:var(--warn)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ok)}
+.dot.wait{background:var(--warn);box-shadow:0 0 0 3px #f4b74033;animation:pulse 1.4s infinite}
+.dot.done{background:var(--blue)} .dot.park{background:var(--faint)} .dot.shell{background:var(--dim)}
+@keyframes pulse{50%{box-shadow:0 0 0 6px #f4b74000}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.badge{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;white-space:nowrap}
+.badge.wait{background:#f4b74022;color:var(--warn)} .badge.done{background:#5b9cf622;color:var(--blue)} .badge.park{background:#646a8a33;color:var(--dim)}
+.model{font:11px var(--mono);color:var(--faint)}
+.composer{display:flex;gap:8px;align-items:flex-end;padding:8px 10px;background:var(--pane);border-top:1px solid var(--line)}
+.composer textarea{flex:1;min-height:42px;max-height:120px;resize:none;border-radius:14px;border:1px solid var(--line2);background:var(--bg);color:var(--text);padding:11px 14px;font:15px/1.3 var(--ui)}
+.send{width:42px;height:42px;border-radius:50%;border:0;background:var(--brand);color:#fff;display:grid;place-items:center;flex:none}
+.keys{display:flex;gap:6px;padding:6px 10px calc(8px + env(safe-area-inset-bottom,0px));overflow-x:auto;scrollbar-width:none;background:var(--pane)}
+.keys button{flex:none;height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--line2);background:var(--raise);font:600 13px var(--mono)}
+.keys .yes{color:var(--ok);border-color:#3ccf7e66}.keys .no{color:var(--bad);border-color:#f2727a66}
+.perm{margin:8px 10px 0;padding:10px 12px;border-radius:12px;background:#f4b74014;border:1px solid #f4b74055;display:flex;flex-direction:column;gap:8px}
+.perm p{margin:0;font-size:13px;color:var(--text)} .perm code{font:12px var(--mono);color:var(--warn)}
+.perm .row{display:flex;gap:8px}.perm .row button{flex:1;height:44px;border-radius:10px;border:0;font-weight:700;font-size:15px}
+.perm .y{background:var(--ok);color:#06210f}.perm .n{background:var(--raise);color:var(--bad);border:1px solid #f2727a55!important}
+.ico{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.iconbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--raise);display:grid;place-items:center;flex:none}
+.scrim{position:absolute;inset:0;background:#0009;z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:6;background:var(--pane);border-radius:20px 20px 0 0;border-top:1px solid var(--line2);max-height:78%;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,0px)}
+.sheet .handle{width:40px;height:5px;border-radius:3px;background:var(--line2);margin:8px auto 4px}
+.sheet h3{margin:4px 16px 8px;font-size:13px;color:var(--dim);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.list{overflow:auto;padding:0 8px 10px}
+.row-s{width:100%;display:flex;align-items:center;gap:12px;padding:0 12px;height:54px;border-radius:12px;border:0;background:transparent;text-align:left}
+.row-s.cur{background:var(--raise);box-shadow:inset 3px 0 0 var(--brand)}
+.row-s .nm{flex:1;min-width:0;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* A · Dock */
+.A-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--pane)}
+.A-chip{flex:1;min-width:0;height:44px;border-radius:12px;border:1px solid var(--line2);background:var(--raise);display:flex;align-items:center;gap:10px;padding:0 12px;text-align:left}
+.A-chip b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.A-alert{position:absolute;top:66px;right:10px;z-index:4;font-size:12px;padding:6px 10px;border-radius:999px;background:var(--warn);color:#2a1d00;font-weight:700;border:0}
+
+/* B · Carrusel */
+.B-tabs{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);background:var(--pane);scroll-snap-type:x mandatory}
+.B-tab{flex:none;height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line2);background:var(--raise);display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;scroll-snap-align:center}
+.B-tab.cur{background:#8b7cf62a;border-color:var(--brand);color:var(--brand-ink)}
+.B-track{flex:1;min-height:0;display:flex;transition:transform .28s cubic-bezier(.2,.8,.2,1);touch-action:pan-y}
+.B-page{flex:0 0 100%;min-width:0;display:flex;flex-direction:column}
+.B-dots{display:flex;justify-content:center;gap:5px;padding:6px;background:var(--bg)}
+.B-dots i{width:6px;height:6px;border-radius:3px;background:var(--line2)}.B-dots i.cur{width:16px;background:var(--brand)}
+
+/* C · Tarjetas */
+.C-top{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 6px}
+.C-top h1{margin:0;font-size:22px;letter-spacing:-.01em}
+.C-grid{flex:1;min-height:0;overflow:auto;padding:6px 12px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+.C-card{border-radius:16px;border:1px solid var(--line);background:var(--pane);padding:10px;text-align:left;display:flex;flex-direction:column;gap:8px;min-width:0}
+.C-card.need{grid-column:1/-1;border-color:#f4b74077;background:linear-gradient(#f4b7400f,#f4b74005)}
+.C-card .hd{display:flex;align-items:center;gap:8px;min-width:0}.C-card .hd b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px}
+.C-card pre{margin:0;font:10px/1.4 var(--mono);color:var(--dim);height:56px;overflow:hidden;white-space:pre-wrap;word-break:break-all;-webkit-mask-image:linear-gradient(transparent,#000 40%)}
+.C-back{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--pane)}
+.C-back b{flex:1;font-size:16px}
+
+/* D · Chat */
+.D-head{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--pane)}
+.D-head .t{flex:1;min-width:0}.D-head .t b{display:block;font-size:16px}.D-head .t span{font-size:12px;color:var(--ok)}
+.D-feed{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.D-me{align-self:flex-end;max-width:82%;background:var(--brand);color:#fff;padding:9px 13px;border-radius:16px 16px 4px 16px;font-size:14px}
+.D-ai{align-self:flex-start;max-width:92%;background:var(--pane);border:1px solid var(--line);padding:10px 13px;border-radius:16px 16px 16px 4px;font-size:14px;line-height:1.45}
+.D-ai .tool{display:block;margin-top:6px;font:11px var(--mono);color:var(--faint)}
+.D-raw{font-size:12px;color:var(--brand-ink);background:none;border:0;align-self:center;padding:4px}
+.D-drawer{position:absolute;top:0;bottom:0;left:0;width:82%;z-index:6;background:var(--pane);border-right:1px solid var(--line2);display:flex;flex-direction:column;padding-top:10px}
+
+/* E · Bandeja */
+.E-head{padding:14px 16px 4px;display:flex;align-items:baseline;justify-content:space-between}
+.E-head h1{margin:0;font-size:22px}.E-head span{font-size:12px;color:var(--dim)}
+.E-scroll{flex:1;min-height:0;overflow:auto;padding:4px 12px 16px}
+.E-group{margin-top:12px}.E-group h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:0 4px 6px}
+.E-item{border-radius:14px;background:var(--pane);border:1px solid var(--line);margin-bottom:8px;overflow:hidden}
+.E-item.need{border-color:#f4b74066}
+.E-item .top{width:100%;display:flex;align-items:center;gap:10px;padding:12px;border:0;background:none;text-align:left}
+.E-item .top b{flex:1;font-size:15px}
+.E-item .q{padding:0 12px 10px;font-size:13px;color:var(--dim)} .E-item .q code{color:var(--warn);font:12px var(--mono)}
+.E-item .acts{display:flex;gap:8px;padding:0 12px 12px}.E-item .acts button{flex:1;height:42px;border-radius:10px;border:1px solid var(--line2);background:var(--raise);font-weight:700}
+.E-item .acts .y{background:var(--ok);color:#06210f;border:0}
+.E-term{position:absolute;inset:6% 0 0;z-index:6;background:var(--bg);border-radius:20px 20px 0 0;border-top:1px solid var(--line2);display:flex;flex-direction:column;overflow:hidden}
+
+/* selector del prototipo (no es parte del diseño) */
+#picker{position:fixed;right:12px;bottom:90px;z-index:50;background:#fff;color:#111;border-radius:14px;box-shadow:0 10px 30px #0008;font:13px/1.2 system-ui,sans-serif;width:238px;touch-action:none;user-select:none}
+#picker .bar{display:flex;align-items:center;gap:4px;padding:6px;cursor:grab}
+#picker .bar button{width:34px;height:34px;border:0;border-radius:9px;background:#eee;font-size:16px;color:#111}
+#picker .lbl{flex:1;text-align:center;font-weight:700;line-height:1.15}#picker .lbl small{display:block;font-weight:500;color:#555;font-size:11px}
+#picker .st{display:flex;gap:4px;padding:0 6px 6px}
+#picker .st button{flex:1;height:28px;border:1px solid #ccc;background:#fff;border-radius:7px;font-size:11px;color:#111}
+#picker .st button[aria-pressed=true]{background:#111;color:#fff;border-color:#111}
+#picker.min .st{display:none}
+</style>
+
+<div id="phone"><div class="app" id="app"></div><div class="kbd" id="kbd" hidden><div><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div><span></span><span></span><span></span></div></div></div>
+
+<div id="picker" role="toolbar" aria-label="Selector de prototipo">
+  <div class="bar" id="pbar"><button id="prev" aria-label="Diseño anterior">←</button><div class="lbl" id="plbl"></div><button id="next" aria-label="Diseño siguiente">→</button><button id="pmin" aria-label="Minimizar selector">–</button></div>
+  <div class="st" id="pst"></div>
+</div>
+
+<script>
+const SVG={
+  menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',down:'<path d="m6 9 6 6 6-6"/>',left:'<path d="m15 18-6-6 6-6"/>',right:'<path d="m9 18 6-6-6-6"/>',
+  send:'<path d="M5 12h14M13 6l6 6-6 6"/>',grid:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  term:'<path d="m5 8 4 4-4 4M12 16h7"/>',plus:'<path d="M12 5v14M5 12h14"/>',x:'<path d="M6 6l12 12M18 6 6 18"/>'
+};
+const ic=n=>`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${SVG[n]}</svg>`;
+const S=[
+ {id:'signaraland',st:'run',m:'opus-5',last:'Investigando reglas de envío de Colosseum…'},
+ {id:'Banda',st:'wait',m:'opus-5',ask:'Bash: <code>npm run deploy -- --prod</code>',last:'¿Ejecutar el deploy a producción?'},
+ {id:'PaginasWeb',st:'run',m:'opus-5',last:'Editando src/pages/index.astro'},
+ {id:'0xAI Website',st:'run',m:'gpt-5.5',last:'Corriendo tests (42/120)'},
+ {id:'Merauto',st:'done',m:'opus-5',last:'Listo: el reporte de inventario quedó en docs/'},
+ {id:'NinjaCatBot',st:'done',m:'opus-5',last:'Terminé el refactor del webhook'},
+ {id:'Relotto',st:'park',m:'opus-5',last:'Aparcado desde ayer 19:40'},
+ {id:'local',st:'shell',m:'zsh',last:'~/codebase $'}
+];
+const TERM=s=>s.st==='wait'
+ ?`<span class="b">●</span> Voy a desplegar la versión 2.3 a producción.\n\n<span class="y">Bash</span>(npm run deploy -- --prod)\n\n<span class="y">¿Quieres continuar?</span>\n<span class="b">❯ 1. Sí</span>\n  2. Sí, y no volver a preguntar\n  3. No, decir qué hacer distinto`
+ :`<span class="b">●</span> ${s.last}\n\n  <span class="d">⎿</span> Read docs/colosseum/rules.md (212 lines)\n  <span class="d">⎿</span> Web search: "Colosseum hackathon submission requirements"\n\n<span class="b">●</span> Encontré 3 requisitos que no cubre el repo:\n  1. Video demo &lt; 3 min\n  2. Repo público con README de instalación\n  3. Programa desplegado en devnet\n\n<span class="d">────────────────────────────────────────</span>\n<span class="g">❯</span> \n<span class="d">────────────────────────────────────────</span>\n  <span class="p">⏵⏵ bypass permissions on</span> <span class="d">(shift+tab to cycle)</span>\n  <span class="d">22s · ↓ 765.9k tokens</span>`;
+const V=[
+ {k:'A',n:'Dock',d:'Terminal a pantalla completa; la sesión es un chip arriba con ‹ › y lista en hoja inferior'},
+ {k:'B',n:'Carrusel',d:'Desliza de lado entre sesiones; tira de píldoras arriba'},
+ {k:'C',n:'Tarjetas',d:'Inicio con tarjetas vivas por sesión; tocar abre la terminal entera'},
+ {k:'D',n:'Chat',d:'Lectura tipo conversación + caja de texto grande; sesiones en cajón lateral'},
+ {k:'E',n:'Bandeja',d:'Agrupado por "te necesita"; responder Sí/No sin abrir la sesión'}
+];
+const STATES=[['normal','Normal'],['kbd','Teclado'],['wait','Pide permiso']];
+const st={v:Math.max(0,'abcde'.indexOf((location.hash||'#a').slice(1))),state:'normal',cur:0,sheet:false,open:false,raw:false};
+const app=document.getElementById('app');
+const cur=()=>st.state==='wait'?S[1]:S[st.cur];
+const dot=s=>`<i class="dot ${s.st==='run'?'':s.st}"></i>`;
+const badge=s=>({wait:'<span class="badge wait">Te necesita</span>',done:'<span class="badge done">¿Hecho?</span>',park:'<span class="badge park">Aparcado</span>'})[s.st]||'';
+const composer=(ph='Escribe a la sesión…')=>`<div class="composer"><textarea id="msg" rows="1" placeholder="${ph}" aria-label="Mensaje para la sesión"></textarea><button class="send" aria-label="Enviar">${ic('send')}</button></div>`;
+const keys=()=>`<div class="keys"><button>Esc</button><button>Ctrl+C</button><button>⇧Tab</button><button>↑</button><button>↓</button><button>Tab</button><button>/</button><button>Seleccionar</button></div>`;
+const perm=s=>s.st==='wait'?`<div class="perm"><p>${s.id} pide permiso · ${s.ask}</p><div class="row"><button class="y">Sí</button><button class="n">No</button></div></div>`:'';
+const sheetList=(title='Sesiones')=>`<div class="scrim" data-close></div><div class="sheet"><div class="handle"></div><h3>${title}</h3><div class="list">${S.map((s,i)=>`<button class="row-s ${i===st.cur?'cur':''}" data-go="${i}">${dot(s)}<span class="nm">${s.id}</span>${badge(s)}<span class="model">${s.m}</span></button>`).join('')}</div></div>`;
+
+const R={
+ A(){const s=cur();const waiting=S.filter(x=>x.st==='wait'&&x!==s).length;
+  return `<div class="A-head"><button class="iconbtn" data-step="-1" aria-label="Sesión anterior">${ic('left')}</button><button class="A-chip" data-sheet>${dot(s)}<b>${s.id}</b><span class="model">${s.m}</span>${ic('down')}</button><button class="iconbtn" data-step="1" aria-label="Sesión siguiente">${ic('right')}</button></div>
+  ${waiting?`<button class="A-alert" data-go="1">⚠ Banda te necesita</button>`:''}
+  <div class="term">${TERM(s)}</div>${perm(s)}${composer()}${keys()}${st.sheet?sheetList():''}`},
+ B(){return `<div class="B-tabs" id="btabs">${S.map((s,i)=>`<button class="B-tab ${i===st.cur?'cur':''}" data-go="${i}">${dot(s)}${s.id}</button>`).join('')}</div>
+  <div class="B-track" id="track" style="transform:translateX(${-st.cur*100}%)">${S.map(s=>`<div class="B-page"><div class="term">${TERM(st.state==='wait'&&s===S[st.cur]?S[1]:s)}</div></div>`).join('')}</div>
+  <div class="B-dots">${S.map((s,i)=>`<i class="${i===st.cur?'cur':''}"></i>`).join('')}</div>${perm(cur())}${composer()}${keys()}`},
+ C(){if(st.open){const s=cur();return `<div class="C-back"><button class="iconbtn" data-home aria-label="Volver a sesiones">${ic('grid')}</button>${dot(s)}<b>${s.id}</b><span class="model">${s.m}</span></div><div class="term">${TERM(s)}</div>${perm(s)}${composer()}${keys()}`}
+  const order=[...S].sort((a,b)=>(b.st==='wait')-(a.st==='wait'));
+  return `<div class="C-top"><h1>Sesiones</h1><button class="iconbtn" aria-label="Nueva sesión">${ic('plus')}</button></div><div class="C-grid">${order.map(s=>`<button class="C-card ${s.st==='wait'?'need':''}" data-open="${S.indexOf(s)}"><div class="hd">${dot(s)}<b>${s.id}</b>${badge(s)}</div><pre>${s.st==='wait'?'¿Quieres continuar?\n❯ 1. Sí\n  2. No':s.last}</pre>${s.st==='wait'?`<div class="perm" style="margin:0"><div class="row"><button class="y">Sí</button><button class="n">No</button></div></div>`:''}</button>`).join('')}</div>`},
+ D(){const s=cur();const feed=st.raw?`<div class="term">${TERM(s)}</div>`:`<div class="D-feed"><div class="D-me">revisa las reglas de Colosseum y dime qué falta en el repo</div><div class="D-ai">${s.st==='wait'?'Voy a desplegar la versión 2.3 a producción.<span class="tool">Bash · npm run deploy -- --prod</span>':'Encontré 3 requisitos que no cubre el repo: video demo de menos de 3 minutos, README de instalación y programa en devnet.<span class="tool">Read rules.md · Web search ×2 · 22s</span>'}</div><button class="D-raw" data-raw>Ver terminal completa</button></div>`;
+  return `<div class="D-head"><button class="iconbtn" data-drawer aria-label="Sesiones">${ic('menu')}</button><div class="t"><b>${s.id}</b><span>${s.st==='wait'?'esperando tu permiso':'trabajando · '+s.m}</span></div><button class="iconbtn" data-raw aria-label="Alternar terminal">${ic('term')}</button></div>${st.raw?feed:feed}${perm(s)}${composer('Mensaje a '+s.id)}${keys()}${st.sheet?`<div class="scrim" data-close></div><div class="D-drawer"><h3 style="margin:6px 16px 10px;font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em">Sesiones</h3><div class="list">${S.map((x,i)=>`<button class="row-s ${i===st.cur?'cur':''}" data-go="${i}">${dot(x)}<span class="nm">${x.id}</span>${badge(x)}</button>`).join('')}</div></div>`:''}`},
+ E(){const g=[['Te necesita',S.filter(s=>s.st==='wait'||s.st==='done')],['Trabajando',S.filter(s=>s.st==='run')],['En pausa',S.filter(s=>s.st==='park'||s.st==='shell')]];
+  return `<div class="E-head"><h1>ComandOS</h1><span>${S.filter(s=>s.st==='run').length} trabajando</span></div><div class="E-scroll">${g.map(([t,l])=>`<div class="E-group"><h2>${t}</h2>${l.map(s=>`<div class="E-item ${s.st==='wait'?'need':''}"><button class="top" data-open="${S.indexOf(s)}">${dot(s)}<b>${s.id}</b>${badge(s)}<span class="model">${s.m}</span></button><div class="q">${s.st==='wait'?s.ask:s.last}</div>${s.st==='wait'?`<div class="acts"><button class="y">Sí</button><button>No</button><button data-open="1">Ver</button></div>`:s.st==='done'?`<div class="acts"><button>Marcar hecho</button><button data-open="${S.indexOf(s)}">Abrir</button></div>`:''}</div>`).join('')}</div>`).join('')}</div>
+  ${st.open?`<div class="scrim" data-home></div><div class="E-term"><div class="sheet" style="position:static;border-radius:0;max-height:none;border:0;background:var(--pane)"><div class="handle" data-home></div></div><div class="C-back" style="border-top:0">${dot(cur())}<b>${cur().id}</b><button class="iconbtn" data-home aria-label="Cerrar">${ic('x')}</button></div><div class="term">${TERM(cur())}</div>${perm(cur())}${composer()}${keys()}</div>`:''}`}
+};
+function paint(){
+ const v=V[st.v];document.getElementById('kbd').hidden=st.state!=='kbd';
+ app.innerHTML=R[v.k]();
+ document.getElementById('plbl').innerHTML=`${v.k} · ${v.n}<small>${v.d}</small>`;
+ document.getElementById('pst').innerHTML=STATES.map(([k,t])=>`<button data-state="${k}" aria-pressed="${st.state===k}">${t}</button>`).join('');
+ if(st.state==='kbd'){const m=document.getElementById('msg');m&&m.focus({preventScroll:true});}
+ const t=document.querySelector('.B-tab.cur');t&&t.scrollIntoView({inline:'center',block:'nearest'});
+ try{history.replaceState(null,'','#'+v.k.toLowerCase())}catch(e){}
+}
+function setV(i){st.v=(i+V.length)%V.length;st.sheet=st.open=st.raw=false;paint()}
+app.addEventListener('click',e=>{const b=e.target.closest('button,[data-close],[data-home]');if(!b)return;const d=b.dataset;
+ if('step' in d){st.cur=(st.cur+ +d.step+S.length)%S.length}
+ else if('go' in d){st.cur=+d.go;st.sheet=false}
+ else if('sheet' in d||'drawer' in d){st.sheet=true}
+ else if('close' in d){st.sheet=false}
+ else if('open' in d){st.cur=+d.open;st.open=true}
+ else if('home' in d){st.open=false}
+ else if('raw' in d){st.raw=!st.raw}
+ else return; paint()});
+let sx=null;app.addEventListener('pointerdown',e=>{if(V[st.v].k==='B'&&e.target.closest('#track'))sx=e.clientX});
+app.addEventListener('pointerup',e=>{if(sx===null)return;const dx=e.clientX-sx;sx=null;if(Math.abs(dx)>50){st.cur=Math.min(S.length-1,Math.max(0,st.cur+(dx<0?1:-1)));paint()}});
+document.getElementById('prev').onclick=()=>setV(st.v-1);document.getElementById('next').onclick=()=>setV(st.v+1);
+document.getElementById('pmin').onclick=()=>document.getElementById('picker').classList.toggle('min');
+document.getElementById('pst').onclick=e=>{const b=e.target.closest('[data-state]');if(b){st.state=b.dataset.state;st.open=st.state==='wait'?true:st.open;paint()}};
+addEventListener('keydown',e=>{if(e.target.closest('input,textarea,[contenteditable]'))return;if(e.key==='ArrowLeft')setV(st.v-1);if(e.key==='ArrowRight')setV(st.v+1)});
+(()=>{const p=document.getElementById('picker'),h=document.getElementById('pbar');let o=null;
+ h.addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;const r=p.getBoundingClientRect();o=[e.clientX-r.left,e.clientY-r.top];h.setPointerCapture(e.pointerId)});
+ h.addEventListener('pointermove',e=>{if(!o)return;p.style.left=Math.max(0,Math.min(innerWidth-p.offsetWidth,e.clientX-o[0]))+'px';p.style.top=Math.max(0,Math.min(innerHeight-p.offsetHeight,e.clientY-o[1]))+'px';p.style.right='auto';p.style.bottom='auto'});
+ h.addEventListener('pointerup',()=>o=null)})();
+paint();
+</script>

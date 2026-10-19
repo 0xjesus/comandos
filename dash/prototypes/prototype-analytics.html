@@ -1,0 +1,1127 @@
+<meta charset="utf-8">
+<title>Analytics ComandOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: modal de Analytics sobre la cabecera atenuada; cuentas en 2×2 (tanque protagonista) y la semana en línea de tiempo con carriles. */
+:root{
+  --bg:#0A0D13; --panel:#121722; --panel2:#161C29; --well:#0D1119; --line:#222A3A; --line2:#2E3852;
+  --fg:#EAF0FB; --mut:#9AA6BF; --dim:#5E6980;
+  --ok:#2EE59D; --warn:#FFAE1A; --bad:#FF7580; --brand:#8B7CFF;
+  --a-main:#8B7CFF; --a-relotto:#FF9A5C; --a-codex:#4CC2FF; --a-grok:#C5E35A;
+  --sans:'Inter',system-ui,sans-serif; --mono:'Ubuntu Sans Mono','JetBrains Mono',ui-monospace,monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+.app{padding-inline:16px;padding-block:14px 140px}
+.hdr{display:flex;gap:8px;align-items:center;opacity:.35;padding:0 0 14px;max-width:1120px;margin:0 auto}
+.hdr i{display:block;height:32px;border-radius:9px;background:var(--panel);border:1px solid var(--line)}
+.modal{max-width:1120px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 24px 26px;box-shadow:0 40px 90px #000a}
+.mhead{display:flex;align-items:center;gap:14px;margin-bottom:18px;flex-wrap:wrap}
+.mhead h2{margin:0;font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--mut);font-weight:600}
+.tabs{display:flex;gap:2px;padding:3px;background:var(--well);border:1px solid var(--line);border-radius:10px}
+.tab{font-size:12.5px;color:var(--mut);padding:6px 12px;border-radius:7px;font-weight:500}
+.tab.on{background:var(--panel2);color:var(--fg);box-shadow:0 1px 0 #ffffff0d inset,0 1px 3px #0006}
+.mhead .stamp{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.sect{display:flex;align-items:baseline;gap:10px;margin:28px 0 12px}
+.sect h3{margin:0;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);font-weight:600}
+.sect span{font-size:12px;color:var(--dim)}
+.num{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--mono)}
+
+/* tarjetas de cuenta */
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:14px;min-width:0;overflow:hidden}
+.c-head{display:flex;align-items:center;gap:8px}
+.c-head .dot{width:8px;height:8px;border-radius:50%;background:var(--ac)}
+.c-head b{font-size:15px;font-weight:600}
+.c-head small{font-family:var(--mono);font-size:12px;color:var(--mut);padding:1px 7px;border:1px solid var(--line2);border-radius:6px}
+.flag{margin-left:auto;font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:999px}
+.flag.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.flag.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);padding-top:12px}
+.stats div{display:flex;flex-direction:column;gap:2px}
+.stats div+div{padding-left:14px;border-left:1px solid var(--line)}
+.stats small{font-size:11px;color:var(--dim);letter-spacing:.04em}
+.stats b{font-family:var(--mono);font-size:15px;font-weight:500}
+.stats em{font-style:normal;font-size:11.5px;color:var(--mut);font-family:var(--mono)}
+.reset{font-size:12.5px;color:var(--mut)} .reset b{color:var(--fg);font-weight:500}
+.sub{display:grid;grid-template-columns:52px 1fr 40px;gap:10px;align-items:center;font-size:12px;color:var(--mut)}
+.sub .tr{height:4px;border-radius:2px;background:#232b3c;position:relative;overflow:hidden}
+.sub .tr i{position:absolute;inset:0 auto 0 0;border-radius:2px;background:var(--fc)}
+.sub b{font-family:var(--mono);font-weight:500;color:var(--fg);text-align:right}
+.subs{display:flex;flex-direction:column;gap:8px}
+.hero{display:flex;flex-direction:column;gap:2px}
+.hero .n{font-size:52px;font-weight:700;letter-spacing:-.04em;line-height:.95}
+.hero .n sup{font-size:20px;font-weight:600;letter-spacing:0;margin-left:2px;vertical-align:26px;color:var(--mut)}
+.hero .l{font-size:12.5px;color:var(--mut)}
+
+/* V1 botella */
+.v1{display:grid;grid-template-columns:118px 1fr;gap:22px;align-items:center}
+.v1 .side{display:flex;flex-direction:column;gap:14px;min-width:0}
+/* V2 dial */
+.v2{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
+.v2 .minis{display:flex;gap:16px;align-items:center}
+.v2 .mini{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--mut)}
+.v2 .mini b{font-family:var(--mono);color:var(--fg);font-weight:500;font-size:13px}
+/* V3 borde */
+.card.v3card{padding-right:86px}
+.edge{position:absolute;top:0;right:0;bottom:0;width:68px;background:var(--well);border-left:1px solid var(--line)}
+.edge .fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,color-mix(in srgb,var(--ac) 75%,#fff 25%),color-mix(in srgb,var(--ac) 80%,#000 20%));transition:height .8s cubic-bezier(.2,.8,.2,1)}
+.edge .fill::before{content:"";position:absolute;inset:0 0 auto;height:2px;background:#ffffffaa}
+.edge .tk{position:absolute;right:0;height:1px;background:#ffffff40}
+.edge .tl{position:absolute;right:10px;transform:translateY(-50%);font-family:var(--mono);font-size:10px;color:#ffffffb0;mix-blend-mode:difference}
+/* V4 matriz */
+.v4{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:center}
+.dm{display:grid;grid-template-columns:repeat(9,9px);grid-auto-rows:9px;gap:4px;padding:10px;background:var(--well);border:1px solid var(--line);border-radius:10px}
+.dm i{border-radius:50%;background:#1b2231}
+.dm i.on{background:var(--ac);box-shadow:0 0 6px color-mix(in srgb,var(--ac) 70%,transparent)}
+.dm i.top{background:color-mix(in srgb,var(--ac) 55%,#fff 45%)}
+.rows{font-family:var(--mono);font-size:13px;display:flex;flex-direction:column;gap:7px;min-width:0}
+.rows div{display:flex;gap:8px;align-items:baseline;white-space:nowrap}
+.rows span{color:var(--mut);letter-spacing:.06em;font-size:11.5px}
+.rows i{flex:1;border-bottom:1px dotted var(--line2);transform:translateY(-3px);min-width:12px}
+.rows b{font-weight:600}
+.rows .big b{font-size:30px;letter-spacing:-.02em}
+/* V5 cilindros */
+.v5{display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:end}
+.v5 .set{display:flex;gap:10px;align-items:flex-end}
+.v5 .cap{font-size:11px;color:var(--mut);text-align:center;margin-top:4px}
+.v5 .cap b{display:block;font-family:var(--mono);color:var(--fg);font-size:13px;font-weight:500}
+
+/* línea de tiempo */
+.tl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--well)}
+.tl{min-width:720px;display:grid;grid-template-columns:96px 1fr 64px}
+.tl .ax{position:relative;height:28px;border-bottom:1px solid var(--line)}
+.tl .ax span{position:absolute;top:8px;transform:translateX(-50%);font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.tl .d{padding:0 12px;display:flex;align-items:center;font-size:12.5px;color:var(--mut);border-bottom:1px solid #161c28}
+.tl .d b{color:var(--fg);font-weight:600;margin-right:5px}
+.tl .row{position:relative;border-bottom:1px solid #161c28;background:repeating-linear-gradient(90deg,#ffffff07 0 1px,transparent 1px calc(100%/8))}
+.tl .t{display:flex;align-items:center;justify-content:flex-end;padding-right:12px;font-family:var(--mono);font-size:12px;color:var(--mut);border-bottom:1px solid #161c28}
+.blk{position:absolute;height:20px;border-radius:5px;background:color-mix(in srgb,var(--ac) 82%,#000 18%);border:1px solid color-mix(in srgb,var(--ac) 70%,#fff 30%);font-size:11px;font-weight:600;color:#0A0D13;padding:2px 6px;white-space:nowrap;overflow:hidden;cursor:default}
+.blk:hover,.blk:focus{outline:2px solid #fff;outline-offset:1px;z-index:2}
+.now{position:absolute;top:0;bottom:0;width:2px;background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.now::after{content:"ahora";position:absolute;top:-1px;left:5px;font-family:var(--mono);font-size:10px;color:var(--bad)}
+.tl-foot{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:10px;font-size:12px;color:var(--mut)}
+.tl-foot .k{display:inline-flex;align-items:center;gap:6px}.tl-foot .k i{width:10px;height:10px;border-radius:3px;background:var(--ac)}
+.tl-info{margin-left:auto;font-family:var(--mono);color:var(--fg)}
+
+/* animaciones */
+.wave{animation:wave 7s linear infinite}
+@keyframes wave{to{transform:translateX(var(--sh,-80px))}}
+@media (prefers-reduced-motion:reduce){.wave{animation:none}.edge .fill{transition:none}}
+
+
+/* ronda 3 botellas */
+.bx{display:grid;grid-template-columns:auto 1fr;gap:24px;align-items:center}
+.bx .side{display:flex;flex-direction:column;gap:14px;min-width:0}
+.rack{display:flex;gap:16px;align-items:flex-end}
+.rack .cap,.shelf .cap{font-size:11px;color:var(--mut);text-align:center;margin-top:2px}
+.rack .cap b,.shelf .cap b{display:block;font-family:var(--mono);color:var(--fg);font-size:13px;font-weight:500}
+.shelf{display:flex;gap:8px;align-items:flex-end;position:relative;padding:0 6px}.shelf .sb>svg{margin-bottom:-8px;position:relative;z-index:1}.shelf::after{content:"";position:absolute;left:0;right:0;bottom:30px;height:6px;border-radius:3px;background:linear-gradient(180deg,#2a3346,#161c29);box-shadow:0 6px 12px #0008}.shelf .cap{margin-top:12px}
+.shelf .sb{display:flex;flex-direction:column;align-items:center}
+.shelf .sb>svg{display:block}
+.mirror{height:30px;overflow:hidden;opacity:.16;margin-top:-2px;-webkit-mask-image:linear-gradient(#000,transparent);mask-image:linear-gradient(#000,transparent)}
+.mirror svg{display:block;transform:scaleY(-1);transform-origin:50% 50%;margin-top:calc(-100% * 0)}
+.bub{opacity:0;animation:rise 4s ease-in infinite}
+@keyframes rise{0%{transform:translateY(0);opacity:0}12%{opacity:.5}100%{transform:translateY(var(--rise));opacity:0}}
+@media (prefers-reduced-motion:reduce){.bub{animation:none}}
+
+
+/* ronda 4 */
+.ltile{display:inline-grid;place-items:center;border-radius:7px;background:#0A0D13;border:1px solid var(--line2);flex:none}
+.ltile svg{display:block}
+.bottles{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+.card.solo .bottles{align-items:center;gap:24px}
+.card.solo .stats.s2{flex:1;border-top:0;padding-top:0;grid-template-columns:1fr;gap:14px;min-width:160px}
+.card.solo .stats.s2 div+div{border-left:0;padding-left:0}
+.stats.s2{grid-template-columns:repeat(2,1fr)}
+.bcol{display:flex;flex-direction:column;align-items:center;gap:6px}
+.bcap{display:flex;flex-direction:column;align-items:center;gap:1px;text-align:center}
+.bcap span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.bcap b{font-family:var(--mono);font-size:20px;font-weight:600;letter-spacing:-.02em}
+.bcap b.warn{color:var(--warn)}.bcap b.bad{color:var(--bad)}
+.bcap em{white-space:nowrap;font-style:normal;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.rackE{display:flex;flex-direction:column;align-items:stretch;gap:0}
+.tubes{display:flex;gap:34px;padding:0 18px;justify-content:center}
+.rbase{display:flex;align-items:center;gap:8px;justify-content:center;margin-top:-30px;position:relative;z-index:2;height:34px;border-radius:6px;background:linear-gradient(180deg,#2c3448,#1a2030);border:1px solid #ffffff1a;box-shadow:0 8px 16px #0008;font-size:12px;font-weight:600;color:var(--fg);padding:0 12px}
+.tcaps{display:flex;gap:0;justify-content:center;margin-top:10px}
+.tcaps .bcap{width:80px}.tcaps .bcap span{white-space:nowrap}
+.bar{position:relative;border-radius:14px;background:linear-gradient(180deg,#0e1320,#0b0f17);border:1px solid var(--line);overflow:hidden;padding:26px 20px 0}
+.bar-glow{position:absolute;inset:0 0 auto;height:70%;background:radial-gradient(ellipse at 50% 0,#8B7CFF22,transparent 60%),radial-gradient(ellipse at 15% 10%,#FF9A5C14,transparent 50%),radial-gradient(ellipse at 85% 10%,#4CC2FF14,transparent 50%);pointer-events:none}
+.bar-row{position:relative;display:flex;gap:26px;justify-content:center;flex-wrap:wrap;align-items:flex-end}
+.bgrp{display:flex;flex-direction:column;align-items:center;gap:12px}
+.bgrp-b{display:flex;gap:6px;align-items:flex-end}
+.plaque{display:flex;align-items:center;gap:7px;padding:5px 12px 5px 6px;border-radius:8px;background:linear-gradient(180deg,#2d3549,#1b2131);border:1px solid #ffffff22;border-top-color:color-mix(in srgb,var(--ac) 60%,#fff 10%);font-size:12.5px;margin-bottom:14px}
+.plaque small{font-family:var(--mono);color:var(--mut);font-size:11px}
+.bar-wood{height:14px;margin:0 -20px;background:linear-gradient(180deg,#30394f,#141925);border-top:1px solid #ffffff22}
+.bar-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin-top:12px}
+.bar-stats div{display:grid;grid-template-columns:10px 1fr;gap:2px 8px;font-size:12px;color:var(--mut);align-items:center}
+.bar-stats .dot{width:8px;height:8px;border-radius:50%;background:var(--ac)}
+.bar-stats b{color:var(--fg);font-weight:600;font-size:13px}
+.bar-stats span:not(.dot){grid-column:2;font-family:var(--mono)}
+
+
+/* ronda 5: semana */
+.tip{position:fixed;z-index:60;pointer-events:none;background:#0A0D13;border:1px solid var(--line2);border-radius:9px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;box-shadow:0 10px 30px #000a;max-width:320px}
+.tip b{font-size:13px}.tip span{font-family:var(--mono);font-size:11.5px;color:var(--fg)}.tip em{font-style:normal;font-size:11.5px;color:var(--mut)}
+.wk-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--line);border-radius:12px;background:var(--panel2);margin-bottom:12px}
+.wk-sum div{padding:12px 16px;display:flex;flex-direction:column;gap:3px}.wk-sum div+div{border-left:1px solid var(--line)}
+.wk-sum small{font-size:11px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}.wk-sum b{font-family:var(--mono);font-size:20px;font-weight:600}.wk-sum em{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--mut)}
+.wk-box{border:1px solid var(--line);border-radius:12px;background:var(--well);padding:14px 16px;overflow-x:auto}
+.wk-note{font-size:12px;color:var(--dim);margin-top:10px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;flex:none}
+.dim{color:var(--dim)}
+/* W1 */
+.gantt{display:grid;min-width:820px;align-items:stretch}
+.g-corner{font-size:11px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase;padding:0 0 8px}.g-corner.r{text-align:right}
+.g-day{font-size:12px;color:var(--mut);padding:0 0 8px 6px;border-left:1px solid #1d2433}.g-day b{color:var(--fg)}
+.g-day.today,.g-cell.today{background:#8B7CFF0d}
+.g-name{display:flex;align-items:center;font-size:13px;padding:7px 0;border-top:1px solid #1a2130;min-width:0;white-space:nowrap}
+.g-cell{position:relative;border-top:1px solid #1a2130;border-left:1px solid #1d2433}
+.g-bar{position:absolute;top:50%;height:12px;margin-top:-6px;border-radius:3px;background:var(--ac);box-shadow:0 0 0 1px #0A0D13}
+.g-bar:hover{outline:2px solid #fff;z-index:2}
+.g-tot{font-family:var(--mono);font-size:12.5px;text-align:right;padding:7px 0;border-top:1px solid #1a2130;color:var(--fg)}
+.g-foot{font-family:var(--mono);font-size:12px;padding:8px 6px 0;border-top:1px solid var(--line2);border-left:1px solid #1d2433;display:flex;flex-direction:column}.g-foot em{font-style:normal;color:var(--dim);font-size:10.5px}
+/* W2 */
+.heat{display:grid;grid-template-columns:96px repeat(24,minmax(22px,1fr)) 100px;gap:3px;min-width:820px;align-items:center}
+.heat>span{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.hm-day{font-size:12.5px;color:var(--mut)}.hm-day b{color:var(--fg)}.hm-day.today b{color:var(--brand)}
+.hm{display:block;height:26px;border-radius:4px;background:#151b27}
+.hm.on{background:color-mix(in srgb,var(--ac) calc(var(--a)*100%),#151b27)}
+.hm.on:hover{outline:2px solid #fff}
+.hm-tot{font-family:var(--mono);font-size:12px;text-align:right;display:flex;flex-direction:column}.hm-tot em{font-style:normal;font-size:10.5px;color:var(--dim)}
+.hm-col{height:28px;display:flex;align-items:flex-end}.hm-col i{display:block;width:100%;background:#2E3852;border-radius:2px 2px 0 0}
+/* W3 */
+.c3-wrap{display:grid;grid-template-columns:1fr 250px;gap:22px}
+.c3-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;min-width:560px}
+.c3{display:flex;flex-direction:column;align-items:stretch;gap:6px}
+.c3-val{font-family:var(--mono);font-size:12px;text-align:center;height:16px}
+.c3-stack{display:flex;flex-direction:column;justify-content:flex-end;border-bottom:1px solid var(--line2)}
+.c3-stack>div{display:flex;flex-direction:column-reverse;gap:2px}
+.c3-stack i{font-style:normal;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--ac) 85%,#000);border-radius:4px;min-height:3px;overflow:hidden}
+.c3-stack i:hover{outline:2px solid #fff}
+.c3-stack i span{font-size:10.5px;font-weight:600;color:#0A0D13;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+.c3-l{text-align:center;font-size:12px;color:var(--mut);display:flex;flex-direction:column}.c3-l b{color:var(--fg)}.c3-l em{font-style:normal;font-family:var(--mono);font-size:10px;color:var(--dim)}
+.c3.today .c3-l b{color:var(--brand)}
+.c3-leg h5{margin:0 0 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:600}
+.lg{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:2px 0;font-size:12.5px;margin-bottom:9px}
+.lg b{font-family:var(--mono);font-weight:500}.lg .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lg i{grid-column:1/-1;height:3px;border-radius:2px;background:var(--ac);opacity:.8}
+/* W4 */
+.cal{display:grid;grid-template-columns:52px 1fr;gap:0;padding-top:0}
+.cal-axis{position:relative;margin-top:44px}.cal-axis span{position:absolute;right:8px;transform:translateY(-50%);font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.cal-cols{display:grid;grid-template-columns:repeat(8,minmax(84px,1fr));min-width:720px}
+.cal-col{border-left:1px solid #1d2433}.cal-col.today{background:#8B7CFF0b}
+.cal-h{height:44px;padding:8px 8px 0;font-size:12px;color:var(--mut);display:flex;flex-direction:column}.cal-h b{color:var(--fg)}.cal-h em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.cal-col.today .cal-h b{color:var(--brand)}
+.cal-body{position:relative;background:repeating-linear-gradient(180deg,#ffffff08 0 1px,transparent 1px 60px)}
+.ev{position:absolute;margin-left:2px;border-radius:5px;background:color-mix(in srgb,var(--ac) 28%,#0d1220);border-left:3px solid var(--ac);padding:2px 5px;overflow:hidden;display:flex;flex-direction:column;cursor:default}
+.ev:hover{outline:2px solid #fff;z-index:3}
+.ev b{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ev span{font-family:var(--mono);font-size:10px;color:var(--mut)}
+.cal-now{position:absolute;left:0;right:0;height:2px;background:var(--bad);box-shadow:0 0 6px var(--bad)}
+/* W5 */
+.w5{padding:4px 0}
+.dy{border-bottom:1px solid #1a2130}.dy:last-child{border-bottom:0}
+.dy summary{list-style:none;display:grid;grid-template-columns:110px 110px minmax(160px,1fr) minmax(0,1.4fr);gap:16px;align-items:center;padding:12px 16px;cursor:pointer}
+.dy summary::-webkit-details-marker{display:none}
+.dy summary:hover{background:#ffffff05}
+.dy-d{font-size:13px;color:var(--mut)}.dy-d b{color:var(--fg)}
+.hoy{margin-left:8px;font-size:10.5px;padding:1px 6px;border-radius:999px;background:#8B7CFF26;color:var(--brand)}
+.dy-t{display:flex;flex-direction:column}.dy-t b{font-family:var(--mono);font-size:15px;font-weight:600}.dy-t em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.dy-rib{position:relative;height:14px;border-radius:4px;background:#151b27}
+.dy-rib i{position:absolute;top:0;bottom:0;background:var(--ac);border-radius:2px}
+.dy-rib u{position:absolute;top:-3px;bottom:-3px;width:1px;background:#ffffff1c}
+.dy-chips{display:flex;gap:6px;flex-wrap:wrap}
+.pc{font-size:12px;padding:3px 9px 3px 8px;border-radius:999px;background:color-mix(in srgb,var(--ac) 14%,transparent);border:1px solid color-mix(in srgb,var(--ac) 40%,transparent);white-space:nowrap}
+.pc b{font-family:var(--mono);font-weight:500;color:var(--mut);margin-left:3px}.pc.more{--ac:#9AA6BF}
+.dy-tbl{width:calc(100% - 32px);margin:0 16px 14px;border-collapse:collapse;font-size:12.5px}
+.dy-tbl th{text-align:left;font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--line)}
+.dy-tbl td{padding:6px 8px;border-bottom:1px solid #161c28;font-variant-numeric:tabular-nums}
+.dy-tbl td:nth-child(-n+3){font-family:var(--mono)}
+@media (max-width:820px){.wk-sum{grid-template-columns:repeat(2,1fr)}.wk-sum div:nth-child(3){border-left:0}.c3-wrap{grid-template-columns:1fr}.dy summary{grid-template-columns:1fr 1fr}.dy-rib,.dy-chips{grid-column:1/-1}}
+
+
+/* ronda 6: calendario cómodo */
+.cal-h{height:46px}
+.cal-body{overflow:hidden;background:none!important}.hline{position:absolute;left:0;right:0;height:1px;background:#ffffff0a}
+.gapband{position:absolute;left:0;right:0;background:repeating-linear-gradient(135deg,#ffffff06 0 6px,transparent 6px 12px);border-top:1px solid #ffffff10;border-bottom:1px solid #ffffff10}
+.cal-axis span.gap{font-size:9px;color:#5E698099}
+.cal-axis{margin-top:46px}
+.more{position:absolute;right:3px;z-index:4;font:600 10.5px var(--mono);color:var(--fg);background:#2E3852;border:1px solid #ffffff30;border-radius:999px;padding:1px 6px;cursor:pointer}
+.more:hover{background:#3a4560}
+.hcell{position:absolute;left:3px;right:3px;border-radius:6px;border:0;border-left:3px solid var(--ac);background:color-mix(in srgb,var(--ac) 22%,#0d1220);color:var(--fg);font:inherit;text-align:left;padding:3px 6px;display:grid;grid-template-columns:1fr auto;align-items:start;gap:0 4px;cursor:pointer;overflow:hidden}
+.hcell:hover{outline:2px solid #fff}
+.hcell b{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hcell span{font:600 10px var(--mono);color:var(--mut)}
+.hcell i{grid-column:1/-1;display:flex;gap:3px}.hcell u{width:6px;height:6px;border-radius:50%}
+.lanes4{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}
+.lane{position:relative;background:color-mix(in srgb,var(--ac) 4%,transparent)}
+.lev{position:absolute;border-radius:3px;background:color-mix(in srgb,var(--ac) 80%,#000);overflow:hidden;writing-mode:vertical-rl;cursor:default}
+.lev:hover{outline:2px solid #fff;z-index:3}
+.lev b{font-size:10px;font-weight:700;color:#0A0D13;padding:4px 0;white-space:nowrap}
+.wk-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--mut);margin:0 0 10px}.wk-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}.wk-legend em{font-style:normal;color:var(--dim);margin-left:auto}
+.k4{display:grid;grid-template-columns:1fr;gap:12px}
+.mini-week{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.mini-d{font:inherit;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;cursor:pointer;text-align:left}
+.mini-d b{color:var(--fg)}.mini-d.on{border-color:var(--brand);box-shadow:0 0 0 1px var(--brand) inset}.mini-d em{font-style:normal;font-family:var(--mono);font-size:11px}
+.mini-rib{position:relative;height:56px;border-radius:5px;background:#0d1119}.mini-rib i{position:absolute;left:10%;right:10%;background:var(--ac);border-radius:2px;opacity:.85}
+.k4-day{grid-template-columns:52px 1fr}
+.ev.big{padding:4px 8px}.ev.big b{font-size:12.5px}.ev.big span{font-size:11px}
+.agenda{padding:0}
+.ag-day{display:grid;grid-template-columns:140px 1fr;gap:16px;padding:14px 16px;border-bottom:1px solid #1a2130}.ag-day:last-child{border-bottom:0}
+.ag-d{display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--mut)}.ag-d .hoy{align-self:flex-start;margin:2px 0}.ag-d b{color:var(--fg)}.ag-d em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+.ag-list{display:flex;flex-direction:column;gap:8px}
+.ag-g{display:grid;grid-template-columns:56px 1fr;gap:12px}
+.ag-t{font-family:var(--mono);font-size:12.5px;display:flex;flex-direction:column}.ag-t span{color:var(--dim);font-size:11px}
+.ag-items{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start}
+.ag-g.par .ag-items{padding:6px;border:1px dashed var(--line2);border-radius:10px}
+.ag-par{width:100%;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:2px}
+.ag-i{display:grid;grid-template-columns:auto auto;gap:0 10px;align-items:baseline;padding:5px 10px;border-radius:8px;background:color-mix(in srgb,var(--ac) 14%,#0d1220);border-left:3px solid var(--ac)}
+.ag-i b{font-size:12.5px}.ag-i span{font-family:var(--mono);font-size:11px;color:var(--mut)}.ag-i em{grid-column:1/-1;font-style:normal;font-size:11px;color:var(--dim)}
+.pop{position:fixed;z-index:70;background:#0A0D13;border:1px solid var(--line2);border-radius:12px;padding:10px 12px;box-shadow:0 16px 40px #000c;min-width:260px;max-width:340px;display:flex;flex-direction:column;gap:6px}
+.pop h6{margin:0 0 2px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);font-weight:600}
+.pop div{display:grid;grid-template-columns:auto 1fr auto;gap:0 6px;align-items:center;font-size:12.5px}.pop div span:not(.dot){font-family:var(--mono);font-size:11px;color:var(--mut)}.pop div em{grid-column:2/-1;font-style:normal;font-size:11px;color:var(--dim)}
+
+
+/* ronda 7: comparar */
+[hidden]{display:none!important}
+.panel{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:14px 16px;min-width:0}
+.panel h5{margin:0 0 4px;font-size:14px;font-weight:600}
+.ph{margin:0 0 12px;font-size:12px;color:var(--dim);line-height:1.45}
+.pfoot{margin-top:10px;font-size:12px;color:var(--mut)}
+.cmp1{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+.side3{display:flex;flex-direction:column;gap:14px}
+.rk{display:grid;grid-template-columns:22px 1fr;gap:10px;padding:9px 0;border-top:1px solid #1d2433}
+.rn{font-family:var(--mono);color:var(--dim);font-size:13px;padding-top:2px}
+.rt{display:flex;justify-content:space-between;gap:10px;align-items:baseline}.rt b{font-size:13.5px}.rt span{font-family:var(--mono);font-size:12px;color:var(--mut)}
+.rbar{display:flex;height:10px;border-radius:5px;overflow:hidden;margin:6px 0;min-width:6px;gap:1px}
+.rbar i{display:block;background:var(--ac)}.rbar.wide{width:100%;height:14px}
+.qcs{display:flex;gap:6px;flex-wrap:wrap}
+.qc{font-family:var(--mono);font-size:11.5px;padding:1px 7px;border-radius:999px;border:1px solid color-mix(in srgb,var(--ac) 45%,transparent);background:color-mix(in srgb,var(--ac) 10%,transparent)}
+.qc em{font-family:var(--sans);font-style:normal;color:var(--mut);margin-left:3px}
+.wr{display:grid;grid-template-columns:120px 1fr 44px auto;gap:10px;align-items:center;font-size:12.5px;margin:7px 0}
+.wn{white-space:nowrap}.wbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#151b27}.wbar i{background:var(--ac);opacity:.55}.wbar u{background:repeating-linear-gradient(135deg,#FFAE1A55 0 4px,#FFAE1A22 4px 8px)}
+.wr b{font-family:var(--mono);text-align:right}.warnT{color:var(--warn)}
+.wh{display:flex;gap:3px;align-items:flex-end;height:22px;width:44px}.wh i{flex:1;background:#FFAE1A88;border-radius:2px 2px 0 0}
+.wh.big{height:70px;width:100%;max-width:220px;gap:8px}.wh.big i{opacity:.8}
+.vsbig{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0 10px}.vsbig small{display:block;font-size:11px;color:var(--dim)}.vsbig b{font-family:var(--mono);font-size:17px}
+.up{color:var(--ok);font-family:var(--mono)}.dn{color:var(--bad);font-family:var(--mono)}.eq{color:var(--dim);font-family:var(--mono)}
+.vsl div{display:grid;grid-template-columns:1fr auto 70px;gap:10px;font-size:12.5px;padding:5px 0;border-top:1px solid #1d2433;align-items:center}.vsl em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--mut)}.vsl b{text-align:right;font-size:12px}
+.mx{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;font-size:12.5px;margin:6px 0}
+.mxb{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:1px}.mxb i{display:flex;align-items:center;justify-content:center;background:var(--ac);font:600 10px var(--mono);color:#0A0D13;font-style:normal}.mxb.solo{height:26px}
+.fr{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.frc{display:flex;flex-direction:column;align-items:center;text-align:center;gap:1px}
+.frb{height:70px;width:100%;max-width:56px;display:flex;align-items:flex-end;background:#151b27;border-radius:6px;overflow:hidden}.frb i{width:100%;background:linear-gradient(180deg,#8B7CFF,#5b4fd0)}
+.frc b{font-family:var(--mono);font-size:13px;margin-top:4px}.frc span{font-size:12px}.frc em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--dim)}.frc small{font-size:10.5px;color:var(--mut);line-height:1.3}
+.grid4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.tm{position:relative;width:100%;border-radius:10px;overflow:hidden;background:#0A0D13}
+.tmc{position:absolute;padding:2px}.tmc>div{height:100%;border-radius:7px;background:linear-gradient(160deg,color-mix(in srgb,var(--ac) 55%,#0d1220),color-mix(in srgb,var(--ac) 30%,#0d1220));border:1px solid color-mix(in srgb,var(--ac) 60%,transparent);padding:8px 10px;display:flex;flex-direction:column;overflow:hidden}
+.tmc:hover>div{outline:2px solid #fff}.tmc b{font-size:14px}.tmc b.s{font-size:11px}.tmc span{font-family:var(--mono);font-size:11.5px;color:#ffffffc0}
+.mtx-wrap{overflow-x:auto}.mtx{width:100%;border-collapse:separate;border-spacing:3px;font-size:12.5px;min-width:720px}
+.mtx th{font-weight:500;color:var(--dim);font-size:11px;text-align:center;padding:4px 6px;white-space:nowrap}.mtx th:first-child{text-align:left}.mtx th.r,.mtx td.r{text-align:right}
+.mtx td{padding:7px 8px;white-space:nowrap}.hc{text-align:center;font-family:var(--mono);border-radius:6px;background:color-mix(in srgb,var(--ac) calc(var(--a)*70%),#151b27);color:#fff}.hc0{text-align:center;color:#2E3852}
+.mtx tr.tot td{border-top:1px solid var(--line2);color:var(--mut);text-align:center;font-family:var(--mono);padding-top:10px}.mtx tr.tot td:first-child{text-align:left;font-family:var(--sans)}
+.ins-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.ins{border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#1a2132,#141a27);padding:16px 18px;display:flex;flex-direction:column;gap:8px}
+.ik{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:600}
+.ins h6{margin:0;font-size:19px;line-height:1.25;font-weight:700;text-wrap:balance}.ins p{margin:0 0 4px;font-size:12.5px;color:var(--mut);line-height:1.45}
+.mini-rank div{display:grid;grid-template-columns:90px 1fr 50px;gap:8px;align-items:center;font-size:12px;margin:4px 0}.mini-rank i{height:6px;border-radius:3px;background:#8B7CFF;display:block}.mini-rank b{font-family:var(--mono);font-weight:500;text-align:right}
+.bare{padding:0}
+.p5bar{margin-top:6px}
+.lbg{display:flex;flex-direction:column;align-items:center;gap:10px}
+.lbb{display:flex;gap:10px;align-items:flex-end}
+.lbl{display:flex;flex-direction:column;gap:4px;min-width:130px;padding-bottom:18px}
+.lbl div{display:grid;grid-template-columns:10px 1fr auto;gap:6px;align-items:center;font-size:11.5px}.lbl i{width:10px;height:10px;border-radius:3px}.lbl b{font-family:var(--mono);font-weight:500}
+.lbl .lbq{display:flex;justify-content:space-between;margin-top:4px;padding-top:4px;border-top:1px dashed #ffffff30;color:var(--mut)}.lbq b{color:var(--fg)}
+.p5bar .bar-row{flex-wrap:nowrap;gap:12px;justify-content:space-between;overflow-x:auto}.p5bar .lbl{min-width:118px}.p5bar .lbb{gap:4px}
+@media (max-width:820px){.cmp1,.grid4,.grid2{grid-template-columns:1fr}}
+
+
+/* ronda 8 */
+.wsm div{display:grid;grid-template-columns:10px 100px 1fr 40px;gap:8px;align-items:center;font-size:12px;margin:5px 0}.wsm b{font-family:var(--mono);text-align:right}.wsm .dot{margin:0}
+.c3x{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start}
+.ins-col{display:flex;flex-direction:column;gap:14px}
+.ins-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(300px,32%);gap:14px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x mandatory}.ins-strip>.ins{scroll-snap-align:start}
+.hero-ins .ins{margin-bottom:14px;background:radial-gradient(ellipse at 0 0,#8B7CFF22,transparent 60%),linear-gradient(180deg,#1a2132,#141a27)}.hero-ins h6{font-size:28px}.hero-ins .mini-rank{max-width:560px}
+.c5{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;margin-top:14px}
+.hb{display:grid;grid-template-columns:92px repeat(8,minmax(44px,1fr)) 110px;gap:4px;min-width:560px;align-items:center}
+.hb-h{font-size:12px;color:var(--mut);text-align:center;padding-bottom:4px}.hb-h b{color:var(--fg)}.hb-h.today b{color:var(--brand)}.hb-h.r{text-align:right}
+.hb-f{display:flex;flex-direction:column;font-size:12.5px}.hb-f em{font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.hb-c{height:54px;border-radius:7px;background:color-mix(in srgb,#8B7CFF calc(var(--a)*85%),#151b27);display:flex;align-items:center;justify-content:center}
+.hb-c:hover{outline:2px solid #fff}.hb-c b{font:600 11px var(--mono);color:#fff;text-shadow:0 1px 4px #000}
+.hb-t{display:grid;grid-template-columns:1fr 52px;gap:8px;align-items:center}.hb-t span{height:8px;border-radius:4px;background:#151b27;overflow:hidden}.hb-t i{display:block;height:100%;background:#8B7CFF}.hb-t b{font-family:var(--mono);font-size:12px;text-align:right}
+@media (max-width:820px){.c3x,.c5{grid-template-columns:1fr}.ins-strip{grid-auto-columns:85%}}
+
+
+/* ronda 9 pomodoro */
+.wk-sum.f6{grid-template-columns:repeat(6,1fr)}
+.fb{position:absolute;left:14%;right:4px;border-radius:6px;background:linear-gradient(180deg,#2fd3c0,#1f9e90);color:#06231f;padding:2px 6px;overflow:hidden;display:flex;flex-direction:column;z-index:2;box-shadow:0 2px 8px #0008}
+.fb.x{background:repeating-linear-gradient(135deg,#ff758055 0 5px,#ff758022 5px 10px);color:#ffd9dc;border:1px solid #ff758088}
+.fb:hover{outline:2px solid #fff}
+.fb b{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fb span{font:600 10px var(--mono);opacity:.8}
+.agb{position:absolute;left:3px;width:9%;border-radius:3px;background:var(--ac);opacity:.75}
+.fbk,.agk{display:inline-block;width:12px;height:10px;border-radius:3px;background:#2fd3c0;vertical-align:-1px}.fbk.x{background:repeating-linear-gradient(135deg,#ff758088 0 3px,transparent 3px 6px);border:1px solid #ff7580}.agk{background:#8B7CFF;width:5px}
+.fp{display:grid;grid-template-columns:100px 1fr 54px 44px 64px;gap:8px;align-items:center;font-size:12.5px;margin:6px 0}
+.fpb{height:8px;border-radius:4px;background:#151b27;overflow:hidden}.fpb i{display:block;height:100%;background:#2fd3c0}
+.fp b{font-family:var(--mono);font-weight:500;text-align:right}.fp em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--mut)}.fp>b:last-child,.fp .up,.fp .dn,.fp .eq{text-align:right;font-size:11.5px}
+.fh{display:grid;grid-template-columns:repeat(24,1fr);gap:2px;height:120px}
+.fhc{display:grid;grid-template-rows:1fr 1fr 14px;gap:1px}.fhc .u{display:flex;align-items:flex-end;background:#151b27;border-radius:2px 2px 0 0}.fhc .u i{width:100%;background:#2fd3c0;border-radius:2px 2px 0 0}
+.fhc .d{display:flex;align-items:flex-start;background:#151b27;border-radius:0 0 2px 2px}.fhc .d i{width:100%;background:#FF7580aa}.fhc em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+.fhs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}.fhs small{display:block;font-size:11px;color:var(--dim)}.fhs b{font-family:var(--mono);font-size:17px}
+.ht td:nth-child(-n+3){font-family:var(--mono)}
+.st{font-size:11px;padding:1px 8px;border-radius:999px}.st.ok{background:#2fd3c022;color:#2fd3c0}.st.no{background:#ff758022;color:#ff7580}
+.xp .xpr{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin:8px 0}.xpb{height:8px;border-radius:4px;background:#151b27;overflow:hidden}.xpb i{display:block;height:100%;background:linear-gradient(90deg,#2fd3c0,#8B7CFF)}.xp em{font-style:normal;font-family:var(--mono);font-size:11.5px;color:var(--mut)}
+.hgbar .bar-row{justify-content:space-around}
+.hgd{display:flex;flex-direction:column;align-items:center;gap:2px;padding-bottom:14px;font-size:12px;color:var(--mut)}.hgd>b{font-family:var(--mono);font-size:15px;color:var(--fg);margin-top:4px}.hgd span b{color:var(--fg)}.hgd.today span b{color:#2fd3c0}.hgd em{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.grain{animation:grain .6s linear infinite}@keyframes grain{50%{opacity:.4}}
+.bl-day{display:grid;grid-template-columns:120px 1fr;gap:16px;padding:14px 16px;border-bottom:1px solid #1a2130}
+.bl-list{display:flex;flex-direction:column;gap:8px}
+.bl{display:grid;grid-template-columns:56px minmax(0,1fr) minmax(0,1.1fr);gap:14px;align-items:center;padding:8px 10px;border-radius:10px;background:#141a27;border-left:3px solid #2fd3c0}.bl.x{border-left-color:#ff7580}
+.bl-t{font-family:var(--mono);font-size:12.5px;display:flex;flex-direction:column}.bl-t span{color:var(--dim);font-size:11px}
+.bl-m{display:flex;flex-direction:column;gap:4px}.bl-m b{font-size:13px}.bl-m em{font-style:normal;font-size:11.5px;color:var(--mut)}
+.blb{height:6px;border-radius:3px;background:#151b27;overflow:hidden;max-width:240px}.blb i{display:block;height:100%;background:#2fd3c0}.bl.x .blb i{background:#ff7580}
+.bl-a{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:820px){.wk-sum.f6{grid-template-columns:repeat(2,1fr)}.bl{grid-template-columns:56px 1fr}.bl-a{grid-column:1/-1;justify-content:flex-start}.bl-day{grid-template-columns:1fr}}
+
+
+/* ronda 10 pomodoro simple */
+.tin{display:inline-block;vertical-align:-2px}.tin .tom{display:inline}
+.wk-sum.pn{grid-template-columns:repeat(4,1fr)}.wk-sum.pn b{font-size:26px}
+.pd{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;height:180px;align-items:end}
+.pdc{display:flex;flex-direction:column;align-items:center;gap:4px;height:100%}.pdc>b{font-family:var(--mono);font-size:14px;height:18px}
+.pdb{flex:1;width:100%;max-width:44px;display:flex;flex-direction:column-reverse;justify-content:flex-start;background:#151b27;border-radius:7px;overflow:hidden}
+.pdb i{display:block;background:linear-gradient(180deg,#ff7a66,#e0392b)}.pdb i.no{background:repeating-linear-gradient(135deg,#ff758055 0 4px,#ff758022 4px 8px)}
+.pdc span{font-size:11.5px;color:var(--mut);white-space:nowrap}.pdc span b{color:var(--fg)}.pdc.today span b{color:#ff7a66}
+.ph24{display:grid;grid-template-columns:repeat(24,1fr);gap:3px;height:150px}
+.phc{display:grid;grid-template-rows:1fr 14px}.phc span{display:flex;flex-direction:column-reverse;background:#151b27;border-radius:3px;overflow:hidden}.phc span i{display:block;background:#ef3b2c}.phc span i.no{background:#ff758055}
+.phc em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--dim)}.phc:hover span{outline:1px solid #fff}
+.pp{display:grid;grid-template-columns:12px 120px 1fr 54px 64px;gap:8px;align-items:center;font-size:13px;margin:8px 0}.pp .dot{margin:0}
+.ppb{height:10px;border-radius:5px;background:#151b27;overflow:hidden}.ppb i{display:block;height:100%}
+.pp b{font-family:var(--mono);text-align:right}.pp em{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--mut);text-align:right}
+.tom{display:block;filter:drop-shadow(0 2px 3px #0008)}.tom.x{opacity:.7}
+.tr{display:grid;grid-template-columns:96px minmax(0,1fr) minmax(0,.8fr) 30px;gap:14px;align-items:center;padding:8px 0;border-top:1px solid #1d2433}
+.trd{font-size:13px;color:var(--mut)}.trd b{color:var(--fg)}.tr.today .trd b{color:#ff7a66}
+.trt{display:flex;gap:6px;flex-wrap:wrap}.tw{display:flex;flex-direction:column;align-items:center;gap:2px}.tw u{display:block;width:14px;height:3px;border-radius:2px}
+.trh{font-family:var(--mono);font-size:11.5px;color:var(--mut)}.trn{font-family:var(--mono);font-size:18px;text-align:right}
+.tleg{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--mut)}.tleg u{display:inline-block;width:12px;height:4px;border-radius:2px;margin-right:6px;vertical-align:2px}.tleg b{color:var(--fg);font-family:var(--mono)}
+.dh{display:grid;gap:4px;min-width:640px;align-items:center}.dh>span{font-family:var(--mono);font-size:10.5px;color:var(--dim);text-align:center}.dh>span.r{text-align:right}
+.dhd{font-size:12.5px;color:var(--mut)}.dhd b{color:var(--fg)}.dhd.today b{color:#ff7a66}
+.dhc{height:34px;border-radius:6px;background:#151b27;display:flex;align-items:center;justify-content:center;font:700 12px var(--mono);font-style:normal;color:#0A0D13}
+.dhc.on{background:var(--pc)}.dhc.x{background:repeating-linear-gradient(135deg,#ff758055 0 4px,#ff758022 4px 8px);color:#ff7580}.dhc.on:hover{outline:2px solid #fff}
+.dht{font-family:var(--mono);text-align:right}
+.pcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;margin-bottom:14px}
+.pcard{border:1px solid var(--line);border-top:3px solid var(--pc);border-radius:12px;background:var(--panel2);padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.pch{display:flex;align-items:center;font-size:14px}.pcn{display:flex;align-items:baseline;gap:8px}.pcn b{font:700 34px var(--mono)}.pcn span{font-size:12px;color:var(--mut)}.pcm{font-family:var(--mono);font-size:12px;color:var(--mut)}
+.pc24{display:grid;grid-template-columns:repeat(24,1fr);gap:1px;height:36px;align-items:end;background:#151b27;border-radius:5px;padding:2px}.pc24 i{display:block;background:var(--pc);border-radius:1px}
+.pc24l{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+.pcd{display:flex;gap:4px;flex-wrap:wrap}.pcd span{font-size:11px;padding:1px 7px;border-radius:999px;background:#ffffff0d;color:var(--mut)}
+.ps td{vertical-align:middle}.ps tr.today td:first-child b{color:#ff7a66}.ptoms{display:inline-flex;gap:2px;vertical-align:middle}
+.hchip{display:inline-block;font-family:var(--mono);font-size:11.5px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:5px;background:#ef3b2c22;color:#ffb3a8}.hchip.x{background:#ff758014;color:#ff7580;text-decoration:line-through}
+.ps tr.tot td{border-top:1px solid var(--line2);font-weight:600}
+@media (max-width:820px){.wk-sum.pn{grid-template-columns:repeat(2,1fr)}.tr{grid-template-columns:80px 1fr 30px}.trh{display:none}}
+
+
+/* ===== maestro ===== */
+.sdots{display:flex;gap:6px;justify-content:center;margin:10px 0 4px}.sdots i{width:6px;height:6px;border-radius:50%;background:var(--line2)}.sdots i.on{background:var(--fg);width:16px;border-radius:3px}
+.mhead .tab{font:inherit;font-size:12.5px;border:0;background:none;cursor:pointer}.mhead .tab:focus-visible{outline:2px solid var(--brand)}
+.wnav{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mut)}.wnav b{color:var(--fg);font-weight:600}
+.wnav button,.pnav button{width:30px;height:30px;border-radius:8px;border:1px solid var(--line2);background:var(--panel2);color:var(--fg);cursor:pointer;font:inherit}
+.wnav button:disabled,.pnav button:disabled{opacity:.3;cursor:default}
+.pnav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;font-size:12.5px;color:var(--mut)}
+.app.phone-frame .modal{max-width:390px;padding:14px 12px 20px}.app.phone-frame .hdr{max-width:390px}
+.phone .mhead{gap:10px}.phone .mhead h2{width:100%}.phone .tabs{width:100%}.phone .tab{flex:1;text-align:center}.phone .wnav{margin-left:0;width:100%;justify-content:space-between}
+.phone .bar-row{flex-wrap:nowrap!important;overflow-x:auto;justify-content:flex-start!important;scroll-snap-type:x mandatory;gap:0!important;padding-bottom:4px}
+.phone .bgrp,.phone .lbg{min-width:100%;scroll-snap-align:center}
+.phone .bar{padding:20px 8px 0}.phone .bar-wood{margin:0 -8px}
+.phone .bar-stats{grid-template-columns:1fr}
+.phone .wk-sum,.phone .wk-sum.pn,.phone .wk-sum.f6{grid-template-columns:repeat(2,1fr)}.phone .wk-sum div:nth-child(3){border-left:0}.phone .wk-sum div:nth-child(n+3){border-top:1px solid var(--line)}
+.phone .cal-cols{min-width:0;grid-template-columns:repeat(3,minmax(0,1fr))!important}.phone .cal{grid-template-columns:44px 1fr}.phone .wk-box{padding:10px}
+.phone .ins-grid,.phone .grid2,.phone .grid4{grid-template-columns:1fr}
+.phone .ph24{height:110px}.phone .pp{grid-template-columns:12px 90px 1fr 44px}.phone .pp em{display:none}
+.phone .lbl{min-width:118px}
+.pcards1{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.pc1{border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:12px;display:flex;flex-direction:column;gap:8px}
+.pc1h{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:13px;color:var(--mut)}.pc1h b{color:var(--fg)}.pc1.today .pc1h span b{color:#ff7a66}
+.pc1n{font:700 20px var(--mono)}.pc1>.dim{font-size:12.5px}.pc1p{display:flex;gap:6px;flex-wrap:wrap}.pc1f{font-size:12px;color:var(--mut)}
+
+/* picker (laboratorio, no es parte del diseño) */
+.picker{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:50;background:#fafafa;color:#111;border-radius:14px;box-shadow:0 12px 40px #000c;padding:10px 12px 12px;width:310px;font-family:var(--sans);user-select:none}
+.picker .grip{cursor:grab;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#777;display:flex;justify-content:space-between;margin-bottom:6px}
+.picker .row{display:flex;align-items:center;gap:8px}
+.picker button{font:inherit;border:1px solid #d4d4d4;background:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;color:#111}
+.picker button:focus-visible{outline:2px solid #6b5cff}
+.picker button.on{background:#111;color:#fff;border-color:#111}
+.picker .name{flex:1;font-weight:700;font-size:13px;text-align:center}
+.picker .desc{font-size:11.5px;color:#444;margin:6px 0 8px;line-height:1.4}
+.picker .states{display:flex;gap:5px;flex-wrap:wrap}.picker .states button{font-size:11px;padding:3px 8px}
+@media (max-width:820px){.grid{grid-template-columns:1fr}.picker{width:calc(100% - 32px)}}
+@media (max-width:460px){.bx,.v1,.v2,.v4,.v5{grid-template-columns:1fr;justify-items:start}.modal{padding:16px}}
+</style>
+
+<div class="app">
+  <div class="hdr" aria-hidden="true"><i style="width:32px"></i><i style="width:90px"></i><i style="width:70px"></i><i style="width:90px"></i><i style="flex:1;opacity:0"></i><i style="width:32px"></i><i style="width:32px;border-color:#2EE59D"></i><i style="width:32px"></i><i style="width:56px"></i></div>
+  <div class="modal" id="modal"></div>
+</div>
+<div class="tip" id="tip" hidden></div><div class="pop" id="pop" hidden></div>
+<div class="picker" id="picker" role="region" aria-label="Controles del mockup">
+  <div class="grip" id="grip"><span>Mockup maestro · aprobado</span><span>arrastra ⠿</span></div>
+  <div class="desc">Las pestañas y las flechas de semana funcionan. ← → del teclado cambian de pestaña. Estos botones solo cambian los datos de ejemplo o la vista.</div>
+  <div class="states" id="states"></div>
+</div>
+
+<script>
+/* PROTOTIPO — datos simulados con la forma real de las cuotas del 1 oct 2026, 08:16. Nada se guarda. */
+const ACC=[
+ {id:'main',provider:'claude',cli:'Claude',alias:'main',c:'#8B7CFF',week:36,model:{n:'Fable',v:31},h5:6,reset:'sáb 3 oct, 08:00',left:'1d 23h',hoy:{h:2.1,tok:219,ses:7},sem:{h:24.6,tok:6.1,ses:58}},
+ {id:'relotto',provider:'claude',cli:'Claude',alias:'relotto',c:'#FF9A5C',week:59,model:{n:'Fable',v:77},h5:27,reset:'vie 2 oct, 23:00',left:'1d 14h',hoy:{h:.6,tok:61,ses:2},sem:{h:11.2,tok:3.5,ses:23}},
+ {id:'codex',provider:'codex',cli:'Codex',alias:'main',c:'#4CC2FF',week:53,model:null,h5:null,reset:'sáb 3 oct, 21:58',left:'2d 13h',hoy:{h:.4,tok:38,ses:1},sem:{h:7.9,tok:1.5,ses:14}},
+ {id:'grok',provider:'grok',cli:'Grok',alias:'main',c:'#C5E35A',week:6,model:null,h5:null,reset:'sáb 3 oct, 20:54',left:'2d 12h',hoy:{h:0,tok:0,ses:0},sem:{h:6.5,tok:.2,ses:9}},
+];
+const PROJ=['Merauto','SAVA','NinjaCat','PaginasWeb','Chips','Relotto','DeepSearch','Dashboard','FerLongoria','signaraland','ComandOS','Signara'];
+const DAYS=[['2026-10-01','jue','1 oct'],['2026-09-30','mié','30'],['2026-09-29','mar','29'],['2026-09-28','lun','28'],['2026-09-27','dom','27'],['2026-09-26','sáb','26'],['2026-09-25','vie','25'],['2026-09-24','jue','24']];
+function rng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const R=rng(7),pick=a=>a[Math.floor(R()*a.length)];
+const TODAYD='2026-10-01',NOWH=8.27;
+const SES=[];
+DAYS.slice(1).forEach(([d],i)=>{const n=[4,7,5,1,1,3,5][i];for(let k=0;k<n;k++){const x=R(),acc=x<.42?'main':x<.68?'relotto':x<.85?'codex':'grok';let st=pick([9.5,10,11.5,13,15,16.5,18,20,21.5,23,0.5,1.5])+R()*.6,du=.3+R()*2.1;if(st+du>23.9)du=23.9-st;SES.push({d,acc,proj:pick(PROJ),st,en:st+du})}});
+const TODAY=[{acc:'main',proj:'DeepSearch',st:.12,en:.65},{acc:'relotto',proj:'Relotto',st:.7,en:1.3},{acc:'main',proj:'Dashboard',st:1.1,en:1.55},{acc:'codex',proj:'FerLongoria',st:1.5,en:1.92},{acc:'main',proj:'signaraland',st:1.6,en:2.25},{acc:'main',proj:'ComandOS',st:7.4,en:8.25}].map(s=>({...s,d:'2026-10-01'}));
+
+let state='normal';
+let accs=()=>ACC.map(a=>{a=structuredClone(a);if(state==='limite'&&a.id==='relotto'){a.week=94;a.model.v=98;a.h5=88}if(state==='vacio')a.hoy={h:0,tok:0,ses:0};return a});
+let sessions=()=>state==='vacio'?SES:SES.concat(TODAY);
+const A_=id=>ACC.find(a=>a.id===id);
+const fmtH=h=>{let hh=Math.floor(h),mm=Math.round((h-hh)*60);if(mm===60){hh++;mm=0}return String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0')};
+const dur=h=>!h?'—':h<1?Math.round(h*60)+' min':h.toFixed(1)+' h';
+const lvl=q=>q<=10?'var(--bad)':q<=30?'var(--warn)':'var(--ok)';
+let uid=0;
+
+function flag(a){const q=100-a.week;return q<=10?'<span class="flag bad">casi vacía</span>':q<=30?'<span class="flag warn">queda poco</span>':''}
+function stats(a){return `<div class="stats"><div><small>HOY</small><b>${dur(a.hoy.h)}</b><em>${a.hoy.ses} ses · ${a.hoy.tok}M tok</em></div><div><small>SEMANA</small><b>${dur(a.sem.h)}</b><em>${a.sem.ses} ses · ${a.sem.tok}B tok</em></div><div><small>RESET</small><b>${a.left}</b><em>${a.reset}</em></div></div>`}
+function subs(a){const r=[];if(a.model)r.push([a.model.n,100-a.model.v]);if(a.h5!=null)r.push(['5 h',100-a.h5]);
+ return r.length?`<div class="subs">${r.map(([n,q])=>`<div class="sub"><span>${n}</span><span class="tr" style="--fc:${q<=30?lvl(q):'var(--ac)'}"><i style="width:${q}%"></i></span><b>${q}%</b></div>`).join('')}</div>`:''}
+function hero(a,lbl='queda esta semana'){return `<div class="hero"><div class="n num">${100-a.week}<sup>%</sup></div><div class="l">${lbl}</div></div>`}
+function card(a,body,cls=''){return `<div class="card ${cls}" style="--ac:${a.c}"><div class="c-head"><span class="dot"></span><b>${a.cli}</b><small>${a.alias}</small>${flag(a)}</div>${body}${stats(a)}</div>`}
+
+/* ---------- RONDA 3: botellas de vidrio ---------- */
+function defs(id,c){return `<defs>
+ <linearGradient id="${id}l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".95"/><stop offset="1" stop-color="${c}" stop-opacity=".6"/></linearGradient>
+ <linearGradient id="${id}sh" x1="0" x2="1"><stop offset="0" stop-color="#000" stop-opacity=".45"/><stop offset=".18" stop-color="#000" stop-opacity="0"/><stop offset=".7" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".5"/></linearGradient>
+ <linearGradient id="${id}g" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset=".12" stop-color="#fff" stop-opacity=".05"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset=".86" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-color="#fff" stop-opacity=".03"/></linearGradient>
+ <radialGradient id="${id}fl" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#000" stop-opacity=".55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+ <linearGradient id="${id}k" x1="0" x2="1"><stop offset="0" stop-color="#262d3d"/><stop offset=".45" stop-color="#3d4659"/><stop offset="1" stop-color="#1c2230"/></linearGradient>
+ <linearGradient id="${id}cork" x1="0" x2="1"><stop offset="0" stop-color="#7a5232"/><stop offset=".5" stop-color="#b5814f"/><stop offset="1" stop-color="#6a4529"/></linearGradient></defs>`}
+/* líquido con oleaje, burbujas y sombreado cilíndrico, recortado a la forma */
+function liquid(id,path,W,H,yTop,yBot,q,c,period=60,amp=2.6){
+ const y=yBot-(yBot-yTop)*q/100,n=Math.ceil((W+2*period)/(period/2));
+ const wv=`M0 ${y} `+Array.from({length:n},(_,i)=>`q ${period/4} ${i%2?amp:-amp} ${period/2} 0`).join(' ')+` V ${H} H 0 Z`;
+ const bub=q>6?[.3,.55,.7,.42].map((f,i)=>`<circle class="bub" cx="${W*f}" cy="${yBot-6}" r="${[1.6,1.1,2,1.3][i]}" fill="#fff" style="--rise:${-(yBot-y-10)}px;animation-delay:${i*1.1}s;animation-duration:${3.6+i*.7}s"/>`).join(''):'';
+ return `<clipPath id="${id}c"><path d="${path}"/></clipPath><g clip-path="url(#${id}c)">
+  <rect width="${W}" height="${H}" fill="#0b0f17"/>
+  ${q>0?`<g class="wave" style="animation-duration:11s;--sh:${-period}px"><path d="${wv}" fill="${c}" opacity=".32" transform="translate(${-period/2},-2.5)"/></g>
+  <g class="wave" style="--sh:${-period}px"><path d="${wv}" fill="url(#${id}l)"/></g>
+  <rect x="0" y="${y-.6}" width="${W}" height="1.4" fill="#fff" opacity=".5"/>${bub}`:''}
+  <rect width="${W}" height="${H}" fill="url(#${id}sh)"/></g>`;
+}
+function glass(id,path,W,hl){return `<path d="${path}" fill="url(#${id}g)" stroke="#ffffff42" stroke-width="1.3"/><path d="${path}" fill="none" stroke="#ffffff10" stroke-width="5"/>${hl||''}`}
+function ticks(x,yTop,yBot,len=9){return [25,50,75].map(p=>{const y=yBot-(yBot-yTop)*p/100;return `<line x1="${x-len}" x2="${x}" y1="${y}" y2="${y}" stroke="#ffffff5c"/><text x="${x-len-4}" y="${y+3}" text-anchor="end" font-family="Ubuntu Sans Mono,monospace" font-size="8" fill="#ffffff70">${p}</text>`}).join('')}
+const floor=(id,cx,y,rx)=>`<ellipse cx="${cx}" cy="${y}" rx="${rx}" ry="${rx*.13}" fill="url(#${id}fl)"/>`;
+
+/* 1 · Botella de agua, alta, con etiqueta grabada */
+function bWater(q,c,s=1,label=true){
+ const id='w'+(uid++),W=120,H=232,path='M30 64 Q26 50 42 47 L78 47 Q94 50 90 64 L94 78 L94 206 Q94 220 80 220 L40 220 Q26 220 26 206 L26 78 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W*s}" height="${H*s}" role="img" aria-label="queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,60,224,46)}
+ <rect x="38" y="8" width="44" height="30" rx="6" fill="url(#${id}k)"/>${[0,1,2,3,4,5,6].map(i=>`<rect x="${42+i*5.6}" y="12" width="2" height="22" rx="1" fill="#0008"/>`).join('')}
+ <rect x="34" y="36" width="52" height="10" rx="3" fill="#1b2130"/>
+ ${liquid(id,path,W,H,82,216,q,c,64)}
+ ${glass(id,path,W,`<rect x="33" y="84" width="5" height="118" rx="2.5" fill="#fff" opacity=".2"/><rect x="41" y="96" width="2" height="60" rx="1" fill="#fff" opacity=".12"/>`)}
+ ${label?ticks(90,82,216):''}
+ </svg>`;
+}
+/* 2 · Matraz Erlenmeyer + tubos de ensayo */
+function bFlask(q,c){
+ const id='f'+(uid++),W=160,H=232,path='M64 26 L64 88 L20 198 Q14 214 32 214 L128 214 Q146 214 140 198 L96 88 L96 26 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,80,218,66)}
+ ${liquid(id,path,W,H,90,212,q,c,70,3)}
+ ${glass(id,path,W,`<path d="M70 32 L70 92 L32 190" stroke="#fff" stroke-opacity=".22" stroke-width="3.5" fill="none" stroke-linecap="round"/>`)}
+ <rect x="57" y="18" width="46" height="10" rx="4" fill="#ffffff1c" stroke="#ffffff45"/>
+ ${[25,50,75].map(p=>{const y=212-(212-90)*p/100,hw=16+(y-88)*.4;return `<line x1="${80+hw-14}" x2="${80+hw}" y1="${y}" y2="${y}" stroke="#ffffff66"/><text x="${80+hw-18}" y="${y+3}" text-anchor="end" font-family="Ubuntu Sans Mono,monospace" font-size="8" fill="#ffffff80">${p}</text>`}).join('')}
+ </svg>`;
+}
+function bTube(q,c,lab){
+ const id='t'+(uid++),W=34,H=150,path='M6 14 L6 128 A11 11 0 0 0 28 128 L28 14 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${lab} queda ${q} por ciento">${defs(id,c)}
+ ${liquid(id,path,W,H,22,139,q,c,24,1.6)}${glass(id,path,W,`<rect x="9" y="22" width="2.5" height="100" rx="1.2" fill="#fff" opacity=".22"/>`)}
+ <rect x="2" y="9" width="30" height="7" rx="3" fill="#ffffff1c" stroke="#ffffff45"/></svg>`;
+}
+/* 3 · Frasco de poción con corcho y etiqueta colgante */
+function bPotion(q,c,a){
+ const id='p'+(uid++),W=170,H=236,path='M70 34 L70 96 A64 64 0 1 0 100 96 L100 34 Z';
+ const tag=a?`<g transform="translate(112 52) rotate(14)"><path d="M0 0 Q-10 -16 -14 -22" stroke="#c9b28a" stroke-width="1" fill="none"/><rect x="-2" y="0" width="58" height="34" rx="4" fill="#e8dcc2"/><circle cx="6" cy="7" r="2.2" fill="#0b0f17"/><text x="12" y="13" font-family="Ubuntu Sans Mono,monospace" font-size="8.5" font-weight="700" fill="#2a2216">${a.alias.toUpperCase()}</text><text x="4" y="27" font-family="Ubuntu Sans Mono,monospace" font-size="7.5" fill="#5a4a33">${a.reset.split(',')[0]}</text></g>`:'';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,85,224,58)}
+ ${liquid(id,path,W,H,96,220,q,c,72,3.2)}
+ ${glass(id,path,W,`<path d="M40 128 A52 52 0 0 1 64 104" stroke="#fff" stroke-opacity=".3" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="62" cy="182" r="3" fill="#fff" opacity=".18"/>`)}
+ <rect x="64" y="24" width="42" height="12" rx="4" fill="#ffffff1a" stroke="#ffffff45"/>
+ <path d="M68 6 L102 6 L99 32 L71 32 Z" fill="url(#${id}cork)"/>${[12,18,24].map(y=>`<line x1="72" x2="98" y1="${y}" y2="${y}" stroke="#00000030"/>`).join('')}
+ ${tag}</svg>`;
+}
+function bVial(q,c,lab){
+ const id='v'+(uid++),W=40,H=110,path='M12 18 L12 34 Q4 40 4 52 L4 94 Q4 104 14 104 L26 104 Q36 104 36 94 L36 52 Q36 40 28 34 L28 18 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${lab} queda ${q} por ciento">${defs(id,c)}
+ ${liquid(id,path,W,H,38,103,q,c,26,1.6)}${glass(id,path,W,`<rect x="8" y="50" width="2.5" height="44" rx="1.2" fill="#fff" opacity=".22"/>`)}
+ <path d="M11 4 L29 4 L28 18 L12 18 Z" fill="url(#${id}cork)"/></svg>`;
+}
+/* 4 · Decantador cuadrado de vidrio grueso con tapón de cristal */
+function bDecanter(q,c){
+ const id='d'+(uid++),W=150,H=236,outer='M50 56 L50 72 Q16 76 16 100 L16 208 Q16 222 30 222 L120 222 Q134 222 134 208 L134 100 Q134 76 100 72 L100 56 Z',
+  inner='M56 62 L56 78 Q24 82 24 104 L24 200 Q24 208 32 208 L118 208 Q126 208 126 200 L126 104 Q126 82 94 78 L94 62 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,75,226,64)}
+ <path d="${outer}" fill="#1a2232" opacity=".9"/>
+ ${liquid(id,inner,W,H,84,207,q,c,70,2.8)}
+ <path d="${outer}" fill="url(#${id}g)" stroke="#ffffff50" stroke-width="1.4"/>
+ <path d="${inner}" fill="none" stroke="#ffffff24"/>
+ <rect x="24" y="209" width="102" height="12" rx="4" fill="#ffffff12"/>
+ <rect x="20" y="104" width="4" height="98" fill="#fff" opacity=".22"/><rect x="128" y="104" width="2" height="98" fill="#fff" opacity=".12"/>
+ <circle cx="75" cy="30" r="20" fill="#ffffff14" stroke="#ffffff50"/><circle cx="68" cy="23" r="6" fill="#fff" opacity=".25"/><rect x="66" y="46" width="18" height="12" fill="#ffffff18" stroke="#ffffff40"/>
+ ${ticks(124,84,207,8)}
+ </svg>`;
+}
+/* 5 · Estante: una botella por límite, con reflejo */
+function bShelf(a){
+ const items=[[100-a.week,'semana',1]];if(a.model)items.push([100-a.model.v,a.model.n,.78]);if(a.h5!=null)items.push([100-a.h5,'5 h',.6]);
+ const warnC=q=>q<=10?'#FF7580':q<=30?'#FFAE1A':a.c;
+ return `<div class="shelf">${items.map(([q,l,s],i)=>`<div class="sb">${bWater(q,i?warnC(q):a.c,s,false)}<div class="cap">${l}<b>${q}%</b></div></div>`).join('')}</div>`;
+}
+/* composiciones */
+function side(a,withSubs=true){return `<div class="side">${hero(a)}${withSubs?subs(a):''}<div class="reset">se renueva <b>${a.reset}</b> · en ${a.left}</div></div>`}
+const subColor=(a,q)=>q<=10?'#FF7580':q<=30?'#FFAE1A':a.c;
+const B1=a=>card(a,`<div class="bx">${bWater(100-a.week,a.c)}${side(a)}</div>`);
+const B2=a=>{const t=[];if(a.model)t.push([100-a.model.v,a.model.n]);if(a.h5!=null)t.push([100-a.h5,'5 h']);
+ return card(a,`<div class="bx">${bFlask(100-a.week,a.c)}<div class="side">${hero(a)}${t.length?`<div class="rack">${t.map(([q,l])=>`<div>${bTube(q,subColor(a,q),l)}<div class="cap">${l}<b>${q}%</b></div></div>`).join('')}</div>`:''}<div class="reset">se renueva <b>${a.reset}</b></div></div></div>`)};
+const B3=a=>{const t=[];if(a.model)t.push([100-a.model.v,a.model.n]);if(a.h5!=null)t.push([100-a.h5,'5 h']);
+ return card(a,`<div class="bx">${bPotion(100-a.week,a.c,a)}<div class="side">${hero(a)}${t.length?`<div class="rack">${t.map(([q,l])=>`<div>${bVial(q,subColor(a,q),l)}<div class="cap">${l}<b>${q}%</b></div></div>`).join('')}</div>`:''}<div class="reset">en ${a.left}</div></div></div>`)};
+const B4=a=>card(a,`<div class="bx">${bDecanter(100-a.week,a.c)}${side(a)}</div>`);
+const B5=a=>card(a,`<div class="bx bx5">${bShelf(a)}<div class="side">${hero(a)}<div class="reset">se renueva <b>${a.reset}</b> · en ${a.left}</div></div></div>`);
+const LOGO={"claude":"<svg viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z\" fill=\"#D97757\" fill-rule=\"nonzero\"></path></svg>","codex":"<svg viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z\" fill=\"#fff\"></path><path d=\"M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z\" fill=\"url(#lg-codex)\"></path><defs><linearGradient gradientUnits=\"userSpaceOnUse\" id=\"lg-codex\" x1=\"12\" x2=\"12\" y1=\"3\" y2=\"21\"><stop stop-color=\"#B1A7FF\"></stop><stop offset=\".5\" stop-color=\"#7A9DFF\"></stop><stop offset=\"1\" stop-color=\"#3941FF\"></stop></linearGradient></defs></svg>","grok":"<svg fill=\"currentColor\" fill-rule=\"evenodd\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815\"></path></svg>"};
+const LOGO_D={"claude":"M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z","codex":"M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z","grok":"M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815"};
+/* ---------- RONDA 4: una botella por límite, con logos ---------- */
+const H5={main:{left:'2h 37m',reset:'jue 1 oct, 10:40'},relotto:{left:'2h 47m',reset:'jue 1 oct, 10:50'}};
+function limits(a){const L=[];if(a.week!=null)L.push({n:'Semana',q:100-a.week,left:a.left,reset:a.reset});
+ if(a.model)L.push({n:a.model.n,q:100-a.model.v,left:a.model.left??a.left,reset:a.model.reset??a.reset});
+ if(a.h5!=null)L.push({n:'Sesión 5 h',q:100-a.h5,left:H5[a.id].left,reset:H5[a.id].reset});return L}
+const logoOf=a=>a.provider;
+const liqC=(a,q)=>q<=10?'#FF7580':q<=30?'#FFAE1A':a.c;
+function emboss(k,cx,cy,size,op=.22){return `<svg x="${cx-size/2}" y="${cy-size/2}" width="${size}" height="${size}" viewBox="0 0 24 24" overflow="visible"><path d="${LOGO_D[k]}" fill="#fff" fill-rule="evenodd" opacity="${op}"/></svg>`}
+function colorLogo(k,size,x,y){return `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 24 24">${LOGO[k].replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'').replace(/fill="currentColor"/,'').replace('<path d="M9.27','<path fill="#fff" d="M9.27')}</svg>`}
+function logoTile(a,s=26){return `<span class="ltile" style="width:${s}px;height:${s}px">${LOGO[logoOf(a)].replace('<svg','<svg width="'+(s-8)+'" height="'+(s-8)+'"').replace(/fill="currentColor"/,'fill="#fff"')}</span>`}
+
+/* A · poción con corcho, logo grabado en la esfera y etiqueta con el nombre del límite */
+function sphereH(f,r){let lo=0,hi=2*r;for(let i=0;i<40;i++){const h=(lo+hi)/2,v=Math.PI*h*h*(3*r-h)/3/(4/3*Math.PI*r**3);if(v<f)lo=h;else hi=h}return (lo+hi)/2}
+function potion(q,c,k,tagTxt){
+ const id='p'+(uid++),W=118,H=178,cx=59,r=46,neckL=48,neckR=70,nb=72,cy=nb+Math.sqrt(r*r-11*11),bot=cy+r;
+ const path=`M${neckL} 30 L${neckL} ${nb} A${r} ${r} 0 1 0 ${neckR} ${nb} L${neckR} 30 Z`;
+ const h=q>0?sphereH(q/100,r):0;
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${tagTxt} queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,cx,bot+4,44)}${liquid(id,path,W,H,bot-h,bot,q>0?100:0,c,56,2.6)}
+ ${glass(id,path,W,`<path d="M24 ${cy-6} A38 38 0 0 1 42 ${cy-30}" stroke="#fff" stroke-opacity=".3" stroke-width="4" fill="none" stroke-linecap="round"/>`)}
+ ${emboss(k,cx,cy+8,30,.2)}
+ <rect x="${neckL-5}" y="22" width="${neckR-neckL+10}" height="10" rx="3.5" fill="#ffffff1a" stroke="#ffffff45"/>
+ <path d="M${neckL-2} 4 L${neckR+2} 4 L${neckR} 26 L${neckL} 26 Z" fill="url(#${id}cork)"/>${[10,15,20].map(y=>`<line x1="${neckL+1}" x2="${neckR-1}" y1="${y}" y2="${y}" stroke="#00000030"/>`).join('')}
+ </svg>`;
+}
+/* B · botella de agua con faja de marca (logo + nombre del límite) */
+function brandBottle(q,c,k,name){
+ const id='w'+(uid++),W=96,H=210,path='M24 56 Q21 44 34 42 L62 42 Q75 44 72 56 L76 68 L76 188 Q76 200 64 200 L32 200 Q20 200 20 188 L20 68 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${name} queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,48,203,36)}
+ <rect x="30" y="6" width="36" height="26" rx="5" fill="url(#${id}k)"/>${[0,1,2,3,4,5].map(i=>`<rect x="${34+i*5.4}" y="10" width="2" height="18" rx="1" fill="#0008"/>`).join('')}<rect x="27" y="30" width="42" height="10" rx="3" fill="#1b2130"/>
+ ${liquid(id,path,W,H,72,196,q,c,56)}
+ ${glass(id,path,W,`<rect x="26" y="74" width="4" height="108" rx="2" fill="#fff" opacity=".2"/>`)}
+ <g><rect x="20" y="104" width="56" height="40" fill="#0A0D13" opacity=".5"/><rect x="20" y="104" width="56" height="1" fill="#ffffff30"/><rect x="20" y="143" width="56" height="1" fill="#ffffff30"/>
+ ${colorLogo(k,14,41,110)}<text x="48" y="137" text-anchor="middle" font-family="Ubuntu Sans Mono,monospace" font-size="8.5" font-weight="600" fill="#EAF0FB" letter-spacing=".5">${name.toUpperCase().replace('SESIÓN ','')}</text></g>
+ </svg>`;
+}
+/* C · decantador cuadrado con logo grabado grande */
+function decanter(q,c,k,name){
+ const id='d'+(uid++),W=112,H=206,outer='M38 50 L38 62 Q12 66 12 86 L12 186 Q12 198 24 198 L88 198 Q100 198 100 186 L100 86 Q100 66 74 62 L74 50 Z',
+  inner='M43 55 L43 67 Q18 71 18 89 L18 180 Q18 186 24 186 L88 186 Q94 186 94 180 L94 89 Q94 71 69 67 L69 55 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${name} queda ${q} por ciento">${defs(id,c)}
+ ${floor(id,56,201,50)}<path d="${outer}" fill="#1a2232" opacity=".9"/>
+ ${liquid(id,inner,W,H,72,185,q,c,56,2.4)}
+ <path d="${outer}" fill="url(#${id}g)" stroke="#ffffff50" stroke-width="1.3"/><path d="${inner}" fill="none" stroke="#ffffff22"/>
+ <rect x="18" y="187" width="76" height="10" rx="3" fill="#ffffff12"/>
+ <rect x="15" y="90" width="3" height="88" fill="#fff" opacity=".22"/>
+ ${emboss(k,56,128,40,.24)}
+ <circle cx="56" cy="26" r="15" fill="#ffffff14" stroke="#ffffff50"/><circle cx="51" cy="21" r="4.5" fill="#fff" opacity=".25"/><rect x="49" y="40" width="14" height="11" fill="#ffffff18" stroke="#ffffff40"/>
+ </svg>`;
+}
+/* E · tubo de ensayo grande en gradilla */
+function bigTube(q,c,name){
+ const id='t'+(uid++),W=46,H=200,path='M8 14 L8 174 A15 15 0 0 0 38 174 L38 14 Z';
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${name} queda ${q} por ciento">${defs(id,c)}
+ ${liquid(id,path,W,H,22,188,q,c,30,1.8)}${glass(id,path,W,`<rect x="12" y="22" width="3" height="150" rx="1.5" fill="#fff" opacity=".22"/>`)}
+ <rect x="3" y="8" width="40" height="8" rx="3" fill="#ffffff1c" stroke="#ffffff45"/>
+ ${[25,50,75].map(p=>{const y=188-(188-22)*p/100;return `<line x1="30" x2="38" y1="${y}" y2="${y}" stroke="#ffffff55"/>`}).join('')}</svg>`;
+}
+function capt(l,small){return `<div class="bcap"><span>${l.n}</span><b class="${l.q<=10?'bad':l.q<=30?'warn':''}">${l.q}%</b><em>${l.left==null?'':'reset en '+l.left}</em></div>`}
+function head(a){return `<div class="c-head">${logoTile(a)}<b>${a.cli}</b><small>${a.alias}</small>${flag2(a)}</div>`}
+function flag2(a){const m=Math.min(...limits(a).map(l=>l.q));return m<=10?'<span class="flag bad">un límite casi vacío</span>':m<=30?'<span class="flag warn">un límite bajo</span>':''}
+function stats2(a){return `<div class="stats s2"><div><small>HOY</small><b>${dur(a.hoy.h)}</b><em>${a.hoy.ses} ses · ${a.hoy.tok}M tok</em></div><div><small>SEMANA</small><b>${dur(a.sem.h)}</b><em>${a.sem.ses} ses · ${a.sem.tok}B tok</em></div></div>`}
+function shelfCard(a,mk){const L=limits(a);return `<div class="card ${L.length===1?'solo':''}" style="--ac:${a.c}">${head(a)}<div class="bottles">${L.map(l=>`<div class="bcol">${mk(l,a)}${capt(l)}</div>`).join('')}${L.length===1?stats2(a):''}</div>${L.length>1?stats2(a):''}</div>`}
+const R4=[
+ {key:'A',name:'Pociones con logo',desc:'Un frasco con corcho por límite. El logo del proveedor va grabado en el vidrio de cada uno; abajo el nombre del límite, lo que queda y cuándo se renueva.',
+  f:a=>shelfCard(a,(l,a)=>potion(l.q,liqC(a,l.q),logoOf(a),l.n))},
+ {key:'B',name:'Botellas de marca',desc:'Botellas de agua con faja impresa: logo a color y el nombre del límite, como un producto real. Lo más "de marca".',
+  f:a=>shelfCard(a,(l,a)=>brandBottle(l.q,liqC(a,l.q),logoOf(a),l.n))},
+ {key:'C',name:'Decantadores grabados',desc:'Vidrio grueso y cuadrado con el logo grande grabado al frente, como cristal esmerilado. Sobrio y premium.',
+  f:a=>shelfCard(a,(l,a)=>decanter(l.q,liqC(a,l.q),logoOf(a),l.n))},
+ {key:'D',name:'Barra iluminada',desc:'Todas las botellas de todas las cuentas en una sola repisa con luz de fondo, agrupadas por cuenta con su placa y logo. Se ve todo tu inventario de cuota de un golpe.',bar:true},
+ {key:'E',name:'Gradilla de tubos',desc:'Tubos de ensayo grandes en una gradilla por cuenta, con el logo estampado en la gradilla. Lo más técnico y compacto.',
+  f:a=>{const L=limits(a);return `<div class="card ${L.length===1?'solo':''}" style="--ac:${a.c}">${head(a)}<div class="bottles"><div class="rackE"><div class="tubes">${L.map(l=>`<div class="bcol">${bigTube(l.q,liqC(a,l.q),l.n)}</div>`).join('')}</div><div class="rbase">${logoTile(a,22)}<span>${a.cli} ${a.alias}</span></div><div class="tcaps">${L.map(l=>capt(l)).join('')}</div></div>${L.length===1?stats2(a):''}</div>${L.length>1?stats2(a):''}</div>`}},
+];
+function barShelf(as){
+ return `<div class="bar"><div class="bar-glow"></div><div class="bar-row">${as.map(a=>{const L=limits(a);return `<div class="bgrp" style="--ac:${a.c}"><div class="bgrp-b">${L.map(l=>`<div class="bcol">${brandBottle(l.q,liqC(a,l.q),logoOf(a),l.n)}${capt(l)}</div>`).join('')}</div><div class="plaque">${logoTile(a,22)}<b>${a.cli}</b><small>${a.alias}</small></div></div>`}).join('')}</div><div class="bar-wood"></div></div>
+ <div class="bar-stats">${as.map(a=>`<div style="--ac:${a.c}"><span class="dot"></span><b>${a.cli} ${a.alias}</b><span>hoy ${dur(a.hoy.h)} · ${a.hoy.ses} ses</span><span>semana ${dur(a.sem.h)} · ${a.sem.ses} ses</span></div>`).join('')}</div>`;
+}
+/* ---------- línea de tiempo con carriles (sin encimar) ---------- */
+function timeline(as){
+ const lane=ss=>{const ends=[];return ss.sort((a,b)=>a.st-b.st).map(s=>{let l=ends.findIndex(e=>e<=s.st);if(l<0){l=ends.length;ends.push(0)}ends[l]=s.en+.05;return {...s,l}})};
+ const ax=[0,3,6,9,12,15,18,21,24].map(h=>`<span style="left:${h/24*100}%">${String(h).padStart(2,'0')}</span>`).join('');
+ const rows=DAYS.map(([d,wd,dd])=>{const ss=lane(sessions().filter(s=>s.d===d));const nl=Math.max(1,...ss.map(s=>s.l+1)),hgt=8+nl*24;const tot=ss.reduce((x,s)=>x+s.en-s.st,0);
+  const blocks=ss.map(s=>{const a=A_(s.acc),wpx=(s.en-s.st)/24*900;return `<div class="blk" tabindex="0" style="--ac:${a.c};left:${s.st/24*100}%;width:${(s.en-s.st)/24*100}%;top:${5+s.l*24}px" data-i="${wd} ${dd} · ${fmtH(s.st)}–${fmtH(s.en)} · ${dur(s.en-s.st)} · ${s.proj} · ${a.cli} ${a.alias}">${wpx>s.proj.length*6.6+14?s.proj:''}</div>`}).join('');
+  return `<div class="d" style="height:${hgt}px"><b>${wd}</b>${dd}</div><div class="row" style="height:${hgt}px">${blocks}${d===TODAYD?`<div class="now" style="left:${NOWH/24*100}%"></div>`:''}</div><div class="t" style="height:${hgt}px">${dur(tot)}</div>`}).join('');
+ return `<div class="sect"><h3>Esta semana</h3><span>24 sep – 1 oct · cada bloque es una sesión; pasa el cursor para ver horas y proyecto</span></div>
+ <div class="tl-wrap"><div class="tl"><div class="ax"></div><div class="ax">${ax}</div><div class="ax"></div>${rows}</div></div>
+ <div class="tl-foot">${as.map(a=>`<span class="k" style="--ac:${a.c}"><i></i>${a.cli} ${a.alias}</span>`).join('')}<span class="tl-info" id="tlinfo"></span></div>`;
+}
+
+/* ---------- RONDA 5: la vista de la semana ---------- */
+const CHRONO=DAYS.slice().reverse();
+const dlab=d=>{const x=DAYS.find(y=>y[0]===d);return x[1]+' '+x[2]};
+const accName=id=>{const a=A_(id);return a.cli+' '+a.alias};
+const tipAttr=s=>`data-tip="${dlab(s.d)} · ${fmtH(s.st)}–${fmtH(s.en)} · ${dur(s.en-s.st)}|${s.proj}|${accName(s.acc)}"`;
+function projTot(ss){const m={};ss.forEach(s=>{m[s.proj]=m[s.proj]||{h:0,acc:{},n:0};m[s.proj].h+=s.en-s.st;m[s.proj].n++;m[s.proj].acc[s.acc]=(m[s.proj].acc[s.acc]||0)+s.en-s.st});
+ return Object.entries(m).map(([p,v])=>({p,h:v.h,n:v.n,acc:Object.entries(v.acc).sort((a,b)=>b[1]-a[1])[0][0]})).sort((a,b)=>b.h-a.h)}
+const dayTot=d=>sessions().filter(s=>s.d===d).reduce((x,s)=>x+s.en-s.st,0);
+const dayRange=d=>{const ss=sessions().filter(s=>s.d===d);return ss.length?fmtH(Math.min(...ss.map(s=>s.st)))+'–'+fmtH(Math.max(...ss.map(s=>s.en))):'—'};
+function weekHead(extra=''){const all=sessions(),tot=all.reduce((x,s)=>x+s.en-s.st,0),days=new Set(all.map(s=>s.d)).size,top=projTot(all)[0];
+ return `<div class="wk-sum"><div><small>Total con agentes</small><b>${dur(tot)}</b></div><div><small>Días activos</small><b>${days} de 8</b></div><div><small>Sesiones</small><b>${all.length}</b></div><div><small>Proyecto principal</small><b>${top?top.p:'—'}</b><em>${top?dur(top.h):''}</em></div>${extra}</div>`}
+
+/* W1 · Gantt por proyecto */
+function W1(){
+ const ps=projTot(sessions());
+ const head=CHRONO.map(([d,wd,dd])=>`<div class="g-day ${d===TODAYD?'today':''}"><b>${wd}</b> ${dd}</div>`).join('');
+ const rows=ps.map(p=>{const ss=sessions().filter(s=>s.proj===p.p);
+  return `<div class="g-name"><span class="dot" style="background:${A_(p.acc).c}"></span>${p.p}</div>`+CHRONO.map(([d])=>`<div class="g-cell ${d===TODAYD?'today':''}">${ss.filter(s=>s.d===d).map(s=>`<i class="g-bar" style="--ac:${A_(s.acc).c};left:${s.st/24*100}%;width:${Math.max(3,(s.en-s.st)/24*100)}%" ${tipAttr(s)}></i>`).join('')}</div>`).join('')+`<div class="g-tot">${dur(p.h)}</div>`}).join('');
+ return weekHead()+`<div class="wk-box"><div class="gantt" style="grid-template-columns:150px repeat(8,minmax(70px,1fr)) 64px"><div class="g-corner">Proyecto</div>${head}<div class="g-corner r">total</div>${rows}
+  <div class="g-name dim">Total del día</div>${CHRONO.map(([d])=>`<div class="g-foot">${dur(dayTot(d))}<em>${dayRange(d)}</em></div>`).join('')}<div></div></div>
+  <div class="wk-note">Cada celda es un día de 00 a 24 h; la barra marca a qué hora trabajaste ese proyecto y su color es la cuenta.</div></div>`;
+}
+/* W2 · Mapa de calor hora × día */
+function W2(){
+ const cells=CHRONO.map(([d,wd,dd])=>{const ss=sessions().filter(s=>s.d===d);
+  const hrs=Array.from({length:24},(_,h)=>{const by={};let m=0;ss.forEach(s=>{const o=Math.max(0,Math.min(s.en,h+1)-Math.max(s.st,h));if(o>0){m+=o;by[s.acc]=(by[s.acc]||0)+o}});m=Math.min(1,m);
+   const dom=Object.entries(by).sort((a,b)=>b[1]-a[1])[0];const projs=[...new Set(ss.filter(s=>s.st<h+1&&s.en>h).map(s=>s.proj))];
+   return m>0?`<i class="hm on" style="--ac:${A_(dom[0]).c};--a:${.25+.75*m}" data-tip="${wd} ${dd} · ${String(h).padStart(2,'0')}:00–${String(h+1).padStart(2,'0')}:00 · ${Math.round(m*60)} min|${projs.join(', ')}|${Object.keys(by).map(accName).join(', ')}"></i>`:`<i class="hm"></i>`}).join('');
+  return `<div class="hm-day ${d===TODAYD?'today':''}"><b>${wd}</b> ${dd}</div>${hrs}<div class="hm-tot">${dur(dayTot(d))}<em>${dayRange(d)}</em></div>`}).join('');
+ const hours=Array.from({length:24},(_,h)=>`<span>${h%3?'':String(h).padStart(2,'0')}</span>`).join('');
+ const byHour=Array.from({length:24},(_,h)=>sessions().reduce((x,s)=>x+Math.max(0,Math.min(s.en,h+1)-Math.max(s.st,h)),0)),mx=Math.max(...byHour,.01);
+ return weekHead()+`<div class="wk-box"><div class="heat"><div></div>${hours}<div></div>${cells}<div class="hm-day dim">por hora</div>${byHour.map(v=>`<span class="hm-col"><i style="height:${v/mx*100}%"></i></span>`).join('')}<div></div></div>
+  <div class="wk-note">Cada cuadro es una hora. Más intenso = más minutos trabajados en esa hora; el color es la cuenta que más se usó.</div></div>`;
+}
+/* W3 · Columnas por día, apiladas por proyecto */
+function W3(){
+ const all=projTot(sessions()),mx=Math.max(...CHRONO.map(([d])=>dayTot(d)),1),H=230;
+ const cols=CHRONO.map(([d,wd,dd])=>{const pt=projTot(sessions().filter(s=>s.d===d));const tot=dayTot(d);
+  return `<div class="c3 ${d===TODAYD?'today':''}"><div class="c3-val">${tot?dur(tot):''}</div><div class="c3-stack" style="height:${H}px"><div style="height:${tot/mx*100}%">${pt.map(p=>{const hp=p.h/mx*H;return `<i style="--ac:${A_(p.acc).c};flex:${p.h}" data-tip="${wd} ${dd} · ${dur(p.h)} · ${p.n} ses|${p.p}|${accName(p.acc)}">${hp>=18?`<span>${p.p}</span>`:''}</i>`}).join('')}</div></div><div class="c3-l"><b>${wd}</b> ${dd}<em>${dayRange(d)}</em></div></div>`}).join('');
+ const amx=all[0]?all[0].h:1;
+ return weekHead()+`<div class="wk-box c3-wrap"><div class="c3-grid">${cols}</div><div class="c3-leg"><h5>Proyectos de la semana</h5>${all.map(p=>`<div class="lg"><span class="dot" style="background:${A_(p.acc).c}"></span><span class="nm">${p.p}</span><b>${dur(p.h)}</b><i style="--ac:${A_(p.acc).c};width:${p.h/amx*100}%"></i></div>`).join('')}</div></div>`;
+}
+/* W4 · Calendario semanal (columnas = días, eje vertical = hora) */
+function W4(){
+ const HH=20,lane=ss=>{const ends=[];return ss.sort((a,b)=>a.st-b.st).map(s=>{let l=ends.findIndex(e=>e<=s.st);if(l<0){l=ends.length;ends.push(0)}ends[l]=s.en;return {...s,l}})};
+ const axis=Array.from({length:25},(_,h)=>h%3?'':`<span style="top:${h*HH}px">${String(h).padStart(2,'0')}:00</span>`).join('');
+ const cols=CHRONO.map(([d,wd,dd])=>{const ss=lane(sessions().filter(s=>s.d===d));const nl=Math.max(1,...ss.map(s=>s.l+1));
+  return `<div class="cal-col ${d===TODAYD?'today':''}"><div class="cal-h"><span><b>${wd}</b> ${dd}</span><em>${dur(dayTot(d))}</em></div><div class="cal-body" style="height:${24*HH}px">${ss.map(s=>{const hpx=(s.en-s.st)*HH;return `<div class="ev" style="--ac:${A_(s.acc).c};top:${s.st*HH}px;height:${Math.max(6,hpx-1)}px;left:${s.l/nl*100}%;width:calc(${100/nl}% - 3px)" ${tipAttr(s)}>${hpx>=26?`<b>${s.proj}</b><span>${fmtH(s.st)}</span>`:hpx>=14?`<b>${s.proj}</b>`:''}</div>`}).join('')}${d===TODAYD?`<div class="cal-now" style="top:${8.27*HH}px"></div>`:''}</div></div>`}).join('');
+ return weekHead()+`<div class="wk-box cal"><div class="cal-axis" style="height:${24*HH}px">${axis}</div><div class="cal-cols">${cols}</div></div>`;
+}
+/* W5 · Lista de días con chips de proyecto (se expande) */
+function W5(){
+ return weekHead()+`<div class="wk-box w5">${DAYS.map(([d,wd,dd],i)=>{const ss=sessions().filter(s=>s.d===d).sort((a,b)=>a.st-b.st),pt=projTot(ss),tot=dayTot(d);
+  return `<details class="dy" ${i===0&&ss.length?'open':''}><summary><div class="dy-d"><b>${wd}</b> ${dd}${d===TODAYD?'<span class="hoy">hoy</span>':''}</div><div class="dy-t"><b>${dur(tot)}</b><em>${dayRange(d)}</em></div>
+   <div class="dy-rib">${ss.map(s=>`<i style="--ac:${A_(s.acc).c};left:${s.st/24*100}%;width:${Math.max(.6,(s.en-s.st)/24*100)}%"></i>`).join('')}${[6,12,18].map(h=>`<u style="left:${h/24*100}%"></u>`).join('')}</div>
+   <div class="dy-chips">${pt.slice(0,4).map(p=>`<span class="pc" style="--ac:${A_(p.acc).c}">${p.p} <b>${dur(p.h)}</b></span>`).join('')}${pt.length>4?`<span class="pc more">+${pt.length-4}</span>`:''}${!ss.length?'<span class="dim">sin sesiones</span>':''}</div></summary>
+   ${ss.length?`<table class="dy-tbl"><thead><tr><th>Inicio</th><th>Fin</th><th>Duración</th><th>Proyecto</th><th>Cuenta</th></tr></thead><tbody>${ss.map(s=>`<tr><td>${fmtH(s.st)}</td><td>${fmtH(s.en)}</td><td>${dur(s.en-s.st)}</td><td>${s.proj}</td><td><span class="dot" style="background:${A_(s.acc).c}"></span>${accName(s.acc)}</td></tr>`).join('')}</tbody></table>`:''}</details>`}).join('')}</div>`;
+}
+const WEEK=[
+ {key:'1',name:'Gantt por proyecto',desc:'Filas = proyectos, columnas = días. Cada barra marca a qué hora trabajaste ese proyecto ese día. Los nombres nunca se cortan porque van en la fila.',f:W1},
+ {key:'2',name:'Mapa de calor',desc:'Cada cuadro es una hora de cada día; más intenso = más minutos. Muestra tu horario real de un vistazo (a qué horas trabajas, qué días no).',f:W2},
+ {key:'3',name:'Columnas por día',desc:'Una columna por día con sus horas apiladas por proyecto, el rango de hora debajo y el ranking de proyectos de la semana a la derecha.',f:W3},
+ {key:'4',name:'Calendario semanal',desc:'Como Google Calendar: columnas = días, hora vertical, cada sesión es un evento con proyecto y hora de inicio. La línea roja es ahora.',f:W4},
+ {key:'5',name:'Días con chips',desc:'Un renglón por día: total, de qué hora a qué hora, cinta de 24 h y chips de proyectos con su tiempo. Ábrelo para ver cada sesión con inicio, fin y cuenta.',f:W5},
+];
+
+/* ---------- RONDA 6: calendario cómodo con mucha data ---------- */
+const HEAVY=(()=>{const r=rng(99),pk=a=>a[Math.floor(r()*a.length)],out=[];
+ DAYS.forEach(([d],di)=>{const n=d===TODAYD?7:10+Math.floor(r()*9),pool=PROJ.slice().sort(()=>r()-.5).slice(0,6);
+  for(let k=0;k<n;k++){const x=r(),acc=x<.4?'main':x<.65?'relotto':x<.85?'codex':'grok';let st=pk([9,10,11,12,14,15,16,17,19,20,21,22,0.5,1.5])+r()*.8,du=.2+r()*2.3;
+   if(d===TODAYD){st=r()*7.8;du=Math.min(du,8.2-st)}if(st+du>23.95)du=23.95-st;out.push({d,acc,proj:pk(pool),st,en:st+du})}});return out})();
+const _sessions=sessions;sessions=()=>state==='pesada'?HEAVY:_sessions();
+function merged(ss){const by={};ss.forEach(s=>{const k=s.proj+'|'+s.acc;(by[k]=by[k]||[]).push({...s,n:1})});
+ const out=[];Object.values(by).forEach(arr=>{arr.sort((a,b)=>a.st-b.st);let cur=null;arr.forEach(s=>{if(cur&&s.st<=cur.en+.17){cur.en=Math.max(cur.en,s.en);cur.n++}else{cur&&out.push(cur);cur={...s}}});cur&&out.push(cur)});return out.sort((a,b)=>a.st-b.st)}
+function lanes(ss){const out=[];let cl=[],clEnd=-1;const flush=()=>{const ends=[];cl.forEach(s=>{let l=ends.findIndex(e=>e<=s.st+.01);if(l<0){l=ends.length;ends.push(0)}ends[l]=s.en;s.l=l});cl.forEach(s=>{s.nl=ends.length;out.push(s)});cl=[]};
+ ss.slice().sort((a,b)=>a.st-b.st).forEach(s=>{if(cl.length&&s.st>=clEnd)flush();cl.push({...s});clEnd=Math.max(clEnd,s.en)});flush();return out}
+const tip2=s=>`data-tip="${dlab(s.d)} · ${fmtH(s.st)}–${fmtH(s.en)} · ${dur(s.en-s.st)}${s.n>1?' · '+s.n+' sesiones unidas':''}|${s.proj}|${accName(s.acc)}"`;
+/* eje comprimido: horas sin actividad en toda la semana se vuelven una franja delgada */
+function compAxis(PH,GAP=16,src){const act=Array(24).fill(0);(src||sessions()).forEach(s=>{for(let h=Math.floor(s.st);h<Math.ceil(s.en);h++)act[h]=1});
+ const segs=[];let h=0;while(h<24){if(act[h]){segs.push({a:h,b:h+1,on:1});h++}else{let e=h;while(e<24&&!act[e])e++;if(e-h>=2)segs.push({a:h,b:e,on:0});else for(let i=h;i<e;i++)segs.push({a:i,b:i+1,on:1});h=e}}
+ let y=0;segs.forEach(s=>{s.y=y;s.hgt=s.on?PH:GAP;y+=s.hgt});
+ const Y=t=>{const s=segs.find(s=>t>=s.a&&t<=s.b)||segs.at(-1);return s.on?s.y+(t-s.a)*PH:s.y+(t-s.a)/(s.b-s.a)*GAP};
+ return {segs,Y,H:y}}
+function calHead(d,wd,dd,extra=''){const n=sessions().filter(s=>s.d===d).length;return `<div class="cal-h"><span><b>${wd}</b> ${dd}</span><em>${dur(dayTot(d))} · ${n} ses${extra}</em></div>`}
+function axisHtml(ax){return ax.segs.map(s=>s.on?(s.a%2===0?`<span style="top:${s.y}px">${String(s.a).padStart(2,'0')}:00</span>`:''):`<span class="gap" style="top:${s.y+s.hgt/2}px">${String(s.a).padStart(2,'0')}–${String(s.b).padStart(2,'0')}</span>`).join('')}
+function gapBands(ax){return ax.segs.map(s=>s.on?`<div class="hline" style="top:${s.y}px"></div>`:`<div class="gapband" style="top:${s.y}px;height:${s.hgt}px"></div>`).join('')}
+const nowY=(ax)=>ax.Y(NOWH);
+
+/* K1 · Compacto inteligente */
+function K1(){const ax=compAxis(34),MAXL=2;
+ const cols=CHRONO.map(([d,wd,dd])=>{const ss=lanes(merged(sessions().filter(s=>s.d===d)));
+  const vis=ss.filter(s=>s.l<MAXL),hid=ss.filter(s=>s.l>=MAXL);
+  const more={};hid.forEach(s=>{const k=Math.floor(s.st);(more[k]=more[k]||[]).push(s)});
+  return `<div class="cal-col ${d===TODAYD?'today':''}">${calHead(d,wd,dd)}<div class="cal-body" style="height:${ax.H}px">${gapBands(ax)}
+   ${vis.map(s=>{const t=ax.Y(s.st),hp=ax.Y(s.en)-t;return `<div class="ev" style="--ac:${A_(s.acc).c};top:${t}px;height:${Math.max(7,hp-2)}px;left:${s.l/Math.min(MAXL,s.nl)*100}%;width:calc(${100/Math.min(MAXL,s.nl)}% - 3px)" ${tip2(s)}>${hp>=30?`<b>${s.proj}</b><span>${fmtH(s.st)}${s.n>1?' · ×'+s.n:''}</span>`:hp>=16?`<b>${s.proj}</b>`:''}</div>`}).join('')}
+   ${Object.entries(more).map(([h,arr])=>`<button class="more" style="top:${ax.Y(+h)}px" data-pop="${encodeURIComponent(JSON.stringify(arr.map(s=>[fmtH(s.st)+'–'+fmtH(s.en),s.proj,accName(s.acc),A_(s.acc).c])))}" data-title="${wd} ${dd} · más sesiones a las ${String(h).padStart(2,'0')}:00">+${arr.length}</button>`).join('')}
+   ${d===TODAYD?`<div class="cal-now" style="top:${nowY(ax)}px"></div>`:''}</div></div>`}).join('');
+ return weekHead()+`<div class="wk-box cal"><div class="cal-axis" style="height:${ax.H}px">${axisHtml(ax)}</div><div class="cal-cols">${cols}</div></div><div class="wk-note">Une las sesiones seguidas del mismo proyecto (×N), encoge las horas en que nunca trabajas y muestra máximo 2 en paralelo; el resto queda en el botón +N.</div>`}
+
+/* K2 · Cuadrícula por hora */
+function K2(){const ax=compAxis(30);
+ const cols=CHRONO.map(([d,wd,dd])=>{const ss=sessions().filter(s=>s.d===d);
+  const cells=ax.segs.filter(g=>g.on).map(g=>{const h=g.a,inH=ss.filter(s=>s.st<h+1&&s.en>h);if(!inH.length)return '';
+   const byP={};inH.forEach(s=>{const o=Math.min(s.en,h+1)-Math.max(s.st,h);byP[s.proj]=byP[s.proj]||{o:0,acc:s.acc};byP[s.proj].o+=o});const ps=Object.entries(byP).sort((a,b)=>b[1].o-a[1].o);const top=ps[0];
+   const accs=[...new Set(inH.map(s=>s.acc))];
+   return `<button class="hcell" style="top:${g.y+1}px;height:${g.hgt-2}px;--ac:${A_(top[1].acc).c}" data-pop="${encodeURIComponent(JSON.stringify(inH.map(s=>[fmtH(s.st)+'–'+fmtH(s.en),s.proj,accName(s.acc),A_(s.acc).c])))}" data-title="${wd} ${dd} · ${String(h).padStart(2,'0')}:00–${String(h+1).padStart(2,'0')}:00"><b>${top[0]}</b>${ps.length>1?`<span>+${ps.length-1}</span>`:''}<i>${accs.map(a=>`<u style="background:${A_(a).c}"></u>`).join('')}</i></button>`}).join('');
+  return `<div class="cal-col ${d===TODAYD?'today':''}">${calHead(d,wd,dd)}<div class="cal-body" style="height:${ax.H}px">${gapBands(ax)}${cells}${d===TODAYD?`<div class="cal-now" style="top:${nowY(ax)}px"></div>`:''}</div></div>`}).join('');
+ return weekHead()+`<div class="wk-box cal"><div class="cal-axis" style="height:${ax.H}px">${axisHtml(ax)}</div><div class="cal-cols">${cols}</div></div><div class="wk-note">Un cuadro por hora: el proyecto principal de esa hora, +N si hubo más, y puntitos con las cuentas que trabajaron. Haz clic para ver todas las sesiones de esa hora.</div>`}
+
+/* K3 · Carriles por cuenta */
+function K3(){const ax=compAxis(32),as=ACC;
+ const cols=CHRONO.map(([d,wd,dd])=>{const ss=sessions().filter(s=>s.d===d);
+  const lanesH=as.map((a,i)=>{const mine=lanes(merged(ss.filter(s=>s.acc===a.id)));
+   return `<div class="lane" style="--ac:${a.c}">${mine.map(s=>{const t=ax.Y(s.st),hp=ax.Y(s.en)-t;return `<div class="lev" style="top:${t}px;height:${Math.max(6,hp-2)}px;left:${s.l/s.nl*100}%;width:${100/s.nl}%" ${tip2(s)}>${hp>=44?`<b>${s.proj}</b>`:''}</div>`}).join('')}</div>`}).join('');
+  return `<div class="cal-col ${d===TODAYD?'today':''}">${calHead(d,wd,dd)}<div class="cal-body lanes4" style="height:${ax.H}px">${gapBands(ax)}${lanesH}${d===TODAYD?`<div class="cal-now" style="top:${nowY(ax)}px"></div>`:''}</div></div>`}).join('');
+ return weekHead()+`<div class="wk-legend">${as.map(a=>`<span><i style="background:${a.c}"></i>${a.cli} ${a.alias}</span>`).join('')}<em>cada día tiene 4 carriles, uno por cuenta, en este orden</em></div><div class="wk-box cal"><div class="cal-axis" style="height:${ax.H}px">${axisHtml(ax)}</div><div class="cal-cols">${cols}</div></div>`}
+
+/* K4 · Día enfocado + semana mini */
+let focusDay=TODAYD;
+function K4(){const ax=compAxis(46,16,sessions().filter(s=>s.d===focusDay));
+ const mini=CHRONO.map(([d,wd,dd])=>{const ss=sessions().filter(s=>s.d===d);return `<button class="mini-d ${d===focusDay?'on':''}" data-day="${d}"><span><b>${wd}</b> ${dd}</span><div class="mini-rib">${ss.map(s=>`<i style="--ac:${A_(s.acc).c};top:${s.st/24*100}%;height:${Math.max(2,(s.en-s.st)/24*100)}%"></i>`).join('')}</div><em>${dur(dayTot(d))}</em></button>`}).join('');
+ const [_,wd,dd]=DAYS.find(x=>x[0]===focusDay);const ss=lanes(merged(sessions().filter(s=>s.d===focusDay)));
+ const ev=ss.map(s=>{const t=ax.Y(s.st),hp=ax.Y(s.en)-t;return `<div class="ev big" style="--ac:${A_(s.acc).c};top:${t}px;height:${Math.max(9,hp-2)}px;left:${s.l/s.nl*100}%;width:calc(${100/s.nl}% - 4px)" ${tip2(s)}><b>${s.proj}</b>${hp>=34?`<span>${fmtH(s.st)}–${fmtH(s.en)} · ${dur(s.en-s.st)}</span><span>${accName(s.acc)}${s.n>1?' · '+s.n+' sesiones':''}</span>`:''}</div>`}).join('');
+ return weekHead()+`<div class="k4"><div class="mini-week">${mini}</div><div class="wk-box cal k4-day"><div class="cal-axis" style="height:${ax.H}px;margin-top:44px">${axisHtml(ax)}</div><div><div class="cal-h"><span><b>${wd}</b> ${dd}</span><em>${dur(dayTot(focusDay))} · ${ss.length} bloques · ${dayRange(focusDay)}</em></div><div class="cal-body" style="height:${ax.H}px">${gapBands(ax)}${ev}${focusDay===TODAYD?`<div class="cal-now" style="top:${nowY(ax)}px"></div>`:''}</div></div></div></div>`}
+
+/* K5 · Agenda con bloques paralelos */
+function K5(){
+ return weekHead()+`<div class="wk-box agenda">${DAYS.map(([d,wd,dd])=>{const ss=merged(sessions().filter(s=>s.d===d));if(!ss.length)return `<div class="ag-day"><div class="ag-d"><b>${wd}</b> ${dd}</div><div class="dim">sin sesiones</div></div>`;
+  const groups=[];ss.forEach(s=>{const g=groups.at(-1);if(g&&s.st<g.en){g.items.push(s);g.en=Math.max(g.en,s.en)}else groups.push({st:s.st,en:s.en,items:[s]})});
+  return `<div class="ag-day"><div class="ag-d"><b>${wd}</b> ${dd}${d===TODAYD?'<span class="hoy">hoy</span>':''}<em>${dur(dayTot(d))}</em><em>${dayRange(d)}</em></div><div class="ag-list">${groups.map(g=>`<div class="ag-g ${g.items.length>1?'par':''}"><div class="ag-t">${fmtH(g.st)}<span>${fmtH(g.en)}</span></div><div class="ag-items">${g.items.length>1?`<div class="ag-par">${g.items.length} en paralelo</div>`:''}${g.items.map(s=>`<div class="ag-i" style="--ac:${A_(s.acc).c}"><b>${s.proj}</b><span>${fmtH(s.st)}–${fmtH(s.en)} · ${dur(s.en-s.st)}</span><em>${accName(s.acc)}${s.n>1?' · ×'+s.n:''}</em></div>`).join('')}</div></div>`).join('')}</div></div>`}).join('')}</div>`}
+
+const CAL=[
+ {key:'1',name:'Compacto inteligente',desc:'Une sesiones seguidas del mismo proyecto (×N), encoge las horas en que nunca trabajas y deja máximo 2 en paralelo; el resto en un botón +N que abre la lista.',f:K1},
+ {key:'2',name:'Cuadrícula por hora',desc:'Un cuadro por hora por día con el proyecto principal, +N y las cuentas como puntitos. Nunca se amontona: clic para ver todas las sesiones de esa hora.',f:K2},
+ {key:'3',name:'Carriles por cuenta',desc:'Cada día se parte en 4 carriles fijos, uno por cuenta. Lo de Claude main nunca choca con Codex; se ve qué cuenta trabajó cuándo.',f:K3},
+ {key:'4',name:'Día enfocado',desc:'Arriba la semana en miniatura para elegir día; abajo ese día en grande, con eventos anchos que dicen proyecto, horas, duración y cuenta completos.',f:K4},
+ {key:'5',name:'Agenda',desc:'Vista agenda de Google Calendar: por día y por hora, y las sesiones que se cruzan se agrupan en un bloque "N en paralelo" en vez de encimarse.',f:K5},
+];
+
+/* ---------- RONDA 7: Comparar ---------- */
+const TOKH={main:92,relotto:88,codex:64,grok:21}; /* M tok por hora, simulado */
+function usedFor(a){return a.weekUsed===undefined?a.week:a.weekUsed}
+function costData(){const as=accs(),ss=sessions();const hAcc={};ss.forEach(s=>hAcc[s.acc]=(hAcc[s.acc]||0)+s.en-s.st);
+ const P={};ss.forEach(s=>{const h=s.en-s.st,p=P[s.proj]=P[s.proj]||{p:s.proj,h:0,tok:0,acc:{}};p.h+=h;p.tok+=s.tok;const a=p.acc[s.acc]=p.acc[s.acc]||{h:0,tok:0,q:0};a.h+=h;a.tok+=s.tok;a.q+=h/hAcc[s.acc]*(usedFor(as.find(x=>x.id===s.acc))||0)});
+ return Object.values(P).sort((a,b)=>b.tok-a.tok)}
+const LAST=(()=>{const r=rng(5),o={};PROJ.forEach(p=>o[p]=r()<.25?0:+(r()*7).toFixed(1));o.SAVA=1.2;o.Chips=5.1;o.Dashboard=3.0;return o})();
+const WASTE=[{id:'main',cyc:[4,0,9,6]},{id:'relotto',cyc:[2,11,0,5]},{id:'codex',cyc:[53,61,40,48]},{id:'grok',cyc:[88,92,79,95]}];
+const fmtTok=t=>t>=1000?(t/1000).toFixed(1)+'B':Math.round(t)+'M';
+function franjas(){const F=[['Madrugada',0,6],['Mañana',6,12],['Tarde',12,18],['Noche',18,24]];
+ return F.map(([n,a,b])=>{let h=0;const pr={};sessions().forEach(s=>{const o=Math.max(0,Math.min(s.en,b)-Math.max(s.st,a));if(o>0){h+=o;pr[s.proj]=(pr[s.proj]||0)+o}});return {n,a,b,h,top:Object.entries(pr).sort((x,y)=>y[1]-x[1]).slice(0,3)}})}
+function vsWeek(){const cur={};sessions().forEach(s=>cur[s.proj]=(cur[s.proj]||0)+s.en-s.st);const all=new Set([...Object.keys(cur),...Object.keys(LAST)]);
+ const rows=[...all].map(p=>({p,now:cur[p]||0,prev:LAST[p]||0,d:(cur[p]||0)-(LAST[p]||0)})).filter(r=>r.now||r.prev).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+ const tn=rows.reduce((x,r)=>x+r.now,0),tp=rows.reduce((x,r)=>x+r.prev,0);return {rows,tn,tp}}
+const sgn=d=>d>0.05?`<b class="up">▲ ${dur(d)}</b>`:d<-0.05?`<b class="dn">▼ ${dur(-d)}</b>`:'<b class="eq">=</b>';
+function accSeg(p,total='tok'){return Object.entries(p.acc).sort((a,b)=>b[1][total]-a[1][total]).map(([id,v])=>`<i style="--ac:${A_(id).c};flex:${v[total]}" data-tip="${p.p} · ${accName(id)}|${v.q.toFixed(1)}% de la semana de ${accName(id)}|${dur(v.h)} · ${fmtTok(v.tok)} tok"></i>`).join('')}
+function quotaChips(p){return Object.entries(p.acc).sort((a,b)=>b[1].q-a[1].q).map(([id,v])=>`<span class="qc" style="--ac:${A_(id).c}">${v.q.toFixed(1)}% <em>${A_(id).cli} ${A_(id).alias}</em></span>`).join('')}
+
+/* paneles reutilizables */
+function pWaste(compact){return `<div class="panel"><h5>Cuota que se quedó sin usar</h5><p class="ph">Lo que quedaba en cada cuenta cuando se renovó la semana. Mucho sobrante = esa cuenta te sobra.</p>
+ ${WASTE.map(w=>{const a=A_(w.id),last=w.cyc[0];return `<div class="wr"><span class="wn"><span class="dot" style="background:${a.c}"></span>${a.cli} ${a.alias}</span><span class="wbar"><i style="width:${100-last}%;--ac:${a.c}"></i><u style="width:${last}%"></u></span><b class="${last>=40?'warnT':''}">${last}%</b>${compact?'':`<span class="wh">${w.cyc.slice().reverse().map((c,i)=>`<i style="height:${Math.max(6,c)}%" title="hace ${4-i} semanas: ${c}% sin usar"></i>`).join('')}</span>`}</div>`}).join('')}
+ <div class="pfoot">Codex y Grok desperdician la mitad o más casi cada semana; Claude main se agota.</div></div>`}
+function pVs(){const v=vsWeek(),d=v.tn-v.tp;return `<div class="panel"><h5>Esta semana vs la pasada</h5>
+ <div class="vsbig"><div><small>Esta semana</small><b>${dur(v.tn)}</b></div><div><small>La pasada</small><b>${dur(v.tp)}</b></div><div><small>Diferencia</small>${sgn(d)}</div></div>
+ <div class="vsl">${v.rows.slice(0,6).map(r=>`<div><span>${r.p}</span><em>${dur(r.prev)} → ${dur(r.now)}</em>${sgn(r.d)}</div>`).join('')}</div></div>`}
+function pMix(cd){return `<div class="panel"><h5>Cada proyecto, en qué cuentas</h5><p class="ph">Qué parte del trabajo de cada proyecto hizo cada cuenta.</p>
+ ${cd.slice(0,7).map(p=>`<div class="mx"><span>${p.p}</span><span class="mxb">${Object.entries(p.acc).sort((a,b)=>b[1].h-a[1].h).map(([id,v])=>`<i style="--ac:${A_(id).c};flex:${v.h}" data-tip="${p.p}|${Math.round(v.h/p.h*100)}% en ${accName(id)}|${dur(v.h)}">${v.h/p.h>=.2?Math.round(v.h/p.h*100)+'%':''}</i>`).join('')}</span></div>`).join('')}</div>`}
+function pHour(){const F=franjas(),mx=Math.max(...F.map(f=>f.h),1);return `<div class="panel"><h5>¿A qué hora trabajas?</h5>
+ <div class="fr">${F.map(f=>`<div class="frc"><div class="frb"><i style="height:${f.h/mx*100}%"></i></div><b>${dur(f.h)}</b><span>${f.n}</span><em>${String(f.a).padStart(2,'0')}–${String(f.b).padStart(2,'0')} h</em><small>${f.top.map(t=>t[0]).join(' · ')||'—'}</small></div>`).join('')}</div></div>`}
+
+/* P1 · Ranking + paneles */
+function P1(){const cd=costData(),mx=cd[0]?cd[0].tok:1;
+ return `<div class="cmp1"><div class="panel big"><h5>¿Qué proyecto cuesta más?</h5><p class="ph">Ordenado por tokens de la semana. La barra se reparte por cuenta y cada chip dice qué % de la semana de esa cuenta se comió.</p>
+ ${cd.map((p,i)=>`<div class="rk"><span class="rn">${i+1}</span><div class="rb"><div class="rt"><b>${p.p}</b><span>${fmtTok(p.tok)} tok · ${dur(p.h)}</span></div><div class="rbar" style="width:${p.tok/mx*100}%">${accSeg(p)}</div><div class="qcs">${quotaChips(p)}</div></div></div>`).join('')}</div>
+ <div class="side3">${pWaste(true)}${pVs()}${pHour()}</div></div>${pMix(cd)}`}
+/* P2 · Mapa de árbol */
+function treemap(items,W,H){/* squarified simple: filas */const tot=items.reduce((x,i)=>x+i.v,0);let x=0,y=0,w=W,h=H;const out=[];let rest=items.slice();
+ while(rest.length){const horiz=w>=h;const side=horiz?h:w;let row=[],best=Infinity;for(const it of rest){const r=[...row,it],s=r.reduce((a,b)=>a+b.v,0)/tot*W*H,len=s/side,worst=Math.max(...r.map(q=>{const a=q.v/tot*W*H,o=a/len;return Math.max(o/len,len/o)}));if(worst<=best){row=r;best=worst}else break}
+  const s=row.reduce((a,b)=>a+b.v,0)/tot*W*H,len=s/side;let o=0;row.forEach(it=>{const a=it.v/tot*W*H,l=a/len;out.push(horiz?{...it,x,y:y+o,w:len,h:l}:{...it,x:x+o,y,w:l,h:len});o+=l});
+  if(horiz){x+=len;w-=len}else{y+=len;h-=len}rest=rest.slice(row.length)}return out}
+function P2(){const cd=costData(),W=1000,H=360;const tm=treemap(cd.map(p=>({...p,v:p.tok})),W,H);
+ return `<div class="panel"><h5>¿Qué proyecto cuesta más?</h5><p class="ph">Cada rectángulo es un proyecto; su tamaño es lo que gastó en tokens esta semana. El color es la cuenta que más lo trabajó.</p>
+ <div class="tm" style="aspect-ratio:${W}/${H}">${tm.map(r=>{const top=Object.entries(r.acc).sort((a,b)=>b[1].tok-a[1].tok)[0][0];return `<div class="tmc" style="left:${r.x/W*100}%;top:${r.y/H*100}%;width:${r.w/W*100}%;height:${r.h/H*100}%;--ac:${A_(top).c}" data-tip="${r.p}|${fmtTok(r.tok)} tok · ${dur(r.h)}|${Object.entries(r.acc).map(([id,v])=>v.q.toFixed(1)+'% de '+accName(id)).join(' · ')}"><div>${r.w>90&&r.h>40?`<b>${r.p}</b><span>${fmtTok(r.tok)} tok</span>`:r.w>50&&r.h>22?`<b class="s">${r.p}</b>`:''}</div></div>`}).join('')}</div></div>
+ <div class="grid4">${pWaste()}${pVs()}${pMix(cd)}${pHour()}</div>`}
+/* P3 · Matriz proyecto × cuenta */
+function P3(){const cd=costData(),as=ACC;const mxq=Math.max(...cd.flatMap(p=>Object.values(p.acc).map(v=>v.q)),1);
+ return `<div class="panel"><h5>¿Qué proyecto cuesta más, y en qué cuenta?</h5><p class="ph">Cada celda: qué % de la semana de esa cuenta se comió el proyecto. Más intenso = más caro. Ordenado por tokens.</p>
+ <div class="mtx-wrap"><table class="mtx"><thead><tr><th>Proyecto</th>${as.map(a=>`<th><span class="dot" style="background:${a.c}"></span>${a.cli} ${a.alias}</th>`).join('')}<th class="r">Tokens</th><th class="r">Horas</th><th class="r">vs pasada</th></tr></thead><tbody>
+ ${cd.map(p=>`<tr><td><b>${p.p}</b></td>${as.map(a=>{const v=p.acc[a.id];return v?`<td class="hc" style="--ac:${a.c};--a:${.15+.85*v.q/mxq}">${v.q.toFixed(1)}%</td>`:'<td class="hc0">·</td>'}).join('')}<td class="r mono">${fmtTok(p.tok)}</td><td class="r mono">${dur(p.h)}</td><td class="r">${sgn(p.h-(LAST[p.p]||0))}</td></tr>`).join('')}
+ <tr class="tot"><td>Sin usar al último reset</td>${WASTE.map(w=>`<td class="${w.cyc[0]>=40?'warnT':''}">${w.cyc[0]}%</td>`).join('')}<td></td><td></td><td></td></tr></tbody></table></div></div>
+ <div class="grid2">${pVs()}${pHour()}</div>`}
+/* P4 · Hallazgos en tarjetas */
+function P4(){const cd=costData(),top=cd[0],v=vsWeek(),F=franjas().sort((a,b)=>b.h-a.h)[0],WW=WASTE.filter(x=>x.cyc.length).sort((a,b)=>b.cyc[0]-a.cyc[0]),w=WW[0],up=v.rows.filter(r=>r.d>0)[0],mixP=cd.find(p=>Object.keys(p.acc).length>1);
+ const card=(k,title,body,viz)=>`<div class="ins"><span class="ik">${k}</span><h6>${title}</h6><p>${body}</p>${viz}</div>`;
+ const topAcc=top?Object.entries(top.acc).sort((a,b)=>b[1].q-a[1].q)[0]:null;
+ return `<div class="ins-grid">
+ ${top?card('Lo más caro',`${top.p} se comió ${topAcc[1].q.toFixed(0)}% de la semana de ${accName(topAcc[0])}`,`${fmtTok(top.tok)} tokens en ${dur(top.h)}. Le siguen ${cd.slice(1,3).map(p=>p.p).join(' y ')}.`,`<div class="rbar wide">${accSeg(top)}</div><div class="mini-rank">${cd.slice(0,5).map(p=>`<div><span>${p.p}</span><i style="width:${p.tok/top.tok*100}%"></i><b>${fmtTok(p.tok)}</b></div>`).join('')}</div>`):''}
+ ${card('Cuota que sobra',`${accName(w.id)} dejó ${w.cyc[0]}% sin usar`,`Pasa casi cada semana (${w.cyc.join('%, ')}%). Podrías mandarle más trabajo antes de que se renueve.`,`<span class="wh big">${w.cyc.slice().reverse().map(c=>`<i style="height:${Math.max(6,c)}%;background:${A_(w.id).c}"></i>`).join('')}</span>`)}
+ ${card('Vs la semana pasada',`${v.tn>=v.tp?'Trabajaste':'Bajaste'} ${dur(Math.abs(v.tn-v.tp))} ${v.tn>=v.tp?'más':'menos'}`,up?`${up.p} fue lo que más subió: ${dur(up.prev)} → ${dur(up.now)}.`:'',`<div class="vsl">${v.rows.slice(0,4).map(r=>`<div><span>${r.p}</span><em>${dur(r.prev)} → ${dur(r.now)}</em>${sgn(r.d)}</div>`).join('')}</div>`)}
+ ${card('Tu horario',`Trabajas más en la ${F.n.toLowerCase()}`,`${dur(F.h)} entre las ${String(F.a).padStart(2,'0')} y las ${String(F.b).padStart(2,'0')} h, sobre todo en ${F.top.map(t=>t[0]).join(', ')}.`,pHour().replace('<h5>¿A qué hora trabajas?</h5>','').replace('class="panel"','class="bare"'))}
+ ${mixP?card('Cuentas mezcladas',`${mixP.p} se trabajó en ${Object.keys(mixP.acc).length} cuentas`,'Si quieres separar el gasto por cliente, cada proyecto debería vivir en una sola cuenta.',`<div class="mxb solo">${Object.entries(mixP.acc).map(([id,x])=>`<i style="--ac:${A_(id).c};flex:${x.h}">${Math.round(x.h/mixP.h*100)}%</i>`).join('')}</div>`):''}
+ </div>`}
+/* P5 · Botellas por capas */
+function layeredBottle(a,parts,waste){const id='lb'+(uid++),W=110,H=230,path='M30 64 Q26 50 42 47 L68 47 Q84 50 80 64 L86 80 L86 206 Q86 220 72 220 L38 220 Q24 220 24 206 L24 80 Z',yTop=84,yBot=216;let y=yBot;
+ const layers=parts.map(p=>{const hh=(yBot-yTop)*p.q/100,r=`<rect x="0" y="${y-hh}" width="${W}" height="${hh}" fill="${p.c}" opacity="${p.o}" data-tip="${p.p}|${p.q.toFixed(1)}% de la semana|${accName(a.id)}"/><rect x="0" y="${y-hh}" width="${W}" height="1" fill="#0A0D13" opacity=".6"/>`;y-=hh;return r}).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${accName(a.id)} gastado por proyecto">${defs(id,a.c)}${floor(id,55,224,40)}
+ <rect x="36" y="8" width="38" height="28" rx="6" fill="url(#${id}k)"/><rect x="32" y="34" width="46" height="10" rx="3" fill="#1b2130"/>
+ <clipPath id="${id}c"><path d="${path}"/></clipPath><g clip-path="url(#${id}c)"><rect width="${W}" height="${H}" fill="#0b0f17"/>${layers}<rect width="${W}" height="${H}" fill="url(#${id}sh)"/></g>
+ ${glass(id,path,W,`<rect x="29" y="86" width="4" height="114" rx="2" fill="#fff" opacity=".2"/>`)}
+ <line x1="22" x2="88" y1="${y}" y2="${y}" stroke="#fff" stroke-dasharray="3 3" opacity=".5"/></svg>`}
+function P5(){const cd=costData(),as=accs();const pal=['1','.78','.6','.46','.34','.26'];
+ const shelf=as.map(a=>{const parts=cd.filter(p=>p.acc[a.id]).map(p=>({p:p.p,q:p.acc[a.id].q})).sort((x,y)=>y.q-x.q);const shown=parts.slice(0,5),rest=parts.slice(5).reduce((x,p)=>x+p.q,0);if(rest>0)shown.push({p:'otros',q:rest});
+  shown.forEach((p,i)=>{p.c=a.c;p.o=pal[i]});
+  return `<div class="lbg"><div class="lbb">${layeredBottle(a,shown)}<div class="lbl">${shown.map(p=>`<div><i style="background:${a.c};opacity:${p.o}"></i><span>${p.p}</span><b>${p.q.toFixed(1)}%</b></div>`).join('')}<div class="lbq"><span>${isPast()?'quedó al reset':'queda'}</span><b>${usedFor(a)==null?'—':(100-usedFor(a))+'%'}</b></div></div></div><div class="plaque">${logoTile(a,22)}<b>${a.cli}</b><small>${a.alias}</small></div></div>`}).join('');
+ return `<div class="panel"><h5>¿Qué proyecto cuesta más?</h5><p class="ph">Lo gastado de cada cuenta, en capas por proyecto: la capa más gruesa es el proyecto más caro de esa cuenta. Arriba de la línea punteada es lo que queda.</p>
+ <div class="bar p5bar"><div class="bar-glow"></div><div class="bar-row">${shelf}</div><div class="bar-wood"></div></div></div>
+ <div class="grid4">${pWaste()}${pVs()}${pMix(cd)}${pHour()}</div>`}
+const CMP=[
+ {key:'1',name:'Ranking + paneles',desc:'Lista de proyectos del más caro al más barato (tokens, horas y % de la semana de cada cuenta). A la derecha, sobrante de cuota, vs semana pasada y horario; abajo, en qué cuentas va cada proyecto.',f:P1},
+ {key:'2',name:'Mapa de árbol',desc:'Cada proyecto es un rectángulo de tamaño proporcional a lo que gastó. Lo más caro salta a la vista. Debajo, las otras cuatro comparaciones en cuadrícula.',f:P2},
+ {key:'3',name:'Matriz proyecto × cuenta',desc:'Una tabla: filas = proyectos, columnas = cuentas, cada celda el % de la semana de esa cuenta. Incluye tokens, horas, ▲▼ vs la semana pasada y lo que sobró al reset.',f:P3},
+ {key:'4',name:'Hallazgos',desc:'Una tarjeta por comparación con la conclusión escrita en una frase ("SAVA se comió 18% de Claude main") y su gráfica chica. Estilo resumen tipo Wrapped.',f:P4},
+ {key:'5',name:'Botellas por capas',desc:'La barra iluminada otra vez, pero lo gastado de cada botella se ve en capas por proyecto: la capa más gruesa es el proyecto más caro de esa cuenta.',f:P5},
+];
+
+/* ---------- RONDA 8: botellas + horario + hallazgos ---------- */
+function wasteRest(WW){const rest=WW.slice(1),low=rest.filter(x=>x.cyc[0]<=5),hi=rest.filter(x=>x.cyc[0]>5);return (hi[0]?`${accName(hi[0].id)} dejó ${hi[0].cyc[0]}%. `:'')+(low.length?`${low.map(x=>accName(x.id)).join(' y ')} ${low.length>1?'se agotan':'se agota'}.`:'')}
+function insightCards(skipHour){const cd=costData(),top=cd[0],v=vsWeek(),F=franjas().sort((a,b)=>b.h-a.h)[0],WW=WASTE.filter(x=>x.cyc.length).sort((a,b)=>b.cyc[0]-a.cyc[0]),w=WW[0],up=v.rows.filter(r=>r.d>0)[0],mixP=cd.find(p=>Object.keys(p.acc).length>1);
+ const card=(k,title,body,viz)=>`<div class="ins"><span class="ik">${k}</span><h6>${title}</h6><p>${body}</p>${viz}</div>`;
+ const topAcc=top?Object.entries(top.acc).sort((a,b)=>b[1].q-a[1].q)[0]:null;const out=[];
+ if(top)out.push(card('Lo más caro',`${top.p} se comió ${topAcc[1].q.toFixed(0)}% de la semana de ${accName(topAcc[0])}`,`${fmtTok(top.tok)} tokens en ${dur(top.h)}. Le siguen ${cd.slice(1,3).map(p=>p.p).join(' y ')}.`,`<div class="mini-rank">${cd.slice(0,5).map(p=>`<div><span>${p.p}</span><i style="width:${p.tok/top.tok*100}%"></i><b>${fmtTok(p.tok)}</b></div>`).join('')}</div>`));
+ if(w)out.push(card('Cuota que sobra',`${accName(w.id)} dejó ${w.cyc[0]}% sin usar`,`${w.cyc.length>1?`Pasa casi cada semana (${w.cyc.join('%, ')}%). `:''}${wasteRest(WW)}`,`<div class="wsm">${WW.map(x=>`<div><span class="dot" style="background:${A_(x.id).c}"></span><span>${accName(x.id)}</span><span class="wbar"><i style="width:${100-x.cyc[0]}%;--ac:${A_(x.id).c}"></i><u style="width:${x.cyc[0]}%"></u></span><b class="${x.cyc[0]>=40?'warnT':''}">${x.cyc[0]}%</b></div>`).join('')}</div>`));
+ out.push(card('Vs la semana pasada',`${v.tn>=v.tp?'Trabajaste':'Bajaste'} ${dur(Math.abs(v.tn-v.tp))} ${v.tn>=v.tp?'más':'menos'}`,up?`${up.p} fue lo que más subió: ${dur(up.prev)} → ${dur(up.now)}.`:'',`<div class="vsl">${v.rows.slice(0,4).map(r=>`<div><span>${r.p}</span><em>${dur(r.prev)} → ${dur(r.now)}</em>${sgn(r.d)}</div>`).join('')}</div>`));
+ if(mixP)out.push(card('Cuentas mezcladas',`${mixP.p} se trabajó en ${Object.keys(mixP.acc).length} cuentas`,'Si quieres separar el gasto por cliente, cada proyecto debería vivir en una sola cuenta.',`<div class="mxb solo">${Object.entries(mixP.acc).map(([id,x])=>`<i style="--ac:${A_(id).c};flex:${x.h}">${Math.round(x.h/mixP.h*100)}%</i>`).join('')}</div>`));
+ if(!skipHour&&F&&F.h>0)out.push(card('Tu horario',`Trabajas más en la ${F.n.toLowerCase()}`,`${dur(F.h)} entre las ${String(F.a).padStart(2,'0')} y las ${String(F.b).padStart(2,'0')} h, sobre todo en ${F.top.map(t=>t[0]).join(', ')}.`,pHour().replace('<h5>¿A qué hora trabajas?</h5>','').replace('class="panel"','class="bare"')));
+ return out}
+function bottlesShelf(){const cd=costData(),as=accs();const pal=['1','.78','.6','.46','.34','.26'];
+ return `<div class="bar p5bar"><div class="bar-glow"></div><div class="bar-row">${as.map(a=>{const parts=cd.filter(p=>p.acc[a.id]).map(p=>({p:p.p,q:p.acc[a.id].q})).sort((x,y)=>y.q-x.q);const shown=parts.slice(0,5),rest=parts.slice(5).reduce((x,p)=>x+p.q,0);if(rest>0)shown.push({p:'otros',q:rest});shown.forEach((p,i)=>{p.c=a.c;p.o=pal[i]});
+  return `<div class="lbg"><div class="lbb">${layeredBottle(a,shown)}<div class="lbl">${shown.map(p=>`<div><i style="background:${a.c};opacity:${p.o}"></i><span>${p.p}</span><b>${p.q.toFixed(1)}%</b></div>`).join('')}<div class="lbq"><span>${isPast()?'quedó al reset':'queda'}</span><b>${usedFor(a)==null?'—':(100-usedFor(a))+'%'}</b></div></div></div><div class="plaque">${logoTile(a,22)}<b>${a.cli}</b><small>${a.alias}</small></div></div>`}).join('')}</div><div class="bar-wood"></div></div>`}
+/* horario grande: franjas × días */
+function hourBig(){const F=[['Madrugada',0,6],['Mañana',6,12],['Tarde',12,18],['Noche',18,24]];
+ const cell=(d,a,b)=>sessions().filter(s=>s.d===d).reduce((x,s)=>x+Math.max(0,Math.min(s.en,b)-Math.max(s.st,a)),0);
+ const mx=Math.max(...CHRONO.flatMap(([d])=>F.map(([,a,b])=>cell(d,a,b))),.1);const tots=F.map(([,a,b])=>CHRONO.reduce((x,[d])=>x+cell(d,a,b),0)),tmx=Math.max(...tots);
+ return `<div class="hb"><div></div>${CHRONO.map(([d,wd,dd])=>`<div class="hb-h ${d===TODAYD?'today':''}"><b>${wd}</b> ${dd}</div>`).join('')}<div class="hb-h r">semana</div>
+ ${F.map(([n,a,b],i)=>`<div class="hb-f"><b>${n}</b><em>${String(a).padStart(2,'0')}–${String(b).padStart(2,'0')} h</em></div>${CHRONO.map(([d,wd,dd])=>{const v=cell(d,a,b);const pr={};sessions().filter(s=>s.d===d).forEach(s=>{const o=Math.max(0,Math.min(s.en,b)-Math.max(s.st,a));if(o>0)pr[s.proj]=(pr[s.proj]||0)+o});const tp=Object.entries(pr).sort((x,y)=>y[1]-x[1]);
+  return `<div class="hb-c" style="--a:${v/mx}" data-tip="${wd} ${dd} · ${n.toLowerCase()} · ${dur(v)}|${tp.map(t=>t[0]).join(', ')||'sin actividad'}|">${v?`<b>${dur(v)}</b>`:''}</div>`}).join('')}<div class="hb-t"><span><i style="width:${tots[i]/tmx*100}%"></i></span><b>${dur(tots[i])}</b></div>`).join('')}</div>`}
+const head2=(t,s)=>`<div class="sect"><h3>${t}</h3><span>${s}</span></div>`;
+const C1=()=>head2('¿Qué proyecto cuesta más?','lo gastado de cada cuenta, en capas por proyecto')+bottlesShelf()+head2('Hallazgos de la semana',weekLabel())+`<div class="ins-grid">${insightCards().join('')}</div>`;
+const C2=()=>head2('Hallazgos de la semana','lo importante primero')+`<div class="ins-grid">${insightCards().join('')}</div>`+head2('¿Qué proyecto cuesta más?','lo gastado de cada cuenta, en capas por proyecto')+bottlesShelf();
+const C3=()=>{const ic=insightCards(true);return head2('¿Qué proyecto cuesta más?','lo gastado de cada cuenta, en capas por proyecto')+bottlesShelf()+`<div class="c3x" style="margin-top:14px"><div class="panel" style="overflow-x:auto"><h5>¿A qué hora trabajas?</h5><p class="ph">Horas con agentes por franja del día.</p>${hourBig()}</div><div class="ins-col">${ic.slice(0,2).join('')}</div></div><div class="ins-grid" style="margin-top:14px">${ic.slice(2).join('')}</div>`};
+const C4=()=>head2('Hallazgos de la semana','desliza para ver todos')+`<div class="ins-strip">${insightCards(true).join('')}</div>`+head2('¿Qué proyecto cuesta más?','lo gastado de cada cuenta, en capas por proyecto')+bottlesShelf()+head2('¿A qué hora trabajas?','horas con agentes por franja del día')+`<div class="wk-box">${hourBig()}</div>`;
+const C5=()=>{const ic=insightCards(true);return `<div class="hero-ins">${ic[0]}</div>`+bottlesShelf()+`<div class="c5"><div class="panel" style="overflow-x:auto"><h5>¿A qué hora trabajas?</h5><p class="ph">Horas con agentes por franja del día.</p>${hourBig()}</div><div class="ins-col">${ic.slice(1).join('')}</div></div>`};
+const COMBO=[
+ {key:'1',name:'Botellas → hallazgos',desc:'Arriba la repisa con lo gastado en capas por proyecto; abajo las tarjetas de hallazgos, incluida la de horario.',f:C1},
+ {key:'2',name:'Hallazgos → botellas',desc:'Las conclusiones escritas primero ("Dashboard se comió 25 %…"); la repisa abajo para ver el detalle.',f:C2},
+ {key:'3',name:'Horario grande + notas',desc:'La repisa arriba; debajo el horario crece a una tabla franja × día con los dos hallazgos clave al lado; el resto de hallazgos al final.',f:C3},
+ {key:'4',name:'Tira de hallazgos',desc:'Los hallazgos en una tira horizontal que se desliza; luego la repisa y el horario franja × día a lo ancho.',f:C4},
+ {key:'5',name:'Titular + repisa',desc:'Un hallazgo grande como titular de la página, la repisa debajo y al final el horario junto a los demás hallazgos.',f:C5},
+];
+
+/* ---------- RONDA 9: Pomodoro ---------- */
+const TQ='#2fd3c0';
+const FOCUS=(()=>{const r=rng(31),out=[];const base=SES.concat(TODAY);
+ DAYS.forEach(([d],di)=>{const n=[2,4,1,0,1,3,5,3][di];const cand=base.filter(s=>s.d===d&&s.en-s.st>.5);
+  for(let k=0;k<n;k++){const s=cand[k%Math.max(1,cand.length)];let st=s?s.st+r()*Math.max(0,(s.en-s.st)-.45):9+k;const plan=25,canc=r()<.22;const act=canc?Math.round(4+r()*14):25;const pause=canc?0:Math.round(r()*6);
+   const en=st+(act+pause)/60;const proj=s?s.proj:PROJ[k];const ag={};base.filter(x=>x.d===d&&x.proj===proj).forEach(x=>{const o=Math.max(0,Math.min(x.en,en)-Math.max(x.st,st));if(o>0)ag[x.acc]=(ag[x.acc]||0)+Math.round(o*60)});
+   out.push({d,st,en,plan,act,pause,status:canc?'cancelado':'completado',proj,ag})}});out.sort((a,b)=>(a.d+a.st)<(b.d+b.st)?-1:1);for(let i=1;i<out.length;i++){const p=out[i-1],c=out[i];if(c.d===p.d&&c.st<p.en+.05){const sh=p.en+.08-c.st;c.st+=sh;c.en+=sh}}return out.sort((a,b)=>(a.d+a.st)<(b.d+b.st)?-1:1)})();
+let focusAll=()=>state==='vacio'?FOCUS.filter(f=>f.d!==TODAYD):FOCUS;
+const fmin=m=>m>=60?(m/60).toFixed(1)+' h':m+' min';
+function fstats(fs){const done=fs.filter(f=>f.status==='completado'),min=fs.reduce((x,f)=>x+f.act,0),plan=fs.reduce((x,f)=>x+f.plan,0),pause=fs.reduce((x,f)=>x+f.pause,0);
+ const days=[...new Set(done.map(f=>f.d))].sort();let streak=0;for(const [d] of DAYS){if(done.some(f=>f.d===d))streak++;else if(d!==TODAYD)break}
+ return {n:fs.length,done:done.length,canc:fs.length-done.length,min,plan,pause,pct:fs.length?Math.round(done.length/fs.length*100):0,streak,agent:fs.reduce((x,f)=>x+Object.values(f.ag).reduce((a,b)=>a+b,0),0)}}
+function fByProj(fs){const m={};fs.forEach(f=>{const p=m[f.proj]=m[f.proj]||{p:f.proj,min:0,n:0,done:0,ag:0};p.min+=f.act;p.n++;if(f.status==='completado')p.done++;p.ag+=Object.values(f.ag).reduce((a,b)=>a+b,0)});return Object.values(m).sort((a,b)=>b.min-a.min)}
+function fByHour(fs){const H=Array.from({length:24},()=>({ok:0,no:0}));fs.forEach(f=>{const h=Math.floor(f.st);f.status==='completado'?H[h].ok++:H[h].no++});return H}
+const PLAST={min:205,done:7,canc:2,proj:{ComandOS:50,Signara:75,SAVA:25,Chips:25}};
+/* piezas */
+function fSummary(fs){const s=fstats(fs);const k=(l,v,e='')=>`<div><small>${l}</small><b>${v}</b>${e?`<em>${e}</em>`:''}</div>`;
+ return `<div class="wk-sum f6">${k('Foco medido',fmin(s.min),`de ${fmin(s.plan)} planeados`)}${k('Completados',s.done,`${s.pct}% de ${s.n}`)}${k('Cancelados',s.canc)}${k('En pausa',fmin(s.pause))}${k('Agentes en paralelo',fmin(s.agent),'mismo proyecto')}${k('Racha',s.streak+' días')}</div>`}
+function fCalendar(fs,withAgents=true){const PH=60;const src=fs.map(f=>({d:f.d,st:f.st,en:f.en}));const ax=compAxis(PH,14,src.length?src:[{st:9,en:10}]);
+ const cols=CHRONO.map(([d,wd,dd])=>{const mine=fs.filter(f=>f.d===d);const ag=withAgents?merged(sessions().filter(s=>s.d===d&&mine.some(f=>f.proj===s.proj))):[];
+  return `<div class="cal-col ${d===TODAYD?'today':''}"><div class="cal-h"><span><b>${wd}</b> ${dd}</span><em>${fmin(mine.reduce((x,f)=>x+f.act,0))} · ${mine.filter(f=>f.status==='completado').length}✓ ${mine.filter(f=>f.status!=='completado').length?mine.filter(f=>f.status!=='completado').length+'✕':''}</em></div><div class="cal-body" style="height:${ax.H}px">${gapBands(ax)}
+   ${ag.map(s=>{const t=ax.Y(s.st),h=ax.Y(s.en)-t;return `<div class="agb" style="--ac:${A_(s.acc).c};top:${t}px;height:${Math.max(4,h)}px" data-tip="Agente · ${fmtH(s.st)}–${fmtH(s.en)}|${s.proj}|${accName(s.acc)}"></div>`}).join('')}
+   ${mine.map(f=>{const t=ax.Y(f.st),h=ax.Y(f.en)-t;return `<div class="fb ${f.status==='completado'?'':'x'}" style="top:${t}px;height:${Math.max(20,h-1)}px" data-tip="${dlab(f.d)} · ${fmtH(f.st)}–${fmtH(f.en)} · ${f.act} de ${f.plan} min|${f.proj} · ${f.status}|${Object.entries(f.ag).map(([a,m])=>accName(a)+' '+m+' min').join(', ')||'sin agentes en ese proyecto'}"><b>${f.proj}</b>${h>34?`<span>${fmtH(f.st)} · ${f.act}′</span>`:''}</div>`}).join('')}
+   ${d===TODAYD?`<div class="cal-now" style="top:${ax.Y(NOWH)}px"></div>`:''}</div></div>`}).join('');
+ return `<div class="wk-box cal"><div class="cal-axis" style="height:${ax.H}px">${axisHtml(ax)}</div><div class="cal-cols">${cols}</div></div>${withAgents?'<div class="wk-note"><span class="fbk"></span> bloque de foco &nbsp; <span class="fbk x"></span> cancelado &nbsp; <span class="agk"></span> tus agentes trabajando en ese mismo proyecto</div>':''}`}
+function fProj(fs){const ps=fByProj(fs),mx=ps[0]?ps[0].min:1;return `<div class="panel"><h5>Foco por proyecto</h5><p class="ph">Minutos de foco medidos, bloques completados y cambio vs la semana pasada.</p>${ps.map(p=>`<div class="fp"><span>${p.p}</span><span class="fpb"><i style="width:${p.min/mx*100}%"></i></span><b>${fmin(p.min)}</b><em>${p.done}/${p.n} ✓</em>${sgn((p.min-(PLAST.proj[p.p]||0))/60)}</div>`).join('')||'<div class="dim">Sin bloques.</div>'}</div>`}
+function fHours(fs){const H=fByHour(fs),mx=Math.max(...H.map(h=>h.ok+h.no),1);const best=H.map((h,i)=>({i,...h})).sort((a,b)=>b.ok-a.ok)[0],worst=H.map((h,i)=>({i,...h})).sort((a,b)=>b.no-a.no)[0];const cancelled=fs.filter(f=>f.status!=='completado');const avgAb=cancelled.length?Math.round(cancelled.reduce((x,f)=>x+f.act,0)/cancelled.length):0;
+ return `<div class="panel"><h5>Tus mejores horas</h5><p class="ph">Bloques que empezaste en cada hora: completados arriba, cancelados abajo.</p>
+ <div class="fh">${H.map((h,i)=>`<div class="fhc" data-tip="${String(i).padStart(2,'0')}:00|${h.ok} completados · ${h.no} cancelados|"><span class="u"><i style="height:${h.ok/mx*100}%"></i></span><span class="d"><i style="height:${h.no/mx*100}%"></i></span><em>${i%3?'':String(i).padStart(2,'0')}</em></div>`).join('')}</div>
+ <div class="fhs"><div><small>Completas más a las</small><b>${String(best.i).padStart(2,'0')}:00</b></div><div><small>Cancelas más a las</small><b>${worst.no?String(worst.i).padStart(2,'0')+':00':'—'}</b></div><div><small>Abandonas, en promedio, al minuto</small><b>${avgAb||'—'}</b></div></div></div>`}
+function fHistory(fs){return `<div class="panel"><h5>Historial</h5><div class="mtx-wrap"><table class="dy-tbl ht"><thead><tr><th>Día</th><th>Inicio</th><th>Fin</th><th>Proyecto</th><th>Foco</th><th>Pausa</th><th>Estado</th><th>Agentes en ese proyecto</th></tr></thead><tbody>${fs.slice().reverse().map(f=>`<tr><td>${dlab(f.d)}</td><td>${fmtH(f.st)}</td><td>${fmtH(f.en)}</td><td>${f.proj}</td><td>${f.act} / ${f.plan} min</td><td>${f.pause?f.pause+' min':'—'}</td><td><span class="st ${f.status==='completado'?'ok':'no'}">${f.status}</span></td><td>${Object.entries(f.ag).map(([a,m])=>`<span class="dot" style="background:${A_(a).c}"></span>${m} min`).join(' ')||'<span class="dim">—</span>'}</td></tr>`).join('')}</tbody></table></div></div>`}
+function fXP(){return `<div class="panel xp"><h5>Tu progreso</h5><div class="xpr"><b>Nivel 2</b><span class="xpb"><i style="width:38%"></i></span><em>1 380 / 2 000 XP</em></div><div class="chips">${['Primer bloque','100 minutos','3 días seguidos'].map(x=>`<span class="chip">🏅 ${x}</span>`).join('')}<span class="chip dim">5 días seguidos · falta 1</span></div></div>`}
+/* reloj de arena por día */
+function hourglass(min,goal,lbl,today){const id='hg'+(uid++),W=70,H=120,f=Math.min(1,min/goal);const top=`M14 14 L56 14 Q56 40 38 58 L32 58 Q14 40 14 14 Z`,bot=`M32 62 L38 62 Q56 80 56 106 L14 106 Q14 80 32 62 Z`;
+ const yb=106-44*f,yt=14+44*f;return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${lbl} ${min} min">
+ <defs><clipPath id="${id}t"><path d="${top}"/></clipPath><clipPath id="${id}b"><path d="${bot}"/></clipPath></defs>
+ <rect x="8" y="6" width="54" height="8" rx="3" fill="#3a2f22"/><rect x="8" y="106" width="54" height="8" rx="3" fill="#3a2f22"/>
+ <g clip-path="url(#${id}t)"><rect x="0" y="${yt}" width="${W}" height="${58-yt}" fill="${TQ}" opacity=".55"/></g>
+ <g clip-path="url(#${id}b)"><rect x="0" y="${yb}" width="${W}" height="${106-yb}" fill="${TQ}"/></g>
+ ${f>0&&f<1&&today?`<rect x="34.3" y="58" width="1.4" height="${yb-58}" fill="${TQ}" class="grain"/>`:''}
+ <path d="${top}" fill="#ffffff0c" stroke="#ffffff45"/><path d="${bot}" fill="#ffffff0c" stroke="#ffffff45"/><rect x="18" y="20" width="3" height="20" rx="1.5" fill="#fff" opacity=".2"/></svg>`}
+function hgShelf(fs){return `<div class="bar p5bar hgbar"><div class="bar-glow" style="background:radial-gradient(ellipse at 50% 0,#2fd3c022,transparent 60%)"></div><div class="bar-row">${CHRONO.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d),min=m.reduce((x,f)=>x+f.act,0);return `<div class="hgd ${d===TODAYD?'today':''}">${hourglass(min,100,wd+' '+dd,d===TODAYD)}<b>${fmin(min)}</b><span><b>${wd}</b> ${dd}</span><em>${m.filter(f=>f.status==='completado').length}✓ ${m.length-m.filter(f=>f.status==='completado').length?(m.length-m.filter(f=>f.status==='completado').length)+'✕':''}</em></div>`}).join('')}</div><div class="bar-wood"></div></div><div class="wk-note">Cada reloj es un día; se llena con tus minutos de foco hasta la meta de 100 min.</div>`}
+function fInsights(fs){const s=fstats(fs),ps=fByProj(fs),H=fByHour(fs).map((h,i)=>({i,...h})),best=H.slice().sort((a,b)=>b.ok-a.ok)[0],canc=fs.filter(f=>f.status!=='completado'),avgAb=canc.length?Math.round(canc.reduce((x,f)=>x+f.act,0)/canc.length):0;
+ const withAg=fs.filter(f=>Object.keys(f.ag).length),agMin=s.agent;const card=(k,t,b,viz='')=>`<div class="ins"><span class="ik" style="color:${TQ}">${k}</span><h6>${t}</h6><p>${b}</p>${viz}</div>`;
+ return [
+  card('Tu proyecto de foco',ps[0]?`${ps[0].p}: ${fmin(ps[0].min)} de foco`:'Sin bloques',ps[1]?`Le siguen ${ps.slice(1,3).map(p=>p.p+' ('+fmin(p.min)+')').join(' y ')}.`:'',`<div class="mini-rank">${ps.slice(0,4).map(p=>`<div><span>${p.p}</span><i style="width:${p.min/ps[0].min*100}%;background:${TQ}"></i><b>${fmin(p.min)}</b></div>`).join('')}</div>`),
+  card('Foco + agentes',`Mientras te enfocabas, tus agentes trabajaron ${fmin(agMin)}`,`${withAg.length} de ${fs.length} bloques tuvieron un agente en el mismo proyecto.`,`<div class="vsl">${withAg.slice(-3).reverse().map(f=>`<div><span>${f.proj}</span><em>${dlab(f.d)} ${fmtH(f.st)}</em><b>${Object.values(f.ag).reduce((a,b)=>a+b,0)} min</b></div>`).join('')}</div>`),
+  card('Tu mejor hora',`Completas más bloques a las ${String(best.i).padStart(2,'0')}:00`,canc.length?`Cuando cancelas, lo haces en promedio al minuto ${avgAb}.`:'No cancelaste ningún bloque.',fHours(fs).replace(/<h5>.*?<\/p>/,'').replace('class="panel"','class="bare"')),
+  card('Vs la semana pasada',`${s.min>=PLAST.min?'Subiste':'Bajaste'} ${fmin(Math.abs(s.min-PLAST.min))} de foco`,`${s.done} bloques completos contra ${PLAST.done}; racha actual de ${s.streak} días.`),
+ ]}
+const F1=()=>{const fs=focusAll();return fSummary(fs)+head2('Calendario de foco','tus bloques y, detrás, tus agentes en ese mismo proyecto')+fCalendar(fs)+`<div class="grid2">${fProj(fs)}${fHours(fs)}</div><div style="margin-top:14px">${fHistory(fs)}</div>`};
+const F2=()=>{const fs=focusAll();return hgShelf(fs)+head2('Hallazgos de foco','24 sep – 1 oct')+`<div class="ins-grid">${fInsights(fs).join('')}</div>`+head2('Calendario de foco','')+fCalendar(fs)};
+const F3=()=>{const fs=focusAll();return fSummary(fs)+`<div class="c3x" style="margin-top:14px;grid-template-columns:minmax(0,1fr) 320px"><div>${fCalendar(fs)}</div><div class="ins-col">${fProj(fs)}${fXP()}</div></div><div class="grid2">${fHours(fs)}${fHistory(fs).replace('<h5>Historial</h5>','<h5>Últimos bloques</h5>')}</div>`};
+const F4=()=>{const fs=focusAll();return fSummary(fs)+head2('Bitácora de bloques','de hoy hacia atrás; cada bloque con lo que hicieron tus agentes')+`<div class="wk-box w5">${DAYS.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d);if(!m.length)return '';return `<div class="bl-day"><div class="ag-d"><b>${wd}</b> ${dd}<em>${fmin(m.reduce((x,f)=>x+f.act,0))}</em></div><div class="bl-list">${m.map(f=>`<div class="bl ${f.status==='completado'?'':'x'}"><div class="bl-t">${fmtH(f.st)}<span>${fmtH(f.en)}</span></div><div class="bl-m"><b>${f.proj}</b><span class="blb"><i style="width:${f.act/f.plan*100}%"></i></span><em>${f.act} de ${f.plan} min${f.pause?' · '+f.pause+' min en pausa':''} · ${f.status}</em></div><div class="bl-a">${Object.entries(f.ag).map(([a,mm])=>`<span class="pc" style="--ac:${A_(a).c}">${accName(a)} <b>${mm} min</b></span>`).join('')||'<span class="dim">sin agentes</span>'}</div></div>`).join('')}</div></div>`}).join('')}</div><div class="grid2">${fProj(fs)}${fHours(fs)}</div>`};
+const F5=()=>{const fs=focusAll(),ins=fInsights(fs);return `<div class="hero-ins">${ins[1].replace('class="ins"','class="ins" style="border-color:#2fd3c055"')}</div>`+fSummary(fs)+`<div class="ins-grid" style="margin:14px 0">${[ins[0],ins[2],ins[3]].join('')}</div>`+fCalendar(fs)+fXP()};
+const POMO=[
+ {key:'1',name:'Tablero',desc:'Números del periodo arriba; calendario de foco con tus agentes detrás de cada bloque; foco por proyecto y mejores horas lado a lado; historial completo al final.',f:F1},
+ {key:'2',name:'Relojes de arena → hallazgos',desc:'La misma receta que elegiste en Comparar: una repisa con un reloj de arena por día (se llena hasta la meta de 100 min), luego tarjetas de hallazgos y el calendario.',f:F2},
+ {key:'3',name:'Calendario protagonista',desc:'El calendario de foco ocupa casi todo, con foco por proyecto y tu progreso (XP, logros) en una columna; abajo mejores horas y últimos bloques.',f:F3},
+ {key:'4',name:'Bitácora de bloques',desc:'Un renglón por bloque, de hoy hacia atrás: hora, proyecto, minutos medidos contra planeados, pausa y chips con lo que hicieron tus agentes en ese proyecto.',f:F4},
+ {key:'5',name:'Foco + agentes de titular',desc:'El hallazgo "mientras te enfocabas, tus agentes trabajaron X" como titular; números, hallazgos, calendario y progreso debajo.',f:F5},
+];
+
+/* ---------- RONDA 10: Pomodoro, solo stats ---------- */
+const PCOL={};['#FF6B5B','#2fd3c0','#8B7CFF','#FFAE1A','#4CC2FF','#C5E35A','#FF9AD5','#9AA6BF'].forEach((c,i)=>PCOL[i]=c);
+function projColor(p){const ps=fByProj(focusAll()).map(x=>x.p);const i=ps.indexOf(p);return PCOL[i>=0&&i<7?i:7]}
+function tomato(ok,size=26,title=''){const id='tm'+(uid++);return `<svg class="tom ${ok?'':'x'}" viewBox="0 0 32 32" width="${size}" height="${size}" role="img" aria-label="${title}"><title>${title}</title>
+ <defs><radialGradient id="${id}" cx=".38" cy=".38" r=".7"><stop offset="0" stop-color="${ok?'#ff8a73':'#3a4256'}"/><stop offset=".55" stop-color="${ok?'#ef3b2c':'#2a3142'}"/><stop offset="1" stop-color="${ok?'#a81a10':'#1c2230'}"/></radialGradient></defs>
+ <ellipse cx="16" cy="19" rx="12.5" ry="11" fill="url(#${id})" ${ok?'':'stroke="#ff758066" stroke-dasharray="2 2"'}/>
+ <path d="M16 9 L13 4.5 L15.5 7.2 L16 3.5 L16.6 7.2 L19 4.5 Z M16 9 Q10 7 7.5 10 Q12 11.5 16 9 Q20 11.5 24.5 10 Q22 7 16 9Z" fill="${ok?'#3fae5a':'#4a5368'}"/>
+ ${ok?'<ellipse cx="11" cy="15" rx="3" ry="2" fill="#fff" opacity=".35" transform="rotate(-30 11 15)"/>':''}</svg>`}
+const hh=h=>String(Math.floor(h)).padStart(2,'0')+':00';
+function pnums(fs){const s=fstats(fs),today=fs.filter(f=>f.d===TODAYD);const days=new Set(fs.map(f=>f.d)).size;
+ const k=(l,v,e='')=>`<div><small>${l}</small><b>${v}</b>${e?`<em>${e}</em>`:''}</div>`;
+ return `<div class="wk-sum pn">${k('Hoy',today.filter(f=>f.status==='completado').length+' 🍅',fmin(today.reduce((x,f)=>x+f.act,0)))}${k('Esta semana',s.done+' 🍅',fmin(s.min)+' de foco')}${k('Cancelados',s.canc)}${k('Promedio por día',(s.done/Math.max(1,days)).toFixed(1),'en '+days+' días con pomodoros')}</div>`}
+function pPerDay(fs){const mx=Math.max(...CHRONO.map(([d])=>fs.filter(f=>f.d===d).length),1);
+ return `<div class="panel"><h5>Pomodoros por día</h5><div class="pd">${CHRONO.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d),ok=m.filter(f=>f.status==='completado').length,no=m.length-ok;return `<div class="pdc ${d===TODAYD?'today':''}"><b>${ok||''}</b><div class="pdb"><i class="no" style="height:${no/mx*100}%"></i><i style="height:${ok/mx*100}%"></i></div><span><b>${wd}</b> ${dd}</span></div>`}).join('')}</div></div>`}
+function pPerHour(fs){const H=fByHour(fs),mx=Math.max(...H.map(h=>h.ok+h.no),1),best=H.map((h,i)=>({i,...h})).sort((a,b)=>b.ok-a.ok)[0];
+ return `<div class="panel"><h5>¿A qué horas?</h5><p class="ph">Pomodoros que empezaste en cada hora. Tu hora más fuerte: <b style="color:var(--fg)">${hh(best.i)}</b>.</p><div class="ph24">${H.map((h,i)=>`<div class="phc" data-tip="${hh(i)}–${hh(i+1)}|${h.ok} completados${h.no?' · '+h.no+' cancelados':''}|"><span><i class="no" style="height:${h.no/mx*100}%"></i><i style="height:${h.ok/mx*100}%"></i></span><em>${i%3?'':String(i).padStart(2,'0')}</em></div>`).join('')}</div></div>`}
+function pPerProj(fs){const ps=fByProj(fs),mx=ps[0]?ps[0].n:1;return `<div class="panel"><h5>¿En qué proyectos?</h5>${ps.map(p=>`<div class="pp"><span class="dot" style="background:${projColor(p.p)}"></span><span>${p.p}</span><span class="ppb"><i style="width:${p.done/mx*100}%;background:${projColor(p.p)}"></i></span><b>${p.done} 🍅</b><em>${fmin(p.min)}</em></div>`).join('')||'<div class="dim">Sin pomodoros.</div>'}</div>`}
+/* S1 */
+const S1=()=>{const fs=focusAll();return pnums(fs)+`<div class="grid2">${pPerDay(fs)}${pPerHour(fs)}</div><div style="margin-top:14px">${pPerProj(fs)}</div>`};
+/* S2 · tomates */
+const S2=()=>{const fs=focusAll();const ps=fByProj(fs);
+ return pnums(fs)+`<div class="panel"><h5>Cada tomate es un pomodoro</h5><p class="ph">Los apagados son cancelados. Pasa el cursor para ver hora y proyecto.</p>
+ ${DAYS.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d);return `<div class="tr ${d===TODAYD?'today':''}"><span class="trd"><b>${wd}</b> ${dd}</span><span class="trt">${m.map(f=>`<span class="tw" data-tip="${fmtH(f.st)}–${fmtH(f.en)} · ${f.act} de ${f.plan} min|${f.proj}|${f.status}">${tomato(f.status==='completado',30)}<u style="background:${projColor(f.proj)}"></u></span>`).join('')||'<span class="dim">—</span>'}</span><span class="trh">${m.map(f=>fmtH(f.st)).join(' · ')}</span><b class="trn">${m.filter(f=>f.status==='completado').length}</b></div>`}).join('')}
+ <div class="tleg">${ps.map(p=>`<span><u style="background:${projColor(p.p)}"></u>${p.p} <b>${p.done}</b></span>`).join('')}</div></div>
+ <div class="grid2">${pPerHour(fs)}${pPerProj(fs)}</div>`};
+/* S3 · cuadrícula día × hora */
+const S3=()=>{const fs=focusAll();const hours=[...new Set(fs.map(f=>Math.floor(f.st)))].sort((a,b)=>a-b);const rng2=hours.length?Array.from({length:hours.at(-1)-hours[0]+1},(_,i)=>hours[0]+i):[];
+ return pnums(fs)+`<div class="panel"><h5>Día × hora</h5><p class="ph">Cada cuadro es una hora; el número es cuántos pomodoros empezaste ahí y el color, el proyecto.</p><div class="mtx-wrap"><div class="dh" style="grid-template-columns:90px repeat(${rng2.length},minmax(30px,1fr)) 60px">
+ <div></div>${rng2.map(h=>`<span>${String(h).padStart(2,'0')}</span>`).join('')}<span class="r">total</span>
+ ${CHRONO.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d);return `<div class="dhd ${d===TODAYD?'today':''}"><b>${wd}</b> ${dd}</div>${rng2.map(h=>{const c=m.filter(f=>Math.floor(f.st)===h);if(!c.length)return '<i class="dhc"></i>';const ok=c.filter(f=>f.status==='completado');const col=projColor((ok[0]||c[0]).proj);return `<i class="dhc on ${ok.length?'':'x'}" style="--pc:${col}" data-tip="${wd} ${dd} · ${hh(h)}|${c.map(f=>f.proj+(f.status==='completado'?'':' (cancelado)')).join(', ')}|">${ok.length||'✕'}</i>`}).join('')}<b class="dht">${m.filter(f=>f.status==='completado').length}</b>`}).join('')}</div></div>
+ <div class="tleg">${fByProj(fs).map(p=>`<span><u style="background:${projColor(p.p)}"></u>${p.p} <b>${p.done}</b></span>`).join('')}</div></div>`};
+/* S4 · tarjetas por proyecto */
+const S4=()=>{const fs=focusAll();return pnums(fs)+`<div class="pcards">${fByProj(fs).map(p=>{const m=fs.filter(f=>f.proj===p.p);const H=Array(24).fill(0);m.forEach(f=>H[Math.floor(f.st)]++);const mx=Math.max(...H,1);
+ return `<div class="pcard" style="--pc:${projColor(p.p)}"><div class="pch"><span class="dot" style="background:${projColor(p.p)}"></span><b>${p.p}</b></div><div class="pcn"><b>${p.done}</b><span>pomodoros${p.n-p.done?` · ${p.n-p.done} cancelado${p.n-p.done>1?'s':''}`:''}</span></div><div class="pcm">${fmin(p.min)} de foco</div>
+ <div class="pc24">${H.map((v,i)=>`<i style="height:${v?Math.max(20,v/mx*100):0}%" title="${hh(i)}: ${v}"></i>`).join('')}</div><div class="pc24l"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+ <div class="pcd">${[...new Set(m.map(f=>f.d))].map(d=>`<span>${dlab(d)}</span>`).join('')}</div></div>`}).join('')}</div><div class="grid2">${pPerDay(fs)}${pPerHour(fs)}</div>`};
+/* S5 · tabla por día */
+const S5=()=>{const fs=focusAll();return pnums(fs)+`<div class="panel"><h5>Día por día</h5><div class="mtx-wrap"><table class="dy-tbl ps"><thead><tr><th>Día</th><th>Pomodoros</th><th>Horarios</th><th>Proyectos</th><th class="r">Foco</th></tr></thead><tbody>
+ ${DAYS.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d);const ok=m.filter(f=>f.status==='completado');const pr={};ok.forEach(f=>pr[f.proj]=(pr[f.proj]||0)+1);
+  return `<tr class="${d===TODAYD?'today':''}"><td><b>${wd}</b> ${dd}</td><td><span class="ptoms">${m.map(f=>tomato(f.status==='completado',18,f.proj)).join('')}</span> <b>${ok.length}</b></td><td>${m.map(f=>`<span class="hchip ${f.status==='completado'?'':'x'}">${fmtH(f.st)}</span>`).join('')||'<span class="dim">—</span>'}</td><td>${Object.entries(pr).map(([p,n])=>`<span class="pc" style="--ac:${projColor(p)}">${p} <b>${n}</b></span>`).join(' ')||'<span class="dim">—</span>'}</td><td class="r mono">${fmin(m.reduce((x,f)=>x+f.act,0))}</td></tr>`}).join('')}
+ <tr class="tot"><td>Semana</td><td><b>${fstats(fs).done}</b></td><td></td><td></td><td class="r mono">${fmin(fstats(fs).min)}</td></tr></tbody></table></div></div><div class="grid2">${pPerHour(fs)}${pPerProj(fs)}</div>`};
+const POMO2=[
+ {key:'1',name:'Números + 3 gráficas',desc:'Cuántos hoy y en la semana; luego tres gráficas: por día, por hora y por proyecto.',f:S1},
+ {key:'2',name:'Tomates',desc:'Cada pomodoro es un tomate, en fila por día (apagado = cancelado), con su hora al lado y una rayita del color del proyecto.',f:S2},
+ {key:'3',name:'Día × hora',desc:'Cuadrícula: filas = días, columnas = horas; cada cuadro dice cuántos pomodoros empezaste a esa hora, coloreado por proyecto.',f:S3},
+ {key:'4',name:'Por proyecto',desc:'Una tarjeta por proyecto: cuántos pomodoros, minutos, a qué horas los haces (mini gráfica de 24 h) y qué días.',f:S4},
+ {key:'5',name:'Tabla día por día',desc:'Una fila por día: tomates, cuántos, las horas a las que empezaste cada uno y los proyectos con su cuenta.',f:S5},
+];
+
+/* ================= MOCKUP MAESTRO: lo aprobado ================= */
+/* Semanas: 0 = esta semana; -1 = la anterior (solo lectura). */
+let WK=0;const DAYS0=DAYS.map(x=>[...x]);
+const DAYSP=[['2026-09-24','jue','24 sep'],['2026-09-23','mié','23'],['2026-09-22','mar','22'],['2026-09-21','lun','21'],['2026-09-20','dom','20'],['2026-09-19','sáb','19'],['2026-09-18','vie','18'],['2026-09-17','jue','17']];
+const shiftD=d=>{const i=DAYS0.findIndex(x=>x[0]===d);return i<0?d:DAYSP[i][0]};
+const PREV_SES=(()=>{const r=rng(77),sw=PROJ.slice().sort(()=>r()-.5);return SES.concat(TODAY.map(s=>({...s,st:s.st+10,en:s.en+10}))).filter(()=>r()>.2).map(s=>({...s,d:shiftD(s.d),proj:sw[PROJ.indexOf(s.proj)]}))})();
+const PREV_FOC=FOCUS.filter((f,i)=>i%3).map(f=>({...f,d:shiftD(f.d)}));
+const isPast=()=>WK<0;
+const _acc3=accs;accs=()=>_acc3().map(a=>WK?{...a,weekUsed:100-WASTE.find(w=>w.id===a.id).cyc[0]}:a);
+const _s3=sessions;sessions=()=>(WK?PREV_SES:_s3()).map(s=>s.tok==null?{...s,tok:(s.en-s.st)*TOKH[s.acc]}:s);
+const _f3=focusAll;focusAll=()=>WK?PREV_FOC:_f3();
+function setWeek(w){WK=w;DAYS.splice(0,DAYS.length,...(w?DAYSP:DAYS0).map(x=>[...x]));CHRONO.splice(0,CHRONO.length,...DAYS.slice().reverse())}
+const weekLabel=()=>WK?'17 – 24 sep':'24 sep – 1 oct';
+/* celular */
+let phone=false,phoneDay=5; /* índice del primer día visible en el calendario de 3 días */
+const isPhone=()=>phone||innerWidth<600;
+/* calendario: en celular, 3 días con flechas */
+function calendarCuentas(){if(!isPhone())return K1();const days=CHRONO.slice(phoneDay,phoneDay+3);
+ const saved=CHRONO.slice();CHRONO.splice(0,CHRONO.length,...days);const html=K1();CHRONO.splice(0,CHRONO.length,...saved);
+ return `<div class="pnav"><button data-pd="-1" ${phoneDay<=0?'disabled':''} aria-label="Días anteriores">←</button><span>${days.map(d=>d[1]+' '+d[2]).join(' · ')}</span><button data-pd="1" ${phoneDay>=CHRONO.length-3?'disabled':''} aria-label="Días siguientes">→</button></div>`+html}
+/* pomodoro en celular: tarjetas en vez de tabla */
+function pomodoroPhone(){const fs=focusAll();return pnums(fs)+`<div class="pcards1">${DAYS.map(([d,wd,dd])=>{const m=fs.filter(f=>f.d===d),ok=m.filter(f=>f.status==='completado');const pr={};ok.forEach(f=>pr[f.proj]=(pr[f.proj]||0)+1);
+ return `<div class="pc1 ${d===TODAYD?'today':''}"><div class="pc1h"><span><b>${wd}</b> ${dd}</span><span class="ptoms">${m.map(f=>tomato(f.status==='completado',18,f.proj)).join('')}</span><b class="pc1n">${ok.length}</b></div>${m.length?`<div>${m.map(f=>`<span class="hchip ${f.status==='completado'?'':'x'}">${fmtH(f.st)}</span>`).join('')}</div><div class="pc1p">${Object.entries(pr).map(([p,n])=>`<span class="pc" style="--ac:${projColor(p)}">${p} <b>${n}</b></span>`).join(' ')}</div><div class="pc1f mono">${fmin(m.reduce((x,f)=>x+f.act,0))} de foco</div>`:'<div class="dim">sin pomodoros</div>'}</div>`}).join('')}</div>`+pPerHour(fs)+`<div style="margin-top:14px">${pPerProj(fs)}</div>`}
+const TABS=[['cuentas','Cuentas'],['comparar','Comparar'],['pomodoro','Pomodoro']];
+let tab='cuentas';
+const STATES=[['normal','Normal'],['pesada','Semana pesada'],['vacio','Hoy sin actividad'],['limite','relotto casi vacía']];
+function body(){const as=accs();
+ if(tab==='cuentas')return (WK?'<div class="wk-note" style="margin:0 0 8px">Las botellas muestran tu cuota de ahora; el calendario es de la semana que elegiste.</div>':'')+barShelf(as)+`<div class="sect"><h3>${WK?'Semana':'Esta semana'}</h3><span>${weekLabel()}</span></div>`+calendarCuentas();
+ if(tab==='comparar')return C1();
+ return isPhone()?pomodoroPhone():S5()}
+function draw(){
+ const m=document.getElementById('modal');uid=0;m.classList.toggle('phone',isPhone());document.querySelector('.app').classList.toggle('phone-frame',phone);
+ m.innerHTML=`<div class="mhead"><h2>Analytics</h2><div class="tabs" role="tablist">${TABS.map(([k,l])=>`<button class="tab ${k===tab?'on':''}" role="tab" aria-selected="${k===tab}" data-tab="${k}">${l}</button>`).join('')}</div>
+  <div class="wnav"><button data-w="-1" ${WK<=-1?'disabled':''} aria-label="Semana anterior">←</button><span>${WK?'Semana':'Esta semana'} · <b>${weekLabel()}</b></span><button data-w="1" ${WK>=0?'disabled':''} aria-label="Semana siguiente">→</button></div></div>${body()}`;
+ m.innerHTML=m.innerHTML.replaceAll('🍅',`<span class="tin">${tomato(true,16)}</span>`);
+ m.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;draw()});
+ m.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>{setWeek(WK+ +b.dataset.w);draw()});
+ m.querySelectorAll('[data-pd]').forEach(b=>b.onclick=()=>{phoneDay=Math.max(0,Math.min(CHRONO.length-3,phoneDay+ +b.dataset.pd));draw()});
+ m.querySelectorAll('[data-pop]').forEach(b=>b.onclick=e=>{e.stopPropagation();const pop=document.getElementById('pop');const rows=JSON.parse(decodeURIComponent(b.dataset.pop));pop.innerHTML=`<h6>${b.dataset.title}</h6>`+rows.map(r=>`<div><span class="dot" style="background:${r[3]}"></span><b>${r[1]}</b><span>${r[0]}</span><em>${r[2]}</em></div>`).join('');pop.hidden=false;const rc=b.getBoundingClientRect();pop.style.left=Math.max(8,Math.min(innerWidth-pop.offsetWidth-10,rc.right+8))+'px';pop.style.top=Math.min(innerHeight-pop.offsetHeight-10,rc.top)+'px'});
+ if(isPhone())m.querySelectorAll('.bar-row').forEach(row=>{const n=row.children.length;const dots=document.createElement('div');dots.className='sdots';dots.innerHTML=Array.from({length:n},(_,i)=>`<i class="${i?'':'on'}"></i>`).join('');row.closest('.bar').after(dots);row.addEventListener('scroll',()=>{const i=Math.round(row.scrollLeft/row.clientWidth);dots.querySelectorAll('i').forEach((d,j)=>d.classList.toggle('on',j===i))},{passive:true})});
+ document.getElementById('states').innerHTML=STATES.map(([k,l])=>`<button class="${k===state?'on':''}" data-st="${k}">${l}</button>`).join('')+`<button class="${phone?'on':''}" data-ph>${phone?'Vista celular ✓':'Vista celular'}</button>`;
+ document.querySelectorAll('[data-st]').forEach(b=>b.onclick=()=>{state=b.dataset.st;draw()});
+ document.querySelector('[data-ph]').onclick=()=>{phone=!phone;draw()};
+ try{localStorage.setItem('anM-tab',tab)}catch(e){}
+}
+
+(()=>{const t=document.getElementById('tip');document.addEventListener('pointerover',e=>{const el=e.target.closest('[data-tip]');if(!el){t.hidden=true;return}const [a,b,c]=el.dataset.tip.split('|');t.innerHTML=`<b>${b}</b><span>${a}</span><em>${c}</em>`;t.hidden=false});document.addEventListener('pointermove',e=>{if(t.hidden)return;const x=Math.min(innerWidth-t.offsetWidth-8,e.clientX+14),y=e.clientY+18+t.offsetHeight>innerHeight?e.clientY-t.offsetHeight-10:e.clientY+18;t.style.left=x+'px';t.style.top=y+'px'})})();
+document.addEventListener('click',e=>{if(!e.target.closest('#pop'))document.getElementById('pop').hidden=true});
+
+addEventListener('keydown',e=>{if(e.target.closest('input,select,textarea,[contenteditable]'))return;const i=TABS.findIndex(t=>t[0]===tab);if(e.key==='ArrowLeft'){tab=TABS[(i+2)%3][0];draw()}if(e.key==='ArrowRight'){tab=TABS[(i+1)%3][0];draw()}});
+(()=>{const p=document.getElementById('picker'),g=document.getElementById('grip');let sx=null,sy,ox,oy;g.addEventListener('pointerdown',e=>{const r=p.getBoundingClientRect();sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;g.setPointerCapture(e.pointerId)});g.addEventListener('pointermove',e=>{if(sx==null)return;p.style.left=Math.max(0,ox+e.clientX-sx)+'px';p.style.top=Math.max(0,oy+e.clientY-sy)+'px';p.style.right='auto';p.style.bottom='auto'});g.addEventListener('pointerup',()=>sx=null)})();
+try{const t=localStorage.getItem('anM-tab');if(t&&TABS.some(x=>x[0]===t))tab=t}catch(e){}
+draw();
+</script>
