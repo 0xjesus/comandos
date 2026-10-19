@@ -1574,6 +1574,14 @@ pub fn internal_inventory(
     }
     let catalog = read_configuration(&paths.home.join(".config/comandos/extensions/catalog.json"))?;
     let shared = c::object(&catalog["servers"]);
+    // Desviación del Python (15-oct): OpenCode y agy reciben solo el hub bajo demanda
+    // (`cc-extensions hub`, declarado como `comandos`). Con el hub configurado, cada
+    // servidor del catálogo sigue en el selector pero apagado por omisión: el hub ya lo
+    // alcanza sin cargar sus herramientas, y encenderlo en un panel lo carga completo.
+    let hub = matches!(harness, "opencode" | "agy")
+        && mcps
+            .iter()
+            .any(|r| r["name"] == comandos_extensions::hub::NAME);
     for (name, spec) in &shared {
         if !mcps.iter().any(|r| r["name"] == *name)
             && !name.is_empty()
@@ -1584,7 +1592,7 @@ pub fn internal_inventory(
             if !spec.is_object() {
                 return Err(LaunchError::Other);
             }
-            mcps.push(json!({"id":name,"name":name,"enabled":spec["enabled"]!=false,"scope":"shared","source":"shared-catalog","synthetic":true}));
+            mcps.push(json!({"id":name,"name":name,"enabled":spec["enabled"]!=false&&!hub,"scope":"shared","source":"shared-catalog","synthetic":true}));
         }
     }
     if harness == "grok" {

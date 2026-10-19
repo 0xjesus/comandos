@@ -240,9 +240,15 @@ fn import_alias_precedence_remote_rules_local_service_and_future_accounts() {
     );
     sync(&h, &revised);
     for target in cat::targets(&h.0).unwrap() {
+        // OpenCode y agy reciben solo el hub, que alcanza también a `extra`.
+        let expected = if cat::uses_hub(target.kind) {
+            "comandos"
+        } else {
+            "extra"
+        };
         assert!(
             config::read_config(&target.path).unwrap()[target.key]
-                .get("extra")
+                .get(expected)
                 .is_some()
         );
     }
@@ -753,5 +759,136 @@ fn import_stdout_escapes_non_ascii_credential_names_like_python() {
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
         "{\"servers\": 2, \"credentials_imported\": [\"gmail\", \"se\\u00f1al\"]}\n"
+    );
+}
+/// OpenCode y agy no difieren herramientas MCP: reciben solo el hub bajo demanda. El
+/// resto de clientes sigue recibiendo cada servidor como `serve NAME`.
+#[test]
+fn hub_clients_receive_only_the_hub_and_others_every_server() {
+    let h = Home::new();
+    h.put(
+        ".config/opencode/opencode.jsonc",
+        "// usuario\n{\"mcp\":{}}",
+    );
+    h.put(
+        ".config/opencode/opencode.json",
+        r#"{"theme":"keep","mcp":{"node_repl":{"type":"local","command":["node"]},"demo":{"type":"local","command":["/launcher","serve","demo"]}}}"#,
+    );
+    let c = json!({"version":1,"servers":{"demo":{"command":"echo"},"mail":{"command":"mail"},"off":{"command":"x","enabled":false}}});
+    sync(&h, &c);
+    let opencode = config::read_config(&h.0.join(".config/opencode/opencode.json")).unwrap();
+    assert_eq!(opencode["theme"], "keep");
+    assert_eq!(
+        opencode["mcp"],
+        json!({
+            "comandos":{"type":"local","command":["/launcher","hub"],"enabled":true},
+            "node_repl":{"type":"local","command":["node"]}
+        })
+    );
+    let jsonc = config::read_config(&h.0.join(".config/opencode/opencode.jsonc")).unwrap();
+    assert_eq!(
+        jsonc["mcp"],
+        json!({"comandos":{"type":"local","command":["/launcher","hub"],"enabled":true}})
+    );
+    let agy = config::read_config(&h.0.join(".gemini/config/mcp_config.json")).unwrap();
+    assert_eq!(
+        agy["mcpServers"],
+        json!({"comandos":{"command":"/launcher","args":["hub"],"disabled":false}})
+    );
+    let claude = config::read_config(&h.0.join(".claude.json")).unwrap();
+    assert_eq!(
+        claude["mcpServers"],
+        json!({
+            "demo":{"command":"/launcher","args":["serve","demo"],"type":"stdio"},
+            "mail":{"command":"/launcher","args":["serve","mail"],"type":"stdio"}
+        })
+    );
+    for path in [".codex/config.toml", ".grok/config.toml"] {
+        let data = config::read_config(&h.0.join(path)).unwrap();
+        let names: Vec<_> = data["mcp_servers"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(names, ["demo", "mail"], "{path}");
+        assert_eq!(
+            data["mcp_servers"]["demo"]["args"],
+            json!(["serve", "demo"])
+        );
+    }
+    // Sin servidores habilitados no se exporta nada; `node_repl` sigue intacto.
+    let none = json!({"version":1,"servers":{"off":{"command":"x","enabled":false}}});
+    sync(&h, &none);
+    let opencode = config::read_config(&h.0.join(".config/opencode/opencode.json")).unwrap();
+    assert_eq!(
+        opencode["mcp"],
+        json!({"node_repl":{"type":"local","command":["node"]}})
+    );
+    let agy = config::read_config(&h.0.join(".gemini/config/mcp_config.json")).unwrap();
+    assert_eq!(agy["mcpServers"], json!({}));
+}
+
+/// Pasar a hub no desactiva servidores en el catálogo: ni en la sincronización que hace
+/// el cambio, ni si se cortó antes de guardar la foto, ni en las siguientes. Un servidor
+/// propio que el usuario añade a mano en OpenCode sí entra al catálogo.
+#[test]
+fn hub_transition_never_disables_catalog_servers() {
+    let h = Home::new();
+    let c = json!({"version":1,"servers":{"demo":{"command":"echo","enabled":true},"mail":{"command":"mail","enabled":true}}});
+    // Estado previo: OpenCode y agy con cada servidor, y una foto que los recuerda.
+    h.put(
+        ".config/opencode/opencode.json",
+        r#"{"mcp":{"demo":{"type":"local","command":["/launcher","serve","demo"],"enabled":true},"mail":{"type":"local","command":["/launcher","serve","mail"],"enabled":true}}}"#,
+    );
+    h.put(
+        ".gemini/config/mcp_config.json",
+        r#"{"mcpServers":{"demo":{"command":"/launcher","args":["serve","demo"],"disabled":false},"mail":{"command":"/launcher","args":["serve","mail"],"disabled":false}}}"#,
+    );
+    cat::save_snapshot(&h.0, &c, None).unwrap();
+    assert_eq!(
+        cat::reconcile(&h.0, &c, "/launcher", &mut json!({})).unwrap(),
+        c
+    );
+    // La exportación cambia a hub pero «se corta» antes de guardar la foto.
+    sync(&h, &c);
+    assert_eq!(
+        cat::reconcile(&h.0, &c, "/launcher", &mut json!({})).unwrap(),
+        c,
+        "ausencias en un cliente con hub no desactivan servidores"
+    );
+    let observed = sync(&h, &c);
+    cat::save_snapshot(&h.0, &c, Some(&observed)).unwrap();
+    assert_eq!(
+        cat::reconcile(&h.0, &c, "/launcher", &mut json!({})).unwrap(),
+        c
+    );
+    // Desactivar el hub a mano tampoco crea un servidor «comandos» en el catálogo.
+    h.put(
+        ".config/opencode/opencode.json",
+        r#"{"mcp":{"comandos":{"type":"local","command":["/elsewhere","hub"],"enabled":false},"mine":{"type":"local","command":["my-mcp","--flag"]}}}"#,
+    );
+    let revised = cat::reconcile(&h.0, &c, "/launcher", &mut json!({})).unwrap();
+    assert!(revised["servers"].get("comandos").is_none());
+    assert_eq!(revised["servers"]["demo"], c["servers"]["demo"]);
+    assert_eq!(revised["servers"]["mine"]["command"], "my-mcp");
+    assert_eq!(revised["servers"]["mine"]["args"], json!(["--flag"]));
+}
+
+#[test]
+fn import_ignores_the_hub_entry_of_hub_clients() {
+    let h = Home::new();
+    h.put(
+        ".config/opencode/opencode.json",
+        r#"{"mcp":{"comandos":{"type":"local","command":["/launcher","hub"],"enabled":true},"demo":{"type":"local","command":["echo"]}}}"#,
+    );
+    h.put(
+        ".gemini/config/mcp_config.json",
+        r#"{"mcpServers":{"comandos":{"command":"/launcher","args":["hub"]}}}"#,
+    );
+    let c = cat::import_catalog(&h.0).unwrap();
+    assert_eq!(
+        c["servers"].as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["demo"]
     );
 }

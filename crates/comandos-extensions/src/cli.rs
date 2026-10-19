@@ -58,6 +58,20 @@ pub fn run(args: Vec<String>) -> Result<i32> {
                 runtime.shutdown_timeout(std::time::Duration::from_millis(100));
                 return Ok(0);
             }
+            // Hub bajo demanda: lo que reciben OpenCode y agy en lugar de cada servidor.
+            Some("hub") if args.next().is_none() => {
+                let home = home.map(Ok).unwrap_or_else(home_dir)?;
+                let path = catalog.unwrap_or_else(|| crate::config::catalog_path(&home));
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .max_blocking_threads(4)
+                    .enable_all()
+                    .build()
+                    .map_err(|_| "Runtime unavailable")?;
+                let result = runtime.block_on(crate::hub::serve(&home, &path));
+                runtime.shutdown_timeout(std::time::Duration::from_millis(100));
+                result?;
+                return Ok(0);
+            }
             Some("count") if args.next().is_none() => {
                 let home = home.map(Ok).unwrap_or_else(home_dir)?;
                 crate::tokenizer::count_command(&home)?;
@@ -65,7 +79,7 @@ pub fn run(args: Vec<String>) -> Result<i32> {
             }
             _ => {
                 return Err(
-                    "Usage: comandos-extensions [--home PATH] [--catalog PATH] {import|sync|status|count|check [NAME...]|serve NAME|broker}".into(),
+                    "Usage: comandos-extensions [--home PATH] [--catalog PATH] {import|sync|status|count|check [NAME...]|serve NAME|hub|broker}".into(),
                 );
             }
         }

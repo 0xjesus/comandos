@@ -26,6 +26,15 @@ const REMOTE: [&str; 5] = [
     "obscura",
     "screenwright",
 ];
+/// Clientes que no saben diferir herramientas MCP: cargan todas las definiciones en cada
+/// petición. Reciben solo el hub (`cc-extensions hub`), que las busca bajo demanda.
+/// Desviación del Python (15-oct, Jesús: OpenCode pagaba ≈500k tokens por mensaje con
+/// 1.120 herramientas): `lib/extension_catalog.py` sigue exportando cada servidor a estos
+/// dos clientes; el oráculo `tests/catalog_oracle.py` ya no aplica a sus configuraciones.
+pub const HUB_KINDS: [&str; 2] = ["opencode", "agy"];
+pub fn uses_hub(kind: &str) -> bool {
+    HUB_KINDS.contains(&kind)
+}
 #[derive(Debug, Clone)]
 pub struct Target {
     pub kind: &'static str,
@@ -251,7 +260,7 @@ pub fn import_catalog(home: &Path) -> Result<Value> {
                 continue;
             }
             let name = alias(raw);
-            if name == "node_repl" || !safe(name) {
+            if name == "node_repl" || !safe(name) || uses_hub(target.kind) && name == HUB {
                 continue;
             }
             let Some(mut spec) = normalize(s)? else {
@@ -331,6 +340,11 @@ pub fn reconcile(
                 continue;
             }
             let item = current.get(&raw_name);
+            // Un cliente con hub no declara cada servidor: su ausencia no desactiva nada
+            // (ni tras el primer cambio a hub, ni si se cortó antes de guardar la foto).
+            if uses_hub(target.kind) && (name == HUB || item.is_none()) {
+                continue;
+            }
             if item.is_some() && previous.and_then(|p| p.get(&raw_name)) == hashes.get(&raw_name) {
                 continue;
             }
@@ -401,6 +415,14 @@ pub fn save_snapshot(home: &Path, catalog: &Value, expected: Option<&Value>) -> 
         config::save_json(&path, &snapshot)?;
     }
     Ok(())
+}
+const HUB: &str = crate::hub::NAME;
+/// Entrada del hub con la forma propia de cada cliente con hub.
+pub fn hub_entry(kind: &str, launcher: &str) -> Value {
+    if kind == "opencode" {
+        return json!({"type":"local","command":[launcher,"hub"],"enabled":true});
+    }
+    json!({"command":launcher,"args":["hub"],"disabled":false})
 }
 pub fn native_entry(kind: &str, name: &str, launcher: &str, old: &Value) -> Value {
     if kind == "opencode" {
@@ -485,9 +507,15 @@ pub fn sync_configs(
                 }
             }
         }
-        for name in enabled.keys() {
-            if !target.mail_only || MAIL.contains(&name.as_str()) {
-                desired[*name] = native_entry(target.kind, name, launcher, &saved[*name]);
+        if uses_hub(target.kind) {
+            if !enabled.is_empty() {
+                desired[HUB] = hub_entry(target.kind, launcher);
+            }
+        } else {
+            for name in enabled.keys() {
+                if !target.mail_only || MAIL.contains(&name.as_str()) {
+                    desired[*name] = native_entry(target.kind, name, launcher, &saved[*name]);
+                }
             }
         }
         if let Some(s) = old.get("node_repl") {

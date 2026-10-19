@@ -285,6 +285,7 @@ pub mod config;
 pub mod skills;
 
 pub mod check;
+pub mod hub;
 
 mod check_protocol;
 
