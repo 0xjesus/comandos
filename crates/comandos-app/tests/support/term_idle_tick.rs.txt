@@ -38,7 +38,7 @@ struct Geom {cell_w:f64,cell_h:f64}
 struct Model {engine:TermEngine,pty:Option<Pty>,shadow:Option<shadow::ShadowReader>,shadow_frame:Option<ShadowFrame>,shadow_at:u64,selection:Option<()>,hovered_link:Option<()>,last_motion:Option<()>,geom:Geom,drain:Drain,respawn:RespawnPolicy,respawn_at:Option<u64>,settle:Settle,schedule:PaintSchedule,preferences:Value,blink_visible:bool,ssh_at:Option<u64>,ssh_delta:f64,ssh_point:(u16,u16)}
 struct Inner {model:RefCell<Model>,area:Area,read_source:RefCell<Option<SourceId>>,write_source:RefCell<Option<SourceId>>,options:Options,clipboard:Clipboard}
 impl Inner {
- fn ms(&self)->u64 {NOW.with(Cell::get)}fn arm(&self){}fn send_event(&self,_bytes:&[u8]){effect();}fn spawn(&self)->Result<(),PtyError>{panic!("fixture must never spawn")}
+ fn ms(&self)->u64 {NOW.with(Cell::get)}fn arm(&self){}fn resize_when_quiet(&self,_now:u64){}fn send_event(&self,_bytes:&[u8]){effect();}fn spawn(&self)->Result<(),PtyError>{panic!("fixture must never spawn")}
 }
 mod actual {use super::*;impl Inner {
  // ACTUAL_METHODS

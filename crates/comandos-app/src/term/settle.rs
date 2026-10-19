@@ -3,6 +3,10 @@
 //! (al arrancar la ventana se acomoda en pasos 174→168→163 columnas).
 pub const SETTLE_QUIET_MS: u64 = 250;
 pub const SETTLE_CAP_MS: u64 = 1500;
+/// Con la terminal ya enganchada, el pty se redimensiona cuando la asignación lleva
+/// este tiempo quieta: arrastrar la ventana o el panel mandaba un SIGWINCH por paso y
+/// Claude Code y Codex repintaban cada ancho intermedio encima del historial.
+pub const RESIZE_QUIET_MS: u64 = 180;
 /// `child-exited` → `GLib.timeout_add(800, spawn)` (884).
 pub const RESPAWN_MS: u64 = 800;
 

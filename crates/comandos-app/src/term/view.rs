@@ -5,7 +5,7 @@ use super::{
     paint::{CellGeom, FrameCache, LineKind, PaintOp},
     pty::{DrainOutcome, PtyDrain, PtyError, PtySession},
     schedule::PaintSchedule,
-    settle::{RESPAWN_MS, SETTLE_CAP_MS, SETTLE_QUIET_MS, Settle, initial_size},
+    settle::{RESIZE_QUIET_MS, RESPAWN_MS, SETTLE_CAP_MS, SETTLE_QUIET_MS, Settle, initial_size},
 };
 use crate::config::RunMode;
 use glib::{ControlFlow, IOCondition, SourceId};
@@ -84,6 +84,7 @@ struct Model {
     ssh_delta: f64,
     ssh_point: (u16, u16),
     ssh_at: Option<u64>,
+    resize_at: Option<u64>,
 }
 struct Inner {
     area: gtk::DrawingArea,
@@ -206,6 +207,7 @@ impl TermView {
                 ssh_delta: 0.,
                 ssh_point: (0, 0),
                 ssh_at: None,
+                resize_at: None,
             }),
             options,
             read_source: RefCell::new(None),
@@ -518,14 +520,25 @@ impl Inner {
         )
     }
     fn allocate(self: &Rc<Self>) {
-        self.model.borrow_mut().settle.on_alloc(self.ms());
-        if self.model.borrow().pty.is_some() {
-            let (c, r) = self.dimensions();
-            if self.model.borrow().engine.size() != (c, r) {
-                let _ = self.resize(c, r);
-            }
+        let now = self.ms();
+        let mut m = self.model.borrow_mut();
+        m.settle.on_alloc(now);
+        if m.pty.is_some() {
+            m.resize_at = Some(now.saturating_add(RESIZE_QUIET_MS));
         }
+        drop(m);
         self.arm();
+    }
+    fn resize_when_quiet(&self, now: u64) {
+        let due = self.model.borrow().resize_at.is_some_and(|at| now >= at);
+        if !due {
+            return;
+        }
+        self.model.borrow_mut().resize_at = None;
+        let (c, r) = self.dimensions();
+        if self.model.borrow().engine.size() != (c, r) {
+            let _ = self.resize(c, r);
+        }
     }
     fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
         if self.options.mode == RunMode::Shadow {
@@ -740,6 +753,9 @@ impl Inner {
         if let Some(at) = m.ssh_at {
             delay = delay.min(at.saturating_sub(now));
         }
+        if let Some(at) = m.resize_at {
+            delay = delay.min(at.saturating_sub(now));
+        }
         if let Some(at) = m.engine.next_deadline() {
             let ms = u64::try_from(at.saturating_duration_since(self.epoch).as_millis())
                 .unwrap_or(u64::MAX);
@@ -763,6 +779,7 @@ impl Inner {
     }
     fn tick(self: &Rc<Self>) {
         let now = self.ms();
+        self.resize_when_quiet(now);
         let mut m = self.model.borrow_mut();
         let spawn = self.options.mode != RunMode::Shadow
             && m.respawn.may_start()
@@ -1447,6 +1464,9 @@ fn connect_events(inner: &Rc<Inner>) {
         match wheel(lines, col, row, modifiers(event.state()), &m.engine.modes()) {
             WheelAction::Mouse(bytes) | WheelAction::Arrows(bytes) => {
                 drop(m);
+                // La rueda deja el pane en copy-mode de tmux y la vista se congela:
+                // la primera tecla lo saca, igual que tras seleccionar con el mouse.
+                inner.clipboard.release_selection();
                 inner.send_event(&bytes);
             }
             WheelAction::Scroll(lines) => {
