@@ -107,11 +107,17 @@ impl RestoreTmux for Recorder {
     }
 }
 #[derive(Default)]
-struct Scopes(RefCell<Vec<(String, String)>>);
+struct Scopes(RefCell<Vec<(String, String)>>, RefCell<Vec<String>>);
 impl ScopeLauncher for Scopes {
     fn argv(&self, p: &str, c: &str) -> Result<Vec<String>, String> {
         self.0.borrow_mut().push((p.into(), c.into()));
+        self.1.borrow_mut().push(format!("argv {p}"));
         Ok(vec!["fake-scope".into(), p.into(), c.into()])
+    }
+    fn prepare(&self, saved: &Value, cwd: &str, _home: &Path) {
+        self.1
+            .borrow_mut()
+            .push(format!("prepare {} {cwd}", saved["agent"].as_str().unwrap()));
     }
 }
 fn snapshot() -> Value {
@@ -142,6 +148,11 @@ fn scope_launch_is_per_pane_and_geometry_precedes_exact_resume() {
     assert_eq!(scopes.0.borrow().len(), 2);
     assert_eq!(scopes.0.borrow()[0].0, "%10");
     assert_eq!(scopes.0.borrow()[1].0, "%20");
+    // Folder trust is settled before each exact resume is typed.
+    assert_eq!(
+        *scopes.1.borrow(),
+        ["prepare claude /tmp", "argv %10", "prepare codex /tmp", "argv %20"]
+    );
     let calls = tmux.calls.borrow();
     let first_resume = calls
         .iter()
