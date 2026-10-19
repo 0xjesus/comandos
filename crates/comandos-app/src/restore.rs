@@ -166,11 +166,32 @@ impl ScopeLauncher for PaneScopes {
             "env".into(),
             "-u".into(),
             "NO_COLOR".into(),
+            // The tmux server comes from systemd, not from the App's truecolor PTY.
+            "COLORTERM=truecolor".into(),
             "/bin/sh".into(),
             "-lc".into(),
-            command.into(),
+            agent_exec(command),
         ])
     }
+}
+
+/// `sh -c` does not replace itself with the agent: the agent would run under `sh`,
+/// which then leads the pane's process group and tmux reports `sh` as the pane
+/// command, so the dashboard no longer recognizes the agent. The resume command
+/// is `[NAME=value ...] program args`, which `env` runs as is.
+pub fn agent_exec(command: &str) -> String {
+    format!("exec env {command}")
+}
+
+/// Restored panes open the user's own login shell, the one a new tmux pane gets:
+/// with `/bin/sh` the pane lost the user's prompt and colors once the agent exited.
+pub fn pane_shell(shell: Option<&str>) -> String {
+    shell
+        .map(std::path::Path::new)
+        .filter(|p| p.is_absolute() && p.is_file())
+        .and_then(|p| p.to_str())
+        .unwrap_or("/bin/sh")
+        .to_string()
 }
 
 /// Private fixtures have no systemd or real agents. They resume a shell command directly.
@@ -598,6 +619,7 @@ fn restore_missing<T: RestoreTmux, S: ScopeLauncher + ?Sized>(
             mutate_owned(tmux, &owned, &["select-window", "-t", &wid], None)?;
         }
         // All geometry is installed before any exact conversation resumes.
+        let shell = pane_shell(std::env::var("SHELL").ok().as_deref());
         for (pane, saved) in starts {
             mutate_owned(
                 tmux,
@@ -609,7 +631,7 @@ fn restore_missing<T: RestoreTmux, S: ScopeLauncher + ?Sized>(
                     &pane,
                     "-c",
                     &cwd(&saved, home),
-                    "/bin/sh",
+                    &shell,
                     "-il",
                 ],
                 None,

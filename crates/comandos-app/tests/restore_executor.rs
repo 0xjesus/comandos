@@ -401,3 +401,18 @@ fn web_tabs_never_become_tmux_placeholders() {
     assert!(!result.tabs[0].attached);
     assert!(tmux.calls.borrow().is_empty());
 }
+
+#[test]
+fn restored_agent_replaces_its_shell_and_panes_keep_the_user_shell() {
+    use comandos_app::restore::{agent_exec, pane_shell};
+    assert_eq!(
+        agent_exec("CLAUDE_CONFIG_DIR=/h/.claude-accounts/a claude --resume x"),
+        "exec env CLAUDE_CONFIG_DIR=/h/.claude-accounts/a claude --resume x"
+    );
+    assert_eq!(pane_shell(Some("/bin/sh")), "/bin/sh");
+    assert_eq!(pane_shell(Some("zsh")), "/bin/sh");
+    assert_eq!(pane_shell(Some("/no/such/shell")), "/bin/sh");
+    assert_eq!(pane_shell(None), "/bin/sh");
+    let sh = std::fs::canonicalize("/bin/sh").unwrap();
+    assert_eq!(pane_shell(sh.to_str()), sh.to_str().unwrap());
+}
