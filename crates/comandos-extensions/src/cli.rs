@@ -17,7 +17,7 @@ pub fn run(args: Vec<String>) -> Result<i32> {
                     return Err("Unexpected arguments".into());
                 }
                 let home = home.map(Ok).unwrap_or_else(home_dir)?;
-                catalog_command(&home, catalog.as_deref(), action)?;
+                retry_concurrent_read(|| catalog_command(&home, catalog.as_deref(), action))?;
                 return Ok(0);
             }
             Some("check") => {
@@ -244,6 +244,21 @@ fn broker_session(
     // El hilo bloqueado en stdin no debe retrasar la salida.
     runtime.shutdown_timeout(std::time::Duration::from_millis(100));
     relayed
+}
+/// Las lecturas de estado abortan si la base cambió o estaba tomada mientras leían, y el tablero
+/// escribe sin parar: la sincronización de cada minuto fallaba dos de cada tres veces.
+/// El comando es idempotente, así que se repite en cuanto la lectura choca.
+pub fn retry_concurrent_read(mut command: impl FnMut() -> Result<()>) -> Result<()> {
+    const ATTEMPTS: u64 = 6;
+    for attempt in 1.. {
+        match command() {
+            Err(e) if attempt < ATTEMPTS && e.contains("durante lectura") => {
+                std::thread::sleep(std::time::Duration::from_millis(150 * attempt));
+            }
+            other => return other,
+        }
+    }
+    unreachable!("the loop returns on its last attempt")
 }
 pub fn catalog_command(
     home: &std::path::Path,
