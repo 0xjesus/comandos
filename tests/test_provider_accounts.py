@@ -64,6 +64,20 @@ def test_api_key_only_and_pending_accounts_are_not_selectable(tmp_path):
     ]
 
 
+def test_claude_api_key_account_is_selectable(tmp_path):
+    reg = registry(tmp_path)
+    (tmp_path / "claude").mkdir()
+    (tmp_path / "claude-accounts" / "api").mkdir(parents=True)
+    (tmp_path / "claude-accounts" / "api" / "settings.json").write_text(json.dumps({"apiKeyHelper": "cat /secret"}))
+
+    found = accounts.list_accounts(reg, "claude")
+    assert [(a["alias"], a["state"], a["selectable"], a["identity"]) for a in found] == [
+        ("main", "login_required", False, ""),
+        ("api", "ready", True, "API key"),
+    ]
+    assert "secret" not in json.dumps(found)
+
+
 def test_alias_path_cannot_escape_or_follow_symlink(tmp_path):
     reg = registry(tmp_path)
     root = tmp_path / "grok-accounts"

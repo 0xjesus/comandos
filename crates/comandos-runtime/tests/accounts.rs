@@ -405,3 +405,40 @@ fn environment_rejects_non_utf8_symlink_target_without_losing_native_home() {
     let other = a::account_environment(&registry, "codex", &json!("../x"), &paths).unwrap_err();
     assert_eq!(other.kind(), a::ErrorKind::Account);
 }
+#[test]
+fn claude_api_key_account_is_ready_without_leaking_the_key() {
+    let f = Fixture::new();
+    let reg = f.registry();
+    let paths = f.paths();
+    f.put(
+        "claude-accounts/api/settings.json",
+        &json!({"apiKeyHelper":"cat /secret-key-file"}),
+    );
+    f.put(
+        "claude-accounts/envkey/settings.json",
+        &json!({"env":{"ANTHROPIC_API_KEY":"secret-env-key"}}),
+    );
+    fs::create_dir_all(f.0.join("claude-accounts/pending")).unwrap();
+    let found = a::list_accounts(&reg, "claude", &paths).unwrap();
+    let states = found
+        .iter()
+        .map(|a| {
+            (
+                a["alias"].as_str().unwrap().to_owned(),
+                a["state"].as_str().unwrap().to_owned(),
+                a["selectable"] == true,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![
+            ("main".into(), "login_required".into(), false),
+            ("api".into(), "ready".into(), true),
+            ("envkey".into(), "ready".into(), true),
+            ("pending".into(), "login_required".into(), false),
+        ]
+    );
+    assert_eq!(found[1]["identity"], "API key");
+    assert!(!serde_json::to_string(&found).unwrap().contains("secret"));
+}

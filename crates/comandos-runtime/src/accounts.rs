@@ -344,11 +344,23 @@ fn auth(provider: &str, home: &Path, auth_file: &str) -> (bool, String, &'static
     }
     if subscription {
         (true, identity, "ready")
+    } else if provider == "claude" && claude_api_key(home) {
+        if identity.is_empty() {
+            identity = "API key".to_owned();
+        }
+        (true, identity, "ready")
     } else if truthy(&data) {
         (false, identity, "unsupported_auth")
     } else {
         (false, String::new(), "login_required")
     }
+}
+/// Una cuenta Claude por API key (consola de Anthropic) no tiene OAuth: su
+/// `settings.json` declara `apiKeyHelper` o `env.ANTHROPIC_API_KEY`, y el CLI la usa
+/// tal cual al lanzarse con `CLAUDE_CONFIG_DIR` apuntando a ella.
+fn claude_api_key(home: &Path) -> bool {
+    let settings = read_json(&home.join("settings.json"));
+    truthy(&settings["apiKeyHelper"]) || truthy(&settings["env"]["ANTHROPIC_API_KEY"])
 }
 pub fn list_accounts(registry: &Value, provider: &str, paths: &Paths) -> Result<Vec<Value>> {
     let spec = spec(registry, provider)?;

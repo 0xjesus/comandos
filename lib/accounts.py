@@ -87,6 +87,14 @@ def _jwt_email(token: Any) -> str:
         return ""
 
 
+def _claude_api_key(home: Path) -> bool:
+    """Cuenta Claude por API key: sin OAuth, su settings.json declara apiKeyHelper
+    o env.ANTHROPIC_API_KEY y el CLI la usa con CLAUDE_CONFIG_DIR apuntando a ella."""
+    settings = _json(home / "settings.json")
+    env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    return bool(settings.get("apiKeyHelper") or env.get("ANTHROPIC_API_KEY"))
+
+
 def _auth(provider: str, home: Path, auth_file: str) -> tuple[bool, str, str]:
     data = _json(home / auth_file)
     identity = ""
@@ -109,6 +117,8 @@ def _auth(provider: str, home: Path, auth_file: str) -> tuple[bool, str, str]:
         identity = str(record.get("email") or record.get("first_name") or record.get("user_id") or record.get("principal_id") or "")
     if subscription:
         return True, identity, "ready"
+    if provider == "claude" and _claude_api_key(home):
+        return True, identity or "API key", "ready"
     if data:
         return False, identity, "unsupported_auth"
     return False, "", "login_required"
