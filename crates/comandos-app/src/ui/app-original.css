@@ -151,9 +151,25 @@ paned separator { background: @LINE@; min-width: 2px; }
 .cv-me .cv-text { color: #ffffff; }
 .cv-ai { background-color: @BAR@; padding: 13px 17px; border-radius: 18px 18px 18px 4px; border: 1px solid @LINE@; margin-right: 60px; }
 .cv-text { color: @TEXT@; font-size: 14px; }
-.cv-code { font-family: monospace; font-size: 12px; color: @TEXT@; background-color: @BG@; border: 1px solid @LINE@; border-radius: 10px; padding: 10px 12px; }
-.cv-table { border: 1px solid @LINE@; border-radius: 8px; }
-.cv-cell { color: @TEXT@; font-size: 13px; padding: 6px 9px; border-right: 1px solid @LINE@; border-bottom: 1px solid @LINE@; }
+.cv-codeblock { background-color: @BG@; border: 1px solid @LINE@; border-radius: 10px; margin: 2px 0; }
+.cv-lang { color: @FAINT@; font-family: monospace; font-size: 11px; padding: 7px 14px 0; }
+.cv-code { font-family: monospace; font-size: 13px; color: @TEXT@; padding: 8px 14px 11px; }
+.cv-h { color: @TEXT@; font-weight: 700; margin-top: 6px; }
+.cv-h1 { font-size: 21px; }
+.cv-h2 { font-size: 18px; }
+.cv-h3 { font-size: 16px; }
+.cv-h4 { font-size: 14px; }
+.cv-quote { border-left: 3px solid @LINE2@; padding: 2px 0 2px 13px; }
+.cv-quote .cv-text, .cv-quote .cv-mark { color: @DIM@; }
+.cv-mark { color: @DIM@; font-size: 14px; padding-right: 8px; }
+.cv-me .cv-mark { color: #ffffff; }
+.cv-done { color: @BRAND@; }
+.cv-root label link, .cv-root label link:visited { color: @BRAND@; }
+.cv-me label link, .cv-me label link:visited { color: #ffffff; }
+.cv-rule { background-color: @LINE@; min-height: 1px; margin: 6px 0; }
+.cv-table { border: 1px solid @LINE@; border-radius: 8px; margin: 2px 0; }
+.cv-cell { color: @TEXT@; font-size: 13px; padding: 7px 11px; border-right: 1px solid @LINE@; border-bottom: 1px solid @LINE@; }
+.cv-th { font-weight: 700; background-color: mix(@BAR@, @TEXT@, 0.06); }
 .cv-more { background-image: none; background-color: @BAR@; color: @DIM@; border: 1px solid @LINE2@; border-radius: 999px; padding: 4px 16px; font-weight: 600; font-size: 12px; }
 .cv-more:hover { color: @TEXT@; border-color: @BRAND@; }
 .cv-typing { background-color: @BAR@; border: 1px solid @LINE@; border-radius: 18px 18px 18px 4px; padding: 9px 15px; color: @DIM@; font-size: 13px; }

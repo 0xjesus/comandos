@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod app;
 pub mod app_commands;
 pub mod bridge;
+pub mod chat_markdown;
 pub mod clipboard;
 pub mod confirm;
 pub mod drag;

@@ -389,6 +389,7 @@ dependencies = [
  "pango",
  "pangocairo",
  "pty-process",
+ "pulldown-cmark",
  "regex",
  "rustix",
  "serde_json",

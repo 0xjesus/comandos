@@ -3,6 +3,7 @@
 //! while on; the timer only fetches while it is visible, and an unchanged transcript
 //! costs one tiny answer from the server.
 use super::*;
+use crate::ui::chat_markdown::{self, Block};
 
 #[derive(Default)]
 pub(super) struct Owned {
@@ -35,141 +36,6 @@ struct View {
     toggle: gtk::Button,
 }
 
-/// Inline markdown (`code`, **bold**, *em*, [link](url)) as Pango markup; everything
-/// else is escaped.
-fn inline(line: &str) -> String {
-    let mut out = String::with_capacity(line.len() + 16);
-    let mut rest = line;
-    while let Some(i) = rest.find(['`', '*', '[']) {
-        out.push_str(&glib::markup_escape_text(&rest[..i]));
-        rest = &rest[i..];
-        let (open, close, tag) = if rest.starts_with("**") {
-            ("**", "**", "b")
-        } else if rest.starts_with('`') {
-            ("`", "`", "tt")
-        } else if rest.starts_with('*') {
-            ("*", "*", "i")
-        } else {
-            ("[", "](", "a")
-        };
-        let body = &rest[open.len()..];
-        match body.find(close).filter(|&n| n > 0) {
-            Some(n) if tag == "a" => {
-                let after = &body[n + 2..];
-                if let Some(end) = after.find(')') {
-                    let url = glib::markup_escape_text(&after[..end]);
-                    out.push_str(&format!("<a href=\"{url}\">{}</a>", glib::markup_escape_text(&body[..n])));
-                    rest = &after[end + 1..];
-                } else {
-                    out.push('[');
-                    rest = body;
-                }
-            }
-            Some(n) if tag != "a" => {
-                let text = glib::markup_escape_text(&body[..n]);
-                out.push_str(&format!("<{tag}>{text}</{tag}>"));
-                rest = &body[n + close.len()..];
-            }
-            _ => {
-                out.push_str(&glib::markup_escape_text(open));
-                rest = body;
-            }
-        }
-    }
-    out.push_str(&glib::markup_escape_text(rest));
-    out
-}
-
-enum Block {
-    /// Pango markup, one rendered line per source line.
-    Prose(String),
-    Code(String),
-    Table(Vec<Vec<String>>),
-}
-
-fn list_item(t: &str) -> Option<(String, &str)> {
-    if let Some(item) = t.strip_prefix("- ").or(t.strip_prefix("* ")).or(t.strip_prefix("+ ")) {
-        return Some(("•".into(), item));
-    }
-    let digits = t.bytes().take_while(u8::is_ascii_digit).count();
-    (digits > 0 && digits < 4)
-        .then(|| t[digits..].strip_prefix(". ").or(t[digits..].strip_prefix(") ")))
-        .flatten()
-        .map(|item| (format!("{}.", &t[..digits]), item))
-}
-
-/// Splits a message into prose (as Pango markup), fenced code (verbatim) and tables.
-fn blocks(text: &str) -> Vec<Block> {
-    let mut out: Vec<Block> = Vec::new();
-    let mut prose: Vec<String> = Vec::new();
-    let mut code: Option<Vec<&str>> = None;
-    let mut table: Vec<Vec<String>> = Vec::new();
-    let flush = |out: &mut Vec<Block>, prose: &mut Vec<String>, table: &mut Vec<Vec<String>>| {
-        while prose.last().is_some_and(String::is_empty) {
-            prose.pop();
-        }
-        if !prose.is_empty() {
-            out.push(Block::Prose(prose.join("\n")));
-            prose.clear();
-        }
-        if !table.is_empty() {
-            out.push(Block::Table(std::mem::take(table)));
-        }
-    };
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            match code.take() {
-                Some(block) => out.push(Block::Code(block.join("\n"))),
-                None => {
-                    flush(&mut out, &mut prose, &mut table);
-                    code = Some(Vec::new());
-                }
-            }
-            continue;
-        }
-        if let Some(block) = code.as_mut() {
-            block.push(line);
-            continue;
-        }
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('|') {
-            let cells: Vec<&str> = trimmed.trim_end().trim_matches('|').split('|').map(str::trim).collect();
-            if cells.iter().all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' '))) {
-                continue;
-            }
-            if table.is_empty() {
-                flush(&mut out, &mut prose, &mut table);
-            }
-            table.push(cells.iter().map(|c| inline(c)).collect());
-            continue;
-        }
-        if !table.is_empty() {
-            flush(&mut out, &mut prose, &mut table);
-        }
-        let indent = if line.len() - trimmed.len() >= 2 { "      " } else { "" };
-        let markup = if let Some(h) = trimmed.strip_prefix("### ").or(trimmed.strip_prefix("## ")).or(trimmed.strip_prefix("# ")) {
-            format!("<b><big>{}</big></b>", inline(h))
-        } else if let Some((mark, item)) = list_item(trimmed) {
-            format!("{indent}  <b>{mark}</b>  {}", inline(item))
-        } else if trimmed.len() >= 3 && trimmed.chars().all(|c| matches!(c, '-' | '*' | '_')) {
-            "<span alpha=\"40%\">────────────</span>".into()
-        } else if let Some(q) = trimmed.strip_prefix("> ").or(trimmed.strip_prefix('>')) {
-            format!("<span alpha=\"70%\">▎ <i>{}</i></span>", inline(q))
-        } else {
-            inline(line.trim_end())
-        };
-        if markup.is_empty() && prose.last().is_some_and(String::is_empty) {
-            continue;
-        }
-        prose.push(markup);
-    }
-    if let Some(block) = code {
-        out.push(Block::Code(block.join("\n")));
-    }
-    flush(&mut out, &mut prose, &mut table);
-    out
-}
-
 /// Where the collapsed view starts: the last agent answer (and what followed it), or
 /// the last prompt while no answer exists yet.
 fn cut(messages: &[(String, String)]) -> usize {
@@ -195,49 +61,129 @@ fn text_label(markup: Option<&str>, plain: &str, class: &str) -> gtk::Label {
     label
 }
 
-/// One message as a widget: a bubble whose prose renders the agent's markdown and
-/// whose code blocks keep their own monospace panel; tool calls are a slim line.
-fn bubble(role: &str, text: &str) -> gtk::Widget {
+/// Markdown blocks as widgets: prose and headings are wrapping labels, lists hang
+/// their text after the marker, quotes and code get their own panel, tables a grid.
+fn render_blocks(column: &gtk::Box, blocks: &[Block], ctx: &Render, depth: usize) {
+    for block in blocks {
+        let widget: gtk::Widget = match block {
+            Block::Para(markup) => {
+                let label = text_label(Some(markup), "", "cv-text");
+                label.set_max_width_chars(ctx.width);
+                label.upcast()
+            }
+            Block::Heading(level, markup) => {
+                let label = text_label(Some(markup), "", "cv-h");
+                label.style_context().add_class(&format!("cv-h{}", (*level).min(4)));
+                label.set_max_width_chars(ctx.width);
+                label.upcast()
+            }
+            Block::Code { lang, body } => {
+                let panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                panel.style_context().add_class("cv-codeblock");
+                if !lang.is_empty() {
+                    let name = gtk::Label::new(Some(lang));
+                    name.style_context().add_class("cv-lang");
+                    name.set_xalign(0.);
+                    panel.pack_start(&name, false, false, 0);
+                }
+                let markup = chat_markdown::highlight(lang, body, &ctx.palette);
+                let code = text_label(Some(&markup), "", "cv-code");
+                code.set_max_width_chars(ctx.width);
+                panel.pack_start(&code, false, false, 0);
+                panel.upcast()
+            }
+            Block::Quote(inner) => {
+                let quote = gtk::Box::new(gtk::Orientation::Vertical, 6);
+                quote.style_context().add_class("cv-quote");
+                render_blocks(&quote, inner, ctx, depth);
+                quote.upcast()
+            }
+            Block::List { start, items } => {
+                let list = gtk::Box::new(gtk::Orientation::Vertical, 3);
+                list.style_context().add_class("cv-ul");
+                let digits = start.map_or(0, |n| (n + items.len() as u64).to_string().len());
+                for (index, item) in items.iter().enumerate() {
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                    let mark = match (item.task, start) {
+                        (Some(true), _) => "☑".to_owned(),
+                        (Some(false), _) => "☐".to_owned(),
+                        (None, Some(n)) => format!("{}.", n + index as u64),
+                        (None, None) => ["•", "◦", "▪"][depth % 3].to_owned(),
+                    };
+                    let marker = gtk::Label::new(Some(&mark));
+                    marker.style_context().add_class("cv-mark");
+                    if item.task == Some(true) {
+                        marker.style_context().add_class("cv-done");
+                    }
+                    marker.set_xalign(1.);
+                    marker.set_yalign(0.);
+                    marker.set_width_chars(if start.is_some() { digits as i32 + 1 } else { 2 });
+                    let body = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                    render_blocks(&body, &item.blocks, ctx, depth + 1);
+                    row.pack_start(&marker, false, false, 0);
+                    row.pack_start(&body, true, true, 0);
+                    list.pack_start(&row, false, false, 0);
+                }
+                list.upcast()
+            }
+            Block::Table { align, rows } => {
+                let grid = gtk::Grid::new();
+                grid.style_context().add_class("cv-table");
+                grid.set_halign(gtk::Align::Start);
+                let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+                let max = (ctx.width as usize / columns).clamp(12, 60) as i32;
+                for (y, row) in rows.iter().enumerate() {
+                    for (x, cell) in row.iter().enumerate() {
+                        let label = text_label(Some(cell), "", "cv-cell");
+                        if y == 0 {
+                            label.style_context().add_class("cv-th");
+                        }
+                        let xalign = match align.get(x) {
+                            Some(chat_markdown::Align::Center) => 0.5,
+                            Some(chat_markdown::Align::Right) => 1.,
+                            _ => 0.,
+                        };
+                        label.set_xalign(xalign);
+                        label.set_yalign(0.);
+                        label.set_max_width_chars(max);
+                        label.set_hexpand(true);
+                        grid.attach(&label, x as i32, y as i32, 1, 1);
+                    }
+                }
+                grid.upcast()
+            }
+            Block::Rule => {
+                let rule = gtk::Separator::new(gtk::Orientation::Horizontal);
+                rule.style_context().add_class("cv-rule");
+                rule.upcast()
+            }
+        };
+        column.pack_start(&widget, false, false, 0);
+    }
+}
+
+struct Render {
+    palette: chat_markdown::CodePalette,
+    width: i32,
+}
+
+/// One message as a widget: a bubble with the agent's markdown rendered; tool calls are
+/// a slim line.
+fn bubble(role: &str, text: &str, palette: &chat_markdown::CodePalette) -> gtk::Widget {
     if role == "t" {
         let label = text_label(None, text, "cv-tool");
         label.set_max_width_chars(140);
         return label.upcast();
     }
     let me = role == "u";
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
     column.style_context().add_class(if me { "cv-me" } else { "cv-ai" });
     column.set_halign(if me { gtk::Align::End } else { gtk::Align::Fill });
-    for block in blocks(text) {
-        let widget: gtk::Widget = match block {
-            Block::Prose(markup) => {
-                let label = text_label(Some(&markup), "", "cv-text");
-                label.set_max_width_chars(if me { 72 } else { 110 });
-                label.upcast()
-            }
-            Block::Code(body) => {
-                let label = text_label(None, &body, "cv-code");
-                label.set_max_width_chars(110);
-                label.set_line_wrap_mode(pango::WrapMode::Char);
-                label.upcast()
-            }
-            Block::Table(rows) => {
-                let grid = gtk::Grid::new();
-                grid.style_context().add_class("cv-table");
-                grid.set_column_homogeneous(true);
-                for (y, row) in rows.iter().enumerate() {
-                    for (x, cell) in row.iter().enumerate() {
-                        let markup = if y == 0 { format!("<b>{cell}</b>") } else { cell.clone() };
-                        let label = text_label(Some(&markup), "", "cv-cell");
-                        label.set_max_width_chars(28);
-                        label.set_yalign(0.);
-                        grid.attach(&label, x as i32, y as i32, 1, 1);
-                    }
-                }
-                grid.upcast()
-            }
-        };
-        column.pack_start(&widget, false, false, 0);
-    }
+    let ctx = Render {
+        palette: palette.clone(),
+        width: if me { 72 } else { 110 },
+    };
+    render_blocks(&column, &chat_markdown::parse(text), &ctx, 0);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     row.style_context().add_class(if me { "cv-row-me" } else { "cv-row-ai" });
     if me {
@@ -246,6 +192,43 @@ fn bubble(role: &str, text: &str) -> gtk::Widget {
         row.pack_start(&column, true, true, 0);
     }
     row.upcast()
+}
+
+/// Code colors from a theme: its ANSI palette, like the terminal.
+fn code_palette(theme: Option<&crate::theme::ThemeTokens>) -> chat_markdown::CodePalette {
+    let fallback;
+    let theme = match theme {
+        Some(theme) => theme,
+        None => {
+            fallback = crate::theme::desktop_theme("noche", &Value::Null);
+            match &fallback {
+                Some(theme) => theme,
+                None => return chat_markdown::CodePalette::from_ansi(&[], "#7f848e", "#d4d4d4", "#0b0f17"),
+            }
+        }
+    };
+    let token = |name: &str, fallback: &'static str| {
+        theme.values.get(name).and_then(Value::as_str).unwrap_or(fallback).to_owned()
+    };
+    // Code blocks sit on the theme background (`.cv-codeblock`).
+    chat_markdown::CodePalette::from_ansi(&theme.ansi, &token("faint", "#7f848e"), &token("text", "#d4d4d4"), &token("bg", "#0b0f17"))
+}
+
+/// The message list exactly as the chat view draws it, for off-screen checks.
+pub fn preview(messages: &[(String, String)], theme: Option<&crate::theme::ThemeTokens>) -> gtk::Widget {
+    let palette = code_palette(theme);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.style_context().add_class("cv-root");
+    let feed = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    feed.style_context().add_class("cv-feed");
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    list.style_context().add_class("cv-list");
+    for (role, text) in messages {
+        list.pack_start(&bubble(role, text, &palette), false, false, 0);
+    }
+    feed.pack_start(&list, false, false, 0);
+    root.pack_start(&feed, true, true, 0);
+    root.upcast()
 }
 
 impl App {
@@ -475,7 +458,7 @@ impl App {
                         for child in view.list.children() {
                             view.list.remove(&child);
                         }
-                        view.list.pack_start(&bubble("t", "Sin conversación de Claude o Codex en esta sesión. Usa la terminal."), false, false, 0);
+                        view.list.pack_start(&bubble("t", "Sin conversación de Claude o Codex en esta sesión. Usa la terminal.", &app.chat_palette()), false, false, 0);
                         view.list.show_all();
                     }
                     return;
@@ -493,7 +476,11 @@ impl App {
     }
     /// Draws the visible slice (the last answer, or everything when expanded), rebuilding
     /// only from the first message that changed.
+    fn chat_palette(&self) -> chat_markdown::CodePalette {
+        code_palette(self.applied_theme.borrow().as_ref())
+    }
     fn chat_draw(&self, first: bool) {
+        let palette = self.chat_palette();
         let Some(view) = &*self.chat.view.borrow() else { return };
         let adj = view.scroll.vadjustment();
         let from_bottom = adj.upper() - adj.value();
@@ -513,11 +500,11 @@ impl App {
             view.list.remove(child);
         }
         if slice.is_empty() {
-            view.list.pack_start(&bubble("t", "Sin conversación todavía. Escribe abajo o vuelve a la terminal."), false, false, 0);
+            view.list.pack_start(&bubble("t", "Sin conversación todavía. Escribe abajo o vuelve a la terminal.", &palette), false, false, 0);
             shown.clear();
         } else {
             for (role, text) in &slice[keep..] {
-                view.list.pack_start(&bubble(role, text), false, false, 0);
+                view.list.pack_start(&bubble(role, text, &palette), false, false, 0);
             }
             *shown = slice.to_vec();
         }
@@ -558,7 +545,7 @@ impl App {
                 return;
             }
             buffer.set_text("");
-            let pending = bubble("u", &text);
+            let pending = bubble("u", &text, &self.chat_palette());
             pending.set_opacity(0.6);
             view.list.pack_start(&pending, false, false, 0);
             // The pending bubble breaks the list↔shown pairing, so the next draw rebuilds.
@@ -603,24 +590,6 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn markdown_becomes_escaped_pango() {
-        assert_eq!(inline("a **b** `c<d>` *e*"), "a <b>b</b> <tt>c&lt;d&gt;</tt> <i>e</i>");
-        assert_eq!(inline("[doc](http://x/?a=1&b=2)"), "<a href=\"http://x/?a=1&amp;b=2\">doc</a>");
-        assert_eq!(inline("2 * 3 < 4"), "2 * 3 &lt; 4");
-        assert_eq!(inline("unclosed `tick"), "unclosed `tick");
-    }
-
-    #[test]
-    fn markdown_splits_into_prose_code_and_tables() {
-        let parts = blocks("# Plan\n- uno\n2. dos\n```rust\nlet x = 1 < 2;\n```\n| a | b |\n|---|---|\n| 1 | `2` |\nfin");
-        assert_eq!(parts.len(), 4);
-        assert!(matches!(&parts[0], Block::Prose(p) if p == "<b><big>Plan</big></b>\n  <b>•</b>  uno\n  <b>2.</b>  dos"));
-        assert!(matches!(&parts[1], Block::Code(c) if c == "let x = 1 < 2;"));
-        assert!(matches!(&parts[2], Block::Table(t) if t == &vec![vec!["a".to_owned(), "b".to_owned()], vec!["1".to_owned(), "<tt>2</tt>".to_owned()]]));
-        assert!(matches!(&parts[3], Block::Prose(p) if p == "fin"));
-    }
 
     #[test]
     fn collapsed_view_starts_at_the_last_answer() {

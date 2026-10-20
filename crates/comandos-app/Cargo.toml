@@ -39,6 +39,7 @@ pango = "=0.18.3"
 pangocairo = "=0.18.0"
 gdk-pixbuf = "=0.18.5"
 pty-process = "=0.5.3"
+pulldown-cmark = { version = "=0.13.4", default-features = false }
 async-channel = "=2.5.0"
 ureq = { version = "=3.4.2", default-features = false }
 regex = "=1.13.1"
