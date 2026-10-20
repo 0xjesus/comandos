@@ -52,6 +52,24 @@ impl From<rusqlite::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// How long a background read waits for a mode change to release the lock.
+pub const BACKGROUND_READ_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// For worker threads and CLIs only: a writer owns the mode lock for tens of
+/// milliseconds, so the read is retried until `wait` runs out instead of failing at
+/// once. Request threads keep the nonblocking reads.
+pub fn wait_admitted<T>(wait: std::time::Duration, mut read: impl FnMut() -> Result<T>) -> Result<T> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match read() {
+            Err(Error::ModeBusy) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            result => return result,
+        }
+    }
+}
+
 // Joining a caller transaction must not commit or roll it back. Admission
 // reads pin its SQLite snapshot: a deferred transaction cannot upgrade that
 // snapshot after a mover commits (SQLITE_BUSY_SNAPSHOT). Owned

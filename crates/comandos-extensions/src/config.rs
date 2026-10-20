@@ -66,9 +66,8 @@ impl Drop for SyncLock {
 }
 pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
     if let Some((home, name)) = state_document(path) {
-        let bytes = comandos_store::domains::DomainStore { home: &home }
-            .document(&name, "extensions", path.to_owned())
-            .read_readonly()
+        let doc = comandos_store::domains::DomainStore { home: &home }.document(&name, "extensions", path.to_owned());
+        let bytes = comandos_store::wait_admitted(comandos_store::BACKGROUND_READ_WAIT, || doc.read_readonly())
             .map_err(|e| e.to_string())?;
         if bytes.as_ref().is_some_and(|b| b.len() > 16 * 1024 * 1024) {
             return Err(err(path));

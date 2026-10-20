@@ -124,7 +124,13 @@ impl Control {
         let home = self.home.clone();
         let path = self.enabled_file.clone();
         let live = self.live;
-        match tokio::task::spawn_blocking(move || enabled_domain(&home, &path, live)).await {
+        // A worker thread: a brief writer is waited out instead of logged as an error.
+        let read = move || {
+            comandos_store::wait_admitted(comandos_store::BACKGROUND_READ_WAIT, || {
+                enabled_domain(&home, &path, live)
+            })
+        };
+        match tokio::task::spawn_blocking(read).await {
             Ok(Ok(value)) => {
                 self.enabled.send_if_modified(|old| {
                     if *old == value {

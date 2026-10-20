@@ -196,3 +196,38 @@ fn cached_runtime_reader_reopens_a_replaced_database() {
     drop(new);
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn background_reads_wait_out_a_brief_mode_change() {
+    let home = std::env::temp_dir().join(format!("live-wait-{}", std::process::id()));
+    fs::DirBuilder::new().mode(0o700).create(&home).unwrap();
+    let path = unified::unified_path(&home);
+    let db = unified::open_unified(&path).unwrap();
+    let lock = comandos_store::files::FileLock::exclusive(
+        &path.with_file_name("comandos.sqlite3.domain-modes.lock"),
+    )
+    .unwrap();
+    let read = || comandos_store::domains::caller::read(&home, "ui-docs", |_, _| Ok(()));
+    // Request threads still fail at once...
+    assert!(matches!(read(), Err(comandos_store::Error::ModeBusy)));
+    // ...while a worker waits for the writer to finish.
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        drop(lock);
+    });
+    let waited = comandos_store::wait_admitted(std::time::Duration::from_secs(2), read);
+    assert!(waited.is_ok(), "{waited:?}");
+    release.join().unwrap();
+    // A writer that never leaves still ends in ModeBusy once the wait runs out.
+    let held = comandos_store::files::FileLock::exclusive(
+        &path.with_file_name("comandos.sqlite3.domain-modes.lock"),
+    )
+    .unwrap();
+    let start = std::time::Instant::now();
+    let busy = comandos_store::wait_admitted(std::time::Duration::from_millis(50), read);
+    assert!(matches!(busy, Err(comandos_store::Error::ModeBusy)));
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    drop(held);
+    drop(db);
+    fs::remove_dir_all(home).unwrap();
+}

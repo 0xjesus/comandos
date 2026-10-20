@@ -77,10 +77,13 @@ impl<C: StateConfig, G: StateGuard> StateFiles<C, G> {
             home: self.config.home(),
         }
         .document(key, domain, path.clone());
-        match (if self.config.mode() == RunMode::Live {
-            doc.read_live()
-        } else {
-            doc.read_readonly()
+        // Every caller reads from a worker job, so a brief writer is waited out.
+        match comandos_store::wait_admitted(comandos_store::BACKGROUND_READ_WAIT, || {
+            if self.config.mode() == RunMode::Live {
+                doc.read_live()
+            } else {
+                doc.read_readonly()
+            }
         })
         .map_err(|e| StateError::Io(path.clone(), e.to_string()))?
         {
