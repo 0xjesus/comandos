@@ -430,3 +430,15 @@ fn hover_follows_current_frame_bounds_without_changing_active_pane() {
     assert_eq!(layout.frame_at(170., 40.), None);
     assert_eq!(layout.frame_at(120., 40.), Some(1));
 }
+
+#[test]
+fn header_buttons_never_cover_the_model_name() {
+    use comandos_app::ui::overlays::{KeysFit, keys_fit};
+    // 42-column pane (~380 px): card text "Cobbler | fable-5-1" ~150 px, buttons 270 px.
+    assert_eq!(keys_fit(380, 150, 270, 60), KeysFit::Icons);
+    assert_eq!(keys_fit(1200, 220, 270, 60), KeysFit::Full);
+    assert_eq!(keys_fit(200, 170, 270, 60), KeysFit::Hidden, "sin espacio: se esconden");
+    // The edge: exactly the room left after the card text and its gap.
+    assert_eq!(keys_fit(500, 214, 270, 60), KeysFit::Full);
+    assert_eq!(keys_fit(500, 215, 270, 60), KeysFit::Icons);
+}

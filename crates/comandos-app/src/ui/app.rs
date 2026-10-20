@@ -2164,3 +2164,4 @@ mod app_t18_views;
 #[path = "app_chat.rs"]
 mod app_chat;
 pub use app_chat::preview as chat_preview;
+pub use app_t17_panes::header_preview;

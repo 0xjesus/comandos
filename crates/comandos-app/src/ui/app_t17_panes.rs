@@ -475,11 +475,13 @@ impl App {
             owner.widget.add_overlay(&card);
             owner.widget.set_overlay_pass_through(&card, true);
             card.show_all();
+            // Natural width of the card's text, before reposition stretches it.
+            let card_text = card.preferred_width().1;
             owner.pills.borrow_mut().push(PaneWidget {
                 pane: id.into(),
                 kind: "card",
                 widget: card.upcast(),
-                width: 0,
+                width: card_text,
             });
             let keys = gtk::Box::new(gtk::Orientation::Horizontal, 10);
             keys.style_context().add_class("pane-card-keys");
@@ -895,6 +897,39 @@ fn svg_image(name: &str, size: i32, color: &str) -> gtk::Widget {
         }
     }
     gtk::Label::new(Some("⬤")).upcast()
+}
+/// A pane header as the app draws it, `width` px wide, for the `header_shot` bench:
+/// the same card, the same buttons and the same fitting as `place_pane_pills`.
+pub fn header_preview(pane: &Value, title: &str, account: &str, width: i32) -> gtk::Widget {
+    let fg = "#ECECEC";
+    let area = gtk::Overlay::new();
+    let floor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    floor.set_size_request(width, 34);
+    area.add(&floor);
+    let card = pane_card(pane, title, fg);
+    card.set_halign(gtk::Align::Start);
+    card.set_valign(gtk::Align::Start);
+    card.show_all();
+    let card_text = card.preferred_width().1;
+    card.set_size_request(width, 30);
+    area.add_overlay(&card);
+    let keys = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    keys.style_context().add_class("pane-card-keys");
+    keys.pack_start(&card_button("user", &format!("Cuenta: {account}"), "", fg), false, false, 0);
+    keys.pack_start(&card_button("ia-spark", "MCPs · Skills", "", fg), false, false, 0);
+    keys.set_halign(gtk::Align::Start);
+    keys.set_valign(gtk::Align::Start);
+    keys.show_all();
+    let full = keys.preferred_width().1;
+    area.add_overlay(&keys);
+    match overlays::fit_keys(keys.upcast_ref(), width, card_text, full) {
+        Some(used) => {
+            keys.set_margin_start((width - used - 8).max(0));
+            keys.set_margin_top(4);
+        }
+        None => keys.hide(),
+    }
+    area.upcast()
 }
 fn card_button(icon: &str, text: &str, tooltip: &str, fg: &str) -> gtk::Button {
     let button = gtk::Button::new();

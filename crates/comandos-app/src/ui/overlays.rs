@@ -432,6 +432,61 @@ pub fn card_rect(row: (f64, f64, f64, f64), cell_h: f64) -> (i32, i32, i32, i32)
         ((rail + cell_h) as i32 - top).max(18),
     )
 }
+/// How the right-hand buttons of a pane header (Cuenta, MCPs · Skills) fit next to
+/// the card's own text: with labels, as icons only, or not at all. In a narrow pane
+/// they used to be drawn on top of the model name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeysFit {
+    Full,
+    Icons,
+    Hidden,
+}
+pub fn keys_fit(width: i32, card_text: i32, full: i32, icons: i32) -> KeysFit {
+    let room = width - card_text - 16;
+    if full <= room {
+        KeysFit::Full
+    } else if icons <= room {
+        KeysFit::Icons
+    } else {
+        KeysFit::Hidden
+    }
+}
+/// Fits a header's button row (natural width `full`) into a pane `width` px wide whose
+/// card text takes `card_text`: drops the labels when needed. The width it uses, or
+/// `None` when not even the icons fit.
+pub fn fit_keys(keys: &gtk::Widget, width: i32, card_text: i32, full: i32) -> Option<i32> {
+    set_key_labels(keys, false);
+    let icons = keys.preferred_width().1;
+    let fit = keys_fit(width, card_text, full, icons);
+    set_key_labels(keys, fit == KeysFit::Full);
+    // A later show_all() on the pane must not bring back what did not fit.
+    keys.set_no_show_all(fit == KeysFit::Hidden);
+    keys.set_visible(fit != KeysFit::Hidden);
+    match fit {
+        KeysFit::Full => Some(full),
+        KeysFit::Icons => Some(icons),
+        KeysFit::Hidden => None,
+    }
+}
+/// Shows or hides the text of every button in a header's button row.
+fn set_key_labels(keys: &gtk::Widget, visible: bool) {
+    let Some(row) = keys.downcast_ref::<gtk::Box>() else { return };
+    for button in row.children() {
+        let Some(content) = button
+            .downcast_ref::<gtk::Bin>()
+            .and_then(gtk::prelude::BinExt::child)
+            .and_then(|c| c.downcast::<gtk::Box>().ok())
+        else {
+            continue;
+        };
+        for part in content.children() {
+            if part.is::<gtk::Label>() {
+                part.set_no_show_all(!visible);
+                part.set_visible(visible);
+            }
+        }
+    }
+}
 pub fn grip_rect(g: &Gutter) -> (i32, i32, i32, i32) {
     if g.orientation == "v" {
         (
@@ -657,8 +712,18 @@ impl PaneOverlay {
                     pill.widget.set_margin_top(y.max(0));
                 }
                 "keys" => {
+                    let card_text = self
+                        .pills
+                        .borrow()
+                        .iter()
+                        .find(|p| p.kind == "card" && p.pane == pill.pane)
+                        .map_or(0, |p| p.width);
+                    let Some(used) = fit_keys(&pill.widget, w, card_text, pill.width) else {
+                        pill.widget.hide();
+                        continue;
+                    };
                     pill.widget
-                        .set_margin_start(x.max(x + w - pill.width - 8).max(0));
+                        .set_margin_start(x.max(x + w - used - 8).max(0));
                     pill.widget
                         .set_margin_top((y + (h - 22).max(0) / 2 - 1).max(0));
                 }
