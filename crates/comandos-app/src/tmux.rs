@@ -554,11 +554,20 @@ impl TmuxCtl {
     /// Native interactive attach is unavailable in Shadow: even ignore-size
     /// changes a window when it is the only client. Shadow uses captures.
     pub fn attach_argv(&self, session: &str) -> Vec<String> {
+        self.attach_with(session, "")
+    }
+
+    /// For overview tiles: the client never sizes the window (`ignore-size`), so a
+    /// small tile shows part of the window instead of shrinking it for every client.
+    pub fn viewer_attach_argv(&self, session: &str) -> Vec<String> {
+        self.attach_with(session, "-f ignore-size ")
+    }
+
+    fn attach_with(&self, session: &str, flags: &str) -> Vec<String> {
         if self.mode == RunMode::Shadow {
             return Vec::new();
         }
         let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
-        let flags = "";
         let sandbox_prefix = self.sandbox_home.as_ref().map_or_else(String::new, |home| format!(
             "env -i HOME={} PATH=/usr/bin:/bin SHELL=/bin/sh TERM=xterm-256color XDG_CONFIG_HOME={} ",
             quote(&home.display().to_string()), quote(&home.join(".config").display().to_string())

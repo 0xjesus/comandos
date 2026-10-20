@@ -9,6 +9,14 @@ pub const SETTLE_CAP_MS: u64 = 1500;
 pub const RESIZE_QUIET_MS: u64 = 180;
 /// `child-exited` → `GLib.timeout_add(800, spawn)` (884).
 pub const RESPAWN_MS: u64 = 800;
+/// Smallest size a view may impose on a shared tmux window. With `window-size latest`
+/// a tiny view (a mosaic tile, a panel mid-animation, a hidden frame) shrank the window
+/// of every client to a few columns and Claude Code reprinted the whole conversation
+/// one letter per line into the history.
+pub const SHARED_MIN: (u16, u16) = (20, 5);
+pub fn fits_shared_window((cols, rows): (u16, u16)) -> bool {
+    cols >= SHARED_MIN.0 && rows >= SHARED_MIN.1
+}
 
 #[derive(Debug, Clone)]
 pub struct Settle {

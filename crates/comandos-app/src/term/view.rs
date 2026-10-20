@@ -5,7 +5,10 @@ use super::{
     paint::{CellGeom, FrameCache, LineKind, PaintOp},
     pty::{DrainOutcome, PtyDrain, PtyError, PtySession},
     schedule::PaintSchedule,
-    settle::{RESIZE_QUIET_MS, RESPAWN_MS, SETTLE_CAP_MS, SETTLE_QUIET_MS, Settle, initial_size},
+    settle::{
+        RESIZE_QUIET_MS, RESPAWN_MS, SETTLE_CAP_MS, SETTLE_QUIET_MS, Settle, fits_shared_window,
+        initial_size,
+    },
 };
 use crate::config::RunMode;
 use glib::{ControlFlow, IOCondition, SourceId};
@@ -536,6 +539,11 @@ impl Inner {
         }
         self.model.borrow_mut().resize_at = None;
         let (c, r) = self.dimensions();
+        // Too small to read: keep the size the window already has and clip the
+        // drawing, instead of shrinking the tmux window for every client.
+        if self.options.session.is_some() && !fits_shared_window((c, r)) {
+            return;
+        }
         if self.model.borrow().engine.size() != (c, r) {
             let _ = self.resize(c, r);
         }
@@ -549,7 +557,9 @@ impl Inner {
         let m = self.model.borrow();
         if let Some(pty) = &m.pty {
             let (cols, rows) = m.engine.size();
-            let _ = pty.claim_size(cols, rows);
+            if fits_shared_window((cols, rows)) {
+                let _ = pty.claim_size(cols, rows);
+            }
         }
     }
     fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
@@ -575,7 +585,10 @@ impl Inner {
         if let Some(before) = &self.options.before_spawn {
             before().map_err(PtyError::Spawn)?;
         }
-        let (cols, rows) = self.dimensions();
+        let (mut cols, mut rows) = self.dimensions();
+        if self.options.session.is_some() && !fits_shared_window((cols, rows)) {
+            (cols, rows) = self.options.tmux_size.unwrap_or((80, 24));
+        }
         let p = PtySession::spawn_with_env(
             &self.options.argv,
             cols,
@@ -1551,11 +1564,12 @@ pub fn rasterize_png(
     let (wu, hu) = (w as usize, h as usize);
     let data = surface.data().map_err(|e| e.to_string())?;
     let mut rgb = Vec::with_capacity(wu * hu * 3);
-    for y in 0..hu {
-        for x in 0..wu {
-            // Rgb24 is native-endian xRGB: B, G, R, x on little endian.
-            let p = &data[y * stride + x * 4..][..4];
-            rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+    for row in data.chunks(stride).take(hu) {
+        // Rgb24 is native-endian xRGB: B, G, R, x on little endian.
+        for p in row.chunks_exact(4).take(wu) {
+            if let &[b, g, r, _] = p {
+                rgb.extend_from_slice(&[r, g, b]);
+            }
         }
     }
     let pixbuf = gdk_pixbuf::Pixbuf::from_mut_slice(

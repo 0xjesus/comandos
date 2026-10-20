@@ -327,8 +327,13 @@ where
                 Err(error) => return Err(error),
             };
             let (master, slave) = pty_process::open().map_err(io::Error::other)?;
+            let (cols, rows) = if fits_shared_window(init.cols, init.rows) {
+                (init.cols, init.rows)
+            } else {
+                (80, 24)
+            };
             master
-                .resize(pty_process::Size::new(init.rows, init.cols))
+                .resize(pty_process::Size::new(rows, cols))
                 .map_err(io::Error::other)?;
             let spawned = target
                 .pty_command(command.command.as_ref())?
@@ -498,6 +503,12 @@ struct InputWriter {
     skip_lf: bool,
     ready: Option<tokio::sync::oneshot::Sender<()>>,
 }
+/// With `window-size latest` the newest client sizes the tmux window for everyone:
+/// a page measured while collapsed or hidden must not shrink it to a few columns,
+/// where Claude Code reprints the conversation one letter per line.
+pub(crate) fn fits_shared_window(cols: u16, rows: u16) -> bool {
+    cols >= 20 && rows >= 5
+}
 impl InputWriter {
     fn start(mut pty: pty_process::OwnedWritePty, wait_ready: bool) -> Self {
         let (ready, ready_rx) = tokio::sync::oneshot::channel();
@@ -514,7 +525,7 @@ impl InputWriter {
             while let Some(queued) = rx.recv().await {
                 match queued.msg {
                     ClientMsg::Input(bytes) => pty.write_all(&bytes).await?,
-                    ClientMsg::Resize { cols, rows } => {
+                    ClientMsg::Resize { cols, rows } if fits_shared_window(cols, rows) => {
                         flip = !flip;
                         pty.resize(pty_process::Size::new_with_pixel(rows, cols, u16::from(flip), 0))
                             .map_err(io::Error::other)?
@@ -613,4 +624,16 @@ async fn input(
         }
     }
     Ok(true)
+}
+#[cfg(test)]
+mod tests {
+    use super::fits_shared_window;
+    #[test]
+    fn a_collapsed_page_never_sizes_the_shared_window() {
+        assert!(!fits_shared_window(2, 1), "xterm fit on a hidden frame");
+        assert!(!fits_shared_window(8, 30));
+        assert!(!fits_shared_window(120, 4));
+        assert!(fits_shared_window(20, 5));
+        assert!(fits_shared_window(41, 20), "a phone still takes the window");
+    }
 }

@@ -102,6 +102,7 @@ fn all_panes_are_captured_without_clients_geometry_environment_or_buffer_writes(
     assert!(engine.drain().replies.is_empty());
     assert_eq!(server_state(&f), before);
     assert!(f.ctl.attach_argv("big").is_empty());
+    assert!(f.ctl.viewer_attach_argv("big").is_empty(), "las miniaturas tampoco se enganchan en Sombra");
     // Local resizing of an unrelated real PTY cannot feed back into the source.
     let p = comandos_app::term::pty::PtySession::spawn_with_env(
         &["/bin/cat".into()],

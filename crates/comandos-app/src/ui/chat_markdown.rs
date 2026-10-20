@@ -288,11 +288,11 @@ impl Builder {
     }
 
     fn event(&mut self, event: Event) {
-        if let Some((_, body)) = &mut self.code {
-            if let Event::Text(text) = &event {
-                body.push_str(text);
-                return;
-            }
+        if let Some((_, body)) = &mut self.code
+            && let Event::Text(text) = &event
+        {
+            body.push_str(text);
+            return;
         }
         match event {
             Event::Start(tag) => self.start(tag),
@@ -414,10 +414,11 @@ pub fn contrast(a: &str, b: &str) -> f64 {
 /// Moves `color` toward `toward` until it reaches `ratio` against `bg`.
 fn readable(color: &str, toward: &str, bg: &str, ratio: f64) -> String {
     let (Some(c), Some(t)) = (rgb(color), rgb(toward)) else { return color.to_owned() };
+    let ([cr, cg, cb], [tr, tg, tb]) = (c, t);
     for step in 0..=10 {
         let k = f64::from(step) / 10.;
-        let mixed = [0, 1, 2].map(|i| (c[i] + (t[i] - c[i]) * k).round().clamp(0., 255.) as u8);
-        let hex = format!("#{:02x}{:02x}{:02x}", mixed[0], mixed[1], mixed[2]);
+        let mix = |a: f64, b: f64| (a + (b - a) * k).round().clamp(0., 255.) as u8;
+        let hex = format!("#{:02x}{:02x}{:02x}", mix(cr, tr), mix(cg, tg), mix(cb, tb));
         if contrast(&hex, bg) >= ratio {
             return hex;
         }
@@ -594,7 +595,7 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
             let word_start = i == 0 || chars.get(i - 1).is_some_and(|p| p.is_whitespace());
             if *mark != "#" || word_start {
                 flush(&mut out, &mut plain);
-                let end = chars[i..].iter().position(|&c| c == '\n').map_or(chars.len(), |n| i + n);
+                let end = chars.get(i..).unwrap_or_default().iter().position(|&c| c == '\n').map_or(chars.len(), |n| i + n);
                 span(&mut out, &pal.comment, &text(i, end));
                 i = end;
                 continue;
@@ -646,7 +647,7 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
             let end = k.min(chars.len());
             // A JSON key is the string right before a colon.
             let is_key = matches!(lang, Lang::Json)
-                && chars[end..].iter().find(|c| !c.is_whitespace()) == Some(&':');
+                && chars.get(end..).unwrap_or_default().iter().find(|c| !c.is_whitespace()) == Some(&':');
             span(&mut out, if is_key { &pal.function } else { &pal.string }, &text(i, end));
             i = end;
             line_start = false;
@@ -655,7 +656,7 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
         // Markup tags.
         if lang == Lang::Markup && c == '<' {
             flush(&mut out, &mut plain);
-            let end = chars[i..].iter().position(|&c| c == '>').map_or(chars.len(), |n| i + n + 1);
+            let end = chars.get(i..).unwrap_or_default().iter().position(|&c| c == '>').map_or(chars.len(), |n| i + n + 1);
             span(&mut out, &pal.keyword, &text(i, end));
             i = end;
             continue;
@@ -675,7 +676,7 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
         if lang == Lang::Shell && c == '$' {
             flush(&mut out, &mut plain);
             let end = if chars.get(i + 1) == Some(&'{') {
-                chars[i..].iter().position(|&c| c == '}').map_or(chars.len(), |n| i + n + 1)
+                chars.get(i..).unwrap_or_default().iter().position(|&c| c == '}').map_or(chars.len(), |n| i + n + 1)
             } else {
                 (i + 1..chars.len())
                     .find(|&k| !chars.get(k).is_some_and(|c| c.is_alphanumeric() || *c == '_'))
@@ -695,21 +696,20 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
                 })
                 .unwrap_or(chars.len());
             let word = text(i, end);
-            let next = chars[end..].iter().find(|c| **c != ' ').copied();
+            let next = chars.get(end..).unwrap_or_default().iter().find(|c| **c != ' ').copied();
             let is_kw = if lang == Lang::Sql {
                 words.contains(&word.to_lowercase().as_str())
             } else {
                 words.contains(&word.as_str())
             };
+            // Calls, shell commands, CSS properties and config keys.
+            let is_name = (lang == Lang::Shell && line_start)
+                || ((next == Some('(') || (lang == Lang::Rust && next == Some('!'))) && lang != Lang::Css)
+                || (lang == Lang::Css && next == Some(':'))
+                || (lang == Lang::Conf && line_start && matches!(next, Some('=' | ':')));
             let color = if is_kw {
                 Some(&pal.keyword)
-            } else if lang == Lang::Shell && line_start {
-                Some(&pal.function)
-            } else if (next == Some('(') || (lang == Lang::Rust && next == Some('!'))) && lang != Lang::Css {
-                Some(&pal.function)
-            } else if lang == Lang::Css && next == Some(':') {
-                Some(&pal.function)
-            } else if matches!(lang, Lang::Conf) && line_start && matches!(next, Some('=' | ':')) {
+            } else if is_name {
                 Some(&pal.function)
             } else if word.chars().next().is_some_and(char::is_uppercase)
                 && matches!(lang, Lang::Rust | Lang::Js | Lang::Go | Lang::CLike)
@@ -731,7 +731,7 @@ pub fn highlight(lang_name: &str, body: &str, pal: &CodePalette) -> String {
         }
         if c == '\n' {
             line_start = true;
-        } else if !c.is_whitespace() && !(lang == Lang::Shell && matches!(c, '|' | ';' | '&' | '(')) {
+        } else if !c.is_whitespace() && (lang != Lang::Shell || !matches!(c, '|' | ';' | '&' | '(')) {
             line_start = false;
         }
         plain.push(c);

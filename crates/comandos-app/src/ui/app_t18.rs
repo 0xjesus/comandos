@@ -447,7 +447,11 @@ impl App {
             .map(theme_palette)
             .ok_or("Theme unavailable")?;
         let term = TermView::new(TermOptions {
-            argv: self.tmux.attach_argv(session),
+            argv: if kind == "mosaic" {
+                self.tmux.viewer_attach_argv(session)
+            } else {
+                self.tmux.attach_argv(session)
+            },
             cwd: home.clone(),
             session: Some(session.into()),
             palette,

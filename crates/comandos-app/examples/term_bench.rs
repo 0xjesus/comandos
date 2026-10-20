@@ -109,10 +109,13 @@ fn main() {
         .map(|(c, r)| (c.parse().unwrap(), r.parse().unwrap()))
         .collect();
     let (c0, r0) = sizes[0];
-    let argv: Vec<String> = ["tmux", "-L", label, "attach", "-t", &format!("={session}")]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // BENCH_VIEWER=1 attaches like a mosaic tile (`-f ignore-size`).
+    let viewer = std::env::var_os("BENCH_VIEWER").is_some();
+    let mut argv: Vec<String> = ["tmux", "-L", label, "attach"].iter().map(|s| s.to_string()).collect();
+    if viewer {
+        argv.extend(["-f".into(), "ignore-size".into()]);
+    }
+    argv.extend(["-t".into(), format!("={session}")]);
     let mut pty = PtySession::spawn(&argv, c0, r0, std::path::Path::new("/tmp")).expect("spawn tmux client");
     let mut term = TermEngine::new(c0, r0, SCROLLBACK, palette(), false, Instant::now());
     pump(&mut pty, &mut term, Duration::from_millis(1500), Duration::from_secs(20));

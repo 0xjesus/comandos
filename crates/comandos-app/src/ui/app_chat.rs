@@ -108,7 +108,12 @@ fn render_blocks(column: &gtk::Box, blocks: &[Block], ctx: &Render, depth: usize
                         (Some(true), _) => "☑".to_owned(),
                         (Some(false), _) => "☐".to_owned(),
                         (None, Some(n)) => format!("{}.", n + index as u64),
-                        (None, None) => ["•", "◦", "▪"][depth % 3].to_owned(),
+                        (None, None) => match depth % 3 {
+                            0 => "•",
+                            1 => "◦",
+                            _ => "▪",
+                        }
+                        .to_owned(),
                     };
                     let marker = gtk::Label::new(Some(&mark));
                     marker.style_context().add_class("cv-mark");

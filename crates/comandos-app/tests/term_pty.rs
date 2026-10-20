@@ -203,6 +203,40 @@ fn claiming_takes_the_window_back_from_a_smaller_client() {
     drop(desktop);
 }
 
+#[test]
+fn overview_tiles_never_shrink_the_window() {
+    use comandos_app::term::settle::fits_shared_window;
+    let Some(f) = TestTmux::for_mode(RunMode::Sandbox) else {
+        return;
+    };
+    assert!(
+        f.tmux
+            .raw(&["set-option", "-g", "status", "off"])
+            .status
+            .success()
+    );
+    f.tmux.new_session("s1", 120, 40);
+    let spawn = |argv: Vec<String>, cols, rows| {
+        PtySession::spawn_with_env(&argv, cols, rows, f.config.home(), &f.env, true).unwrap()
+    };
+    let desktop = spawn(f.ctl.attach_argv("s1"), 120, 40);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40));
+    // A mosaic tile 8 columns wide: before, the window (and both of its panes)
+    // shrank to it and Claude Code reprinted everything one letter per line.
+    let tile = spawn(f.ctl.viewer_attach_argv("s1"), 8, 5);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40), "la miniatura no encoge la ventana");
+    tile.claim_size(8, 5).unwrap();
+    tile.resize(9, 4).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40), "ni al redimensionarse");
+    assert!(!fits_shared_window((8, 5)) && !fits_shared_window((80, 4)));
+    assert!(fits_shared_window((20, 5)) && fits_shared_window((41, 20)));
+    drop(tile);
+    drop(desktop);
+}
+
 fn confined_shell(script: &str) -> PtySession {
     let home = std::env::temp_dir().join(format!("app-pty-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();

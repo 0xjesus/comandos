@@ -786,6 +786,8 @@
     if (ws === null || ws.readyState !== 1) return;
     const cols = size && size.cols !== undefined ? size.cols : term.cols;
     const rows = size && size.rows !== undefined ? size.rows : term.rows;
+    // Medida con el marco oculto o colapsado: no encoger la ventana tmux de todos.
+    if (cols < 20 || rows < 5) return;
     const key = `${cols}x${rows}`;
     if (key === lastResize) return;
     lastResize = key;
