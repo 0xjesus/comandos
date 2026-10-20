@@ -165,6 +165,44 @@ fn pty_attach_keeps_session_size_until_settled() {
     );
 }
 
+#[test]
+fn claiming_takes_the_window_back_from_a_smaller_client() {
+    let Some(f) = TestTmux::for_mode(RunMode::Sandbox) else {
+        return;
+    };
+    assert!(
+        f.tmux
+            .raw(&["set-option", "-g", "status", "off"])
+            .status
+            .success()
+    );
+    f.tmux.new_session("s1", 120, 40);
+    let attach = |cols, rows| {
+        PtySession::spawn_with_env(&f.ctl.attach_argv("s1"), cols, rows, f.config.home(), &f.env, true)
+            .unwrap()
+    };
+    let desktop = attach(120, 40);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40));
+    // A phone on the same session: with window-size latest the window shrinks to it,
+    // and the desktop keeps showing text wrapped at the phone's width.
+    let phone = attach(41, 20);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (41, 20));
+    // Focusing the desktop tab nudges its client with the same rows and columns.
+    desktop.claim_size(120, 40).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40), "el escritorio recupera la ventana");
+    phone.claim_size(41, 20).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (41, 20), "el teléfono la recupera igual");
+    desktop.claim_size(120, 40).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(f.tmux.session_size("s1"), (120, 40), "cada empujón avisa, no solo el primero");
+    drop(phone);
+    drop(desktop);
+}
+
 fn confined_shell(script: &str) -> PtySession {
     let home = std::env::temp_dir().join(format!("app-pty-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();

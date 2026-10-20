@@ -32,6 +32,8 @@ pub struct PtySession {
     exit_reported: bool,
     pending: VecDeque<u8>,
     reaper: SyncSender<Child>,
+    /// Pixel width last reported with `claim_size`, flipped on every call.
+    nudge: std::cell::Cell<bool>,
 }
 
 impl PtySession {
@@ -96,6 +98,7 @@ impl PtySession {
             exit_reported: false,
             pending: VecDeque::new(),
             reaper,
+            nudge: std::cell::Cell::new(false),
         })
     }
 
@@ -142,8 +145,26 @@ impl PtySession {
         !self.pending.is_empty()
     }
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
+        self.nudge.set(false);
         self.pty
             .resize(pty_process::Size::new(rows.max(1), cols.max(2)))
+            .map_err(|e| PtyError::Io(e.to_string()))
+    }
+    /// With `window-size latest`, tmux sizes a window after the client that spoke last:
+    /// a phone attached to the same session leaves the desktop with the phone's width.
+    /// Changing only the pixel size makes the kernel signal the tmux client, which reports
+    /// its size again and takes the window back. Rows and columns stay the same, so
+    /// nothing else redraws when the window already had this size.
+    pub fn claim_size(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
+        let flip = !self.nudge.get();
+        self.nudge.set(flip);
+        self.pty
+            .resize(pty_process::Size::new_with_pixel(
+                rows.max(1),
+                cols.max(2),
+                u16::from(flip),
+                0,
+            ))
             .map_err(|e| PtyError::Io(e.to_string()))
     }
     pub fn raw_fd(&self) -> i32 {

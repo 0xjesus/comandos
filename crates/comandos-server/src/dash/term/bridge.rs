@@ -507,12 +507,18 @@ impl InputWriter {
             if wait_ready {
                 let _ = ready_rx.await;
             }
+            // The pixel width flips on every resize, so the kernel always signals the
+            // tmux client even when rows and columns did not change: the page sends its
+            // size when it is seen again and takes the window back from the desktop.
+            let mut flip = false;
             while let Some(queued) = rx.recv().await {
                 match queued.msg {
                     ClientMsg::Input(bytes) => pty.write_all(&bytes).await?,
-                    ClientMsg::Resize { cols, rows } => pty
-                        .resize(pty_process::Size::new(rows, cols))
-                        .map_err(io::Error::other)?,
+                    ClientMsg::Resize { cols, rows } => {
+                        flip = !flip;
+                        pty.resize(pty_process::Size::new_with_pixel(rows, cols, u16::from(flip), 0))
+                            .map_err(io::Error::other)?
+                    }
                     _ => {}
                 }
                 drop(queued._permit);

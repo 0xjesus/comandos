@@ -540,6 +540,18 @@ impl Inner {
             let _ = self.resize(c, r);
         }
     }
+    /// Seeing a tmux tab again takes its window back from any other client (phone,
+    /// another view) so the text wraps at this view's width without pressing a key.
+    fn claim_size(&self) {
+        if self.options.mode == RunMode::Shadow || self.options.session.is_none() {
+            return;
+        }
+        let m = self.model.borrow();
+        if let Some(pty) = &m.pty {
+            let (cols, rows) = m.engine.size();
+            let _ = pty.claim_size(cols, rows);
+        }
+    }
     fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
         if self.options.mode == RunMode::Shadow {
             return Ok(());
@@ -1105,6 +1117,7 @@ fn connect_events(inner: &Rc<Inner>) {
     inner.area.connect_map(move |_| {
         if let Some(inner) = weak.upgrade().filter(|inner| !inner.closed.get()) {
             inner.model.borrow_mut().schedule.reset_queued_paint();
+            inner.claim_size();
             inner.area.queue_draw();
             inner.arm();
         }
@@ -1176,6 +1189,7 @@ fn connect_events(inner: &Rc<Inner>) {
             if let Some(inner) = weak.upgrade() {
                 if on {
                     inner.im.focus_in();
+                    inner.claim_size();
                 } else {
                     inner.im.focus_out();
                 }
@@ -1477,6 +1491,85 @@ fn connect_events(inner: &Rc<Inner>) {
         glib::Propagation::Stop
     });
 }
+/// Paints a terminal into a PNG the way the widget does (same cell geometry, painter
+/// and cursor), without a window. Used to check by eye what the app would show.
+pub fn rasterize_png(
+    term: &TermEngine,
+    family: &str,
+    size_pt: f64,
+    padding: f64,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let (cols, rows) = term.size();
+    let probe = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1).map_err(|e| e.to_string())?;
+    let layout = pangocairo::functions::create_layout(&cairo::Context::new(&probe).map_err(|e| e.to_string())?);
+    let mut font = pango::FontDescription::new();
+    font.set_family(&format!(
+        "{family},JetBrainsMono Nerd Font,JetBrains Mono,DejaVu Sans Mono,Monospace"
+    ));
+    font.set_size((size_pt * f64::from(pango::SCALE)).round() as i32);
+    layout.set_font_description(Some(&font));
+    layout.set_text("M");
+    let (width, height) = layout.pixel_size();
+    let geom = CellGeom {
+        cell_w: f64::from(width.max(1)),
+        cell_h: (f64::from(height.max(1)) * 1.2).ceil(),
+        origin_x: padding + 2.,
+        origin_y: padding + 14.,
+        dpr: 1.,
+        font_size: size_pt * 96. / 72.,
+    };
+    let w = (geom.origin_x * 2. + geom.cell_w * f64::from(cols)).ceil() as i32;
+    let h = (geom.origin_y + padding + geom.cell_h * f64::from(rows)).ceil() as i32;
+    let mut surface = cairo::ImageSurface::create(cairo::Format::Rgb24, w, h).map_err(|e| e.to_string())?;
+    let context = cairo::Context::new(&surface).map_err(|e| e.to_string())?;
+    color(&context, term.palette().bg);
+    let _ = context.paint();
+    let layout = pangocairo::functions::create_layout(&context);
+    let mut text_painter = TextPainter::new(&layout, &font);
+    let mut frame = FrameCache::default();
+    frame.refresh(term, &geom);
+    for op in frame.ops() {
+        paint_op(&context, &mut text_painter, &geom, op);
+    }
+    let cursor = frame.cursor();
+    if cursor.visible {
+        color(&context, term.palette().cursor);
+        context.rectangle(
+            geom.origin_x + f64::from(cursor.col) * geom.cell_w,
+            geom.origin_y + cursor.line as f64 * geom.cell_h,
+            1.5,
+            geom.cell_h,
+        );
+        let _ = context.fill();
+    }
+    drop(text_painter);
+    drop(layout);
+    drop(context);
+    surface.flush();
+    let stride = usize::try_from(surface.stride()).map_err(|e| e.to_string())?;
+    let (wu, hu) = (w as usize, h as usize);
+    let data = surface.data().map_err(|e| e.to_string())?;
+    let mut rgb = Vec::with_capacity(wu * hu * 3);
+    for y in 0..hu {
+        for x in 0..wu {
+            // Rgb24 is native-endian xRGB: B, G, R, x on little endian.
+            let p = &data[y * stride + x * 4..][..4];
+            rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+        }
+    }
+    let pixbuf = gdk_pixbuf::Pixbuf::from_mut_slice(
+        rgb,
+        gdk_pixbuf::Colorspace::Rgb,
+        false,
+        8,
+        w,
+        h,
+        w * 3,
+    );
+    pixbuf.savev(path, "png", &[]).map_err(|e| e.to_string())
+}
+
 fn color(context: &cairo::Context, rgb: [u8; 3]) {
     context.set_source_rgb(
         f64::from(rgb[0]) / 255.,

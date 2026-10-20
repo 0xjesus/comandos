@@ -791,6 +791,11 @@
     lastResize = key;
     ws.send('1' + JSON.stringify({columns: cols, rows}));
   }
+  // tmux da la ventana al último cliente que habló (window-size latest): al volver a
+  // ver esta terminal se reenvía el tamaño para recuperarla del escritorio.
+  function claimSize() { lastResize = ''; sendResize(); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) claimSize(); });
+  window.addEventListener('focus', claimSize);
 
   function handleSocketMessage(data) {
     // Puede llegar como ArrayBuffer o string según el frame de ttyd.
