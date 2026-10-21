@@ -290,6 +290,63 @@ pub fn parse_pane_inventory(stdout: &str) -> Vec<PaneRow> {
     panes
 }
 
+const WRAPPER_SHELLS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "ksh"];
+
+/// What really runs in the foreground of a pane that tmux calls a shell.
+///
+/// tmux names a pane after the leader of the terminal's foreground group. A
+/// pane restored as `sh -il` → `sh -lc "claude …"` keeps that `sh` as leader
+/// while Claude runs inside the same group, so the pane looked like an idle
+/// shell («Iniciar IA aquí», no account card). This returns the first
+/// non-shell process of that group, named the way tmux names it (basename of
+/// `argv[0]`). A shell at its prompt (the group is the pane's own shell) or a
+/// suspended job keeps the tmux name.
+pub fn foreground_command(proc_root: &Path, pane_pid: i64, command: &str) -> String {
+    if !WRAPPER_SHELLS.contains(&command) || pane_pid <= 0 {
+        return command.to_owned();
+    }
+    let field = |pid: i64, index: usize| -> Option<i64> {
+        stat_fields(proc_root, &pid.to_string())?
+            .get(index)?
+            .parse()
+            .ok()
+    };
+    // After `)`: state, ppid, pgrp, session, tty_nr, tpgid.
+    let Some(group) = field(pane_pid, 5).filter(|g| *g > 0 && *g != pane_pid) else {
+        return command.to_owned();
+    };
+    let mut queue = std::collections::VecDeque::from([group]);
+    let mut seen = HashSet::new();
+    while let Some(pid) = queue.pop_front() {
+        if !seen.insert(pid) || seen.len() > 64 || field(pid, 2) != Some(group) {
+            continue;
+        }
+        let argv = proc_cmdline(proc_root, pid);
+        let Some(name) = argv.first().map(|a| basename(a).trim_start_matches('-')) else {
+            continue;
+        };
+        if !WRAPPER_SHELLS.contains(&name) {
+            return name.to_owned();
+        }
+        let children = fs::read_to_string(
+            proc_dir(proc_root, &pid.to_string())
+                .join("task")
+                .join(pid.to_string())
+                .join("children"),
+        )
+        .unwrap_or_default();
+        queue.extend(children.split_whitespace().filter_map(|c| c.parse::<i64>().ok()));
+    }
+    command.to_owned()
+}
+
+/// [`foreground_command`] for every row of a pane inventory.
+pub fn resolve_foreground(proc_root: &Path, panes: &mut [PaneRow]) {
+    for row in panes {
+        row.command = foreground_command(proc_root, row.pane_pid, &row.command);
+    }
+}
+
 /// `_tmux_process_owners`: pid → (índice de la fila del pane, profundidad).
 /// Con dos filas del mismo `pane_pid` gana la última, como el `dict` del Python.
 pub fn process_owners(
@@ -1008,5 +1065,58 @@ mod tests {
         );
         // 10, 5, 11, 13 y 14: el padre de 5 se pregunta una sola vez.
         assert_eq!(calls, 5);
+    }
+
+    /// Fake `/proc` entry: `stat` with pgrp/tpgid, `cmdline` and children.
+    fn fake_proc(root: &Path, pid: i64, pgrp: i64, tpgid: i64, argv: &[&str], children: &[i64]) {
+        let dir = root.join(pid.to_string());
+        fs::create_dir_all(dir.join("task").join(pid.to_string())).unwrap();
+        fs::write(
+            dir.join("stat"),
+            format!("{pid} (x) S 1 {pgrp} {pgrp} 34836 {tpgid} 0 0"),
+        )
+        .unwrap();
+        fs::write(dir.join("cmdline"), argv.join("\0") + "\0").unwrap();
+        let kids: Vec<String> = children.iter().map(i64::to_string).collect();
+        fs::write(
+            dir.join("task").join(pid.to_string()).join("children"),
+            kids.join(" ") + " ",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_restored_pane_names_the_agent_under_its_wrapper_shell() {
+        let root = std::env::temp_dir().join(format!("comandos-fg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // `sh -il` → `sh -lc "claude --resume …"` → claude, same foreground group.
+        fake_proc(&root, 100, 100, 101, &["/bin/sh", "-il"], &[101]);
+        fake_proc(&root, 101, 101, 101, &["/bin/sh", "-lc", "claude --resume x"], &[102]);
+        fake_proc(&root, 102, 101, 101, &["claude", "--resume", "x"], &[]);
+        assert_eq!(foreground_command(&root, 100, "sh"), "claude");
+        // A shell at its prompt keeps its name, even with a suspended agent.
+        fake_proc(&root, 200, 200, 200, &["-zsh"], &[201]);
+        fake_proc(&root, 201, 201, 200, &["claude"], &[]);
+        assert_eq!(foreground_command(&root, 200, "zsh"), "zsh");
+        // A pane whose foreground already is the agent is left alone.
+        assert_eq!(foreground_command(&root, 102, "claude"), "claude");
+        // Codex under node keeps the name tmux would give it.
+        fake_proc(&root, 300, 300, 301, &["/bin/sh", "-il"], &[301]);
+        fake_proc(&root, 301, 301, 301, &["/bin/sh", "-lc", "codex"], &[302]);
+        fake_proc(&root, 302, 301, 301, &["node", "/usr/bin/codex"], &[]);
+        let mut rows = vec![PaneRow {
+            session: "s".into(),
+            pane: "%1".into(),
+            pane_pid: 300,
+            command: "sh".into(),
+            cwd: "/".into(),
+            activity: 0.0,
+            pane_active: true,
+        }];
+        resolve_foreground(&root, &mut rows);
+        assert_eq!(rows[0].command, "node");
+        // No /proc entry (macOS, a pane that just died): unchanged.
+        assert_eq!(foreground_command(&root, 999, "sh"), "sh");
+        let _ = fs::remove_dir_all(&root);
     }
 }

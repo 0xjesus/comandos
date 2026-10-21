@@ -27,7 +27,7 @@ use comandos_core::{
     usage_state::{self, UsageError},
 };
 use comandos_runtime::{
-    agent_procs::{AgentMaps, PANE_FORMAT, PaneRow, parse_pane_inventory},
+    agent_procs::{self, AgentMaps, PANE_FORMAT, PaneRow, parse_pane_inventory},
     providers::{self, RegistryCache},
 };
 use comandos_store::usage_read::{self, ReadError};
@@ -560,11 +560,12 @@ async fn live_panes(native: &Native, now: i64) -> Result<Live, Fault> {
     );
     let sessions = sessions?;
     let listed = listed.map_err(|e| Fault::Error(e.uncaught()))?;
-    let panes = if listed.ok {
+    let mut panes = if listed.ok {
         parse_pane_inventory(&listed.stdout)
     } else {
         Vec::new()
     };
+    agent_procs::resolve_foreground(opts.proc_root.as_path(), &mut panes);
     let tmux_panes = listed.ok.then(|| {
         panes
             .iter()

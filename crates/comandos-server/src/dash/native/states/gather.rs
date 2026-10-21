@@ -258,11 +258,12 @@ async fn steps(native: &Native, phase: &mut &'static str) -> Result<States, Stat
         .run(&["list-panes", "-a", "-F", PANE_FORMAT])
         .await
         .map_err(|e| StateFault::from_tmux(&e))?;
-    let panes = if listed.ok {
+    let mut panes = if listed.ok {
         parse_pane_inventory(&listed.stdout)
     } else {
         Vec::new()
     };
+    agent_procs::resolve_foreground(opts.proc_root.as_path(), &mut panes);
     // 2. Escaneo bloqueante.
     *phase = "escaneo (registro, /proc, registros de estado, motor-results, tiers, pestañas)";
     let shared = native.states.shared.clone();

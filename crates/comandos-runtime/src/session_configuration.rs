@@ -371,11 +371,12 @@ pub fn agent_info_for_pane(env: &Env, pane: &str) -> Result<Option<Proc>, Fail> 
     let aliases = providers::process_aliases(&agents, &env.registry);
     let procs = agent_procs::agent_procs_for_agents(&env.proc_root, &aliases, &agents)?;
     let listed = env.tmux(&["list-panes", "-a", "-F", PANE_FORMAT])?;
-    let panes = if listed.returncode == 0 {
+    let mut panes = if listed.returncode == 0 {
         parse_pane_inventory(&listed.stdout)
     } else {
         Vec::new()
     };
+    agent_procs::resolve_foreground(env.proc_root.as_path(), &mut panes);
     let proc_root = env.proc_root.as_path();
     let mut parents: HashMap<i64, i64> = HashMap::new();
     let mut parent = |pid: i64| {

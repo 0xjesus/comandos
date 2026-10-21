@@ -93,6 +93,50 @@ fn geometry_parser_owns_real_tmux_command_height_and_active_fields() {
     assert!(parse_geometry("%1 0 bad 40 grok 29 1\n").is_err());
     assert!(parse_geometry("wrong 0 1 40 grok 29 1\n").is_err());
 }
+/// Restored panes run `sh -il` → `sh -lc "claude …"`: tmux calls them `sh`,
+/// and the header offered «Iniciar IA aquí» over a live Claude (21-oct).
+/// Private tmux server (`-L`), never the user's.
+#[test]
+fn a_wrapped_agent_is_not_mistaken_for_an_idle_shell() {
+    use comandos_app::ui::overlays::{PANE_FORMAT, parse_geometry};
+    use std::process::Command;
+    let label = format!("comandos-fg-{}", std::process::id());
+    let tmux = |args: &[&str]| {
+        Command::new("tmux")
+            .args(["-L", &label, "-f", "/dev/null"])
+            .args(args)
+            .output()
+            .expect("tmux")
+    };
+    assert!(tmux(&["new-session", "-d", "-s", "fg", "-x", "80", "-y", "24", "sh -i"]).status.success());
+    let read = || {
+        let out = tmux(&["list-panes", "-t", "=fg", "-F", PANE_FORMAT]);
+        parse_geometry(&String::from_utf8_lossy(&out.stdout)).unwrap()
+    };
+    let wait = |want: &str| {
+        for _ in 0..100 {
+            let panes = read();
+            if panes[0].command == want {
+                return panes;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        read()
+    };
+    assert_eq!(wait("sh")[0].command, "sh", "a shell at its prompt stays a shell");
+    tmux(&["send-keys", "-t", "=fg:", "sh -c 'sleep 30; true'", "Enter"]);
+    let tmux_name = || {
+        let out = tmux(&["display", "-p", "-t", "=fg:", "#{pane_current_command}"]);
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let panes = wait("sleep");
+    let seen_by_tmux = tmux_name();
+    let socket = tmux(&["display", "-p", "#{socket_path}"]);
+    tmux(&["kill-server"]);
+    let _ = std::fs::remove_file(String::from_utf8_lossy(&socket.stdout).trim());
+    assert_eq!(seen_by_tmux, "sh", "tmux itself names the wrapper");
+    assert_eq!(panes[0].command, "sleep", "the header sees what runs under it");
+}
 struct FakeGeometry {
     mode: comandos_app::config::RunMode,
     socket: std::path::PathBuf,

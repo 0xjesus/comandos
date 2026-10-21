@@ -57,7 +57,7 @@ pub struct PaneRecord {
     pub command: String,
     pub active: bool,
 }
-pub const PANE_FORMAT: &str = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_current_command} #{pane_height} #{pane_active}";
+pub const PANE_FORMAT: &str = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_current_command} #{pane_height} #{pane_active} #{pane_pid}";
 pub fn parse_geometry(raw: &str) -> Result<Vec<PaneRecord>, String> {
     if raw.len() > 1024 * 1024 {
         return Err("pane geometry exceeds 1 MiB".into());
@@ -88,7 +88,15 @@ pub fn parse_geometry(raw: &str) -> Result<Vec<PaneRecord>, String> {
                 width: number(3)?,
                 height: number(5)?,
             },
-            command: fields.get(4).copied().unwrap_or_default().to_string(),
+            // `sh -lc "claude …"` restored panes: name what runs in the foreground.
+            command: match fields.get(7).and_then(|p| p.parse::<i64>().ok()) {
+                Some(pid) => comandos_runtime::agent_procs::foreground_command(
+                    std::path::Path::new("/proc"),
+                    pid,
+                    fields.get(4).copied().unwrap_or_default(),
+                ),
+                None => fields.get(4).copied().unwrap_or_default().to_string(),
+            },
             active: fields.get(6).copied() == Some("1"),
         });
     }

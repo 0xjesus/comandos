@@ -409,11 +409,12 @@ pub async fn resolve_project_session(
         .run(&["list-panes", "-a", "-F", PANE_FORMAT])
         .await
         .map_err(|e| Fault::Error(e.uncaught()))?;
-    let panes = if listed.ok {
+    let mut panes = if listed.ok {
         parse_pane_inventory(&listed.stdout)
     } else {
         Vec::new()
     };
+    agent_procs::resolve_foreground(opts.proc_root.as_path(), &mut panes);
     let candidates = if procs.is_empty() {
         Vec::new()
     } else {
@@ -460,11 +461,12 @@ async fn live_agent_maps(native: &Native) -> Result<AgentMaps, Fault> {
         .run(&["list-panes", "-a", "-F", PANE_FORMAT])
         .await
         .map_err(|e| Fault::Error(e.uncaught()))?;
-    let panes = if listed.ok {
+    let mut panes = if listed.ok {
         parse_pane_inventory(&listed.stdout)
     } else {
         Vec::new()
     };
+    agent_procs::resolve_foreground(opts.proc_root.as_path(), &mut panes);
     if procs.is_empty() {
         return Ok(AgentMaps::default());
     }
