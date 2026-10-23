@@ -185,6 +185,8 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
         return error(StatusCode::BAD_REQUEST, "Invalid session");
     }
     let since = body.get("since").and_then(Value::as_str).unwrap_or("").to_owned();
+    // The pane the phone chose among a split; empty or gone falls back to the old order.
+    let wanted = body.get("pane").and_then(Value::as_str).unwrap_or("").to_owned();
     let Ok(_permit) = gate().try_acquire_owned() else {
         return error(StatusCode::TOO_MANY_REQUESTS, "Chat busy");
     };
@@ -210,8 +212,17 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
         return error(StatusCode::NOT_FOUND, "Session not found");
     }
     panes.sort_by_key(|p| !p.0);
-    let home = native.options().home.clone();
     let proc_root = native.options().proc_root.clone();
+    // Restored panes run `sh -lc "claude …"`: name what really runs there.
+    for pane in &mut panes {
+        if let Ok(pid) = pane.2.parse() {
+            pane.3 = comandos_runtime::agent_procs::foreground_command(&proc_root, pid, &pane.3);
+        }
+    }
+    if panes.iter().any(|p| p.1 == wanted) {
+        panes.retain(|p| p.1 == wanted);
+    }
+    let home = native.options().home.clone();
     let result = tokio::task::spawn_blocking(move || -> Value {
         let now = Instant::now();
         let mut found = None;
@@ -256,7 +267,8 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
             }
         }
         let Some((pane, path, agent)) = found else {
-            return json!({"ok":true,"agent":null,"messages":[]});
+            let pane = (panes.len() == 1).then(|| panes[0].1.clone());
+            return json!({"ok":true,"agent":null,"pane":pane,"messages":[]});
         };
         let Ok(meta) = std::fs::metadata(&path) else {
             return json!({"ok":true,"agent":null,"messages":[]});

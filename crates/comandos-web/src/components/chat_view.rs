@@ -10,7 +10,7 @@ pub use web::install;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{cut, working};
+use super::{PaneRow, choose, cut, pane_label, pane_number, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -43,9 +43,13 @@ struct Chat {
     age: Cell<f64>,
     /// Session whose name the header shows.
     titled: RefCell<String>,
+    /// Chips drawn in the dock (unchanged rows skip the DOM).
+    chips: RefCell<String>,
+    /// `session|pane` last focused in the terminal frame for this phone.
+    synced: RefCell<String>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
-const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
+const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
 const SKELETON: &str = "<div class=\"cv-skel\" role=\"status\" aria-label=\"Cargando conversación\"><i></i><i></i><i></i></div>";
 
 fn text(v: &JsValue) -> String {
@@ -87,6 +91,41 @@ fn dock_all() {
         let _ = post(&get(&get(&frames, &i.to_string()), "frame"), serde_json::from_str(DOCK).unwrap_or_default());
     }
 }
+/// The live panes of a session, in tmux order (`/states` rows, polled by the page).
+fn rows(session: &str) -> Vec<PaneRow> {
+    let state = invoke(&global("__comandosState"), &[]).unwrap_or_else(|_| global("S"));
+    let list = get(&state, "list");
+    let mut out: Vec<PaneRow> = Vec::new();
+    for i in 0..number(&get(&list, "length")) as u32 {
+        let it = get(&list, &i.to_string());
+        let pane = text(&get(&it, "pane"));
+        if text(&get(&it, "session")) != session
+            || pane.is_empty()
+            || !truthy(&get(&it, "alive"))
+            || out.iter().any(|r| r.pane == pane)
+        {
+            continue;
+        }
+        out.push(PaneRow {
+            pane,
+            agent: text(&get(&it, "agent")),
+            model: text(&get(&it, "model")),
+            status: text(&get(&it, "status")),
+            active: truthy(&get(&it, "paneActive")),
+        });
+    }
+    out.sort_by_key(|r| pane_number(&r.pane));
+    out
+}
+fn saved(session: &str) -> String {
+    comandos_web_dom::storage::get(&format!("comandos.pane.{session}")).unwrap_or_default()
+}
+fn save(session: &str, pane: &str) {
+    let _ = comandos_web_dom::storage::set(&format!("comandos.pane.{session}"), pane);
+}
+fn phone() -> bool {
+    global("innerWidth").as_f64().is_some_and(|w| w <= 747.)
+}
 fn step(delta: i32) {
     let list = tabs();
     if list.is_empty() {
@@ -99,6 +138,66 @@ fn step(delta: i32) {
 }
 
 impl Chat {
+    /// The pane this phone writes to and reads as chat (empty: let the server pick).
+    fn target(&self, session: &str) -> (String, Vec<PaneRow>) {
+        let rows = rows(session);
+        let before = saved(session);
+        let (pane, closed) = choose(&rows, &before);
+        if closed {
+            let name = rows.iter().find(|r| r.pane == pane).map(pane_label).unwrap_or_default();
+            toast(&format!("El pane que veías se cerró; ahora estás en {name}"));
+        }
+        if !rows.is_empty() && pane != before {
+            save(session, &pane);
+        }
+        (pane, rows)
+    }
+    /// Big chips above the keys (phones, splits only) and the composer naming its target.
+    fn chips(&self, pane: &str, rows: &[PaneRow]) {
+        let split = rows.len() > 1;
+        let html: String = if split && phone() {
+            rows.iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let on = r.pane == pane;
+                    format!(
+                        "<button type=\"button\" class=\"cv-pane\" data-cv-pane=\"{}\" aria-pressed=\"{on}\"><i class=\"{}\"></i><b>{}</b>{}</button>",
+                        esc(&r.pane),
+                        esc(&r.status),
+                        i + 1,
+                        esc(&pane_label(r))
+                    )
+                })
+                .collect()
+        } else {
+            String::new()
+        };
+        if *self.chips.borrow() == html {
+            return;
+        }
+        let host = query(&id("cv-dock"), ".cv-panes");
+        let _ = set(&host, "innerHTML", &html.clone().into());
+        let _ = set(&host, "hidden", &html.is_empty().into());
+        let target = rows
+            .iter()
+            .position(|r| r.pane == pane)
+            .filter(|_| split)
+            .map(|i| format!("Escribe a {} · {}…", i + 1, pane_label(&rows[i])))
+            .unwrap_or_else(|| "Escribe a la sesión…".into());
+        attr(&query(&id("cv-dock"), "textarea"), "placeholder", &target);
+        self.chips.replace(html);
+    }
+    /// The terminal frame focuses the same pane for this phone only (tmux per-client
+    /// focus): toolbar keys and the direct keyboard land there, the desktop keeps its own.
+    fn sync(&self, session: &str, pane: &str, split: bool) {
+        let key = format!("{session}|{pane}");
+        if !split || pane.is_empty() || *self.synced.borrow() == key {
+            return;
+        }
+        if post(&frame(), json!({"source":"comandos","type":"select-pane","pane":pane})) {
+            self.synced.replace(key);
+        }
+    }
     fn head(&self, session: String) {
         let row = all(&id("tabbar"), ".apptab")
             .into_iter()
@@ -141,6 +240,9 @@ impl Chat {
             return;
         }
         self.ticks.set(self.ticks.get().wrapping_add(1));
+        let (pane, rows) = self.target(&session);
+        self.chips(&pane, &rows);
+        self.sync(&session, &pane, rows.len() > 1);
         // The header also shows over the terminal on phones; names and models change
         // rarely, so it is refreshed on a session move and every few seconds.
         if *self.titled.borrow() != session || self.ticks.get() % 5 == 0 {
@@ -150,9 +252,10 @@ impl Chat {
         if !self.on.get() {
             return;
         }
-        let moved = *self.session.borrow() != session;
+        let key = format!("{session}|{pane}");
+        let moved = *self.session.borrow() != key;
         if moved {
-            self.session.replace(session.clone());
+            self.session.replace(key.clone());
             self.token.replace(String::new());
             self.expanded.set(false);
             self.messages.borrow_mut().clear();
@@ -168,10 +271,10 @@ impl Chat {
         let me = self.clone();
         spawn_local(async move {
             let since = me.token.borrow().clone();
-            let body = from_json(&json!({"session":session,"since":since})).unwrap_or(JsValue::NULL);
+            let body = from_json(&json!({"session":session,"pane":pane,"since":since})).unwrap_or(JsValue::NULL);
             let reply = request("POST", "/chat/transcript", body).await;
             me.busy.set(false);
-            if *me.session.borrow() != session {
+            if *me.session.borrow() != key {
                 return;
             }
             let Ok(reply) = reply else { return };
@@ -183,7 +286,12 @@ impl Chat {
             }
             if v["agent"].is_null() {
                 me.shown.borrow_mut().clear();
-                let _ = set(&query(&el(), ".cv-list"), "innerHTML", &"<p class=\"cv-empty\">Esta sesión no tiene un agente con historial (Claude o Codex). Usa la terminal.</p>".into());
+                let empty = if rows.len() > 1 {
+                    "<p class=\"cv-empty\">Este pane es una terminal sin agente con historial. Elige otro pane arriba del teclado o usa la terminal.</p>"
+                } else {
+                    "<p class=\"cv-empty\">Esta sesión no tiene un agente con historial (Claude o Codex). Usa la terminal.</p>"
+                };
+                let _ = set(&query(&el(), ".cv-list"), "innerHTML", &empty.into());
                 return;
             }
             me.token.replace(v["token"].as_str().unwrap_or("").into());
@@ -286,9 +394,10 @@ impl Chat {
         }
         let button = query(&id("cv-dock"), "button[type=submit]");
         classes(&button, "busy", true);
+        let pane = self.target(&session).0;
         let me = self.clone();
         spawn_local(async move {
-            let body = from_json(&json!({"session":session,"text":value})).unwrap_or(JsValue::NULL);
+            let body = from_json(&json!({"session":session,"pane":pane,"text":value})).unwrap_or(JsValue::NULL);
             match request("POST", "/send", body).await {
                 Ok(r) if number(&get(&r, "status")) < 300. => {}
                 _ => {
@@ -352,8 +461,9 @@ impl Chat {
             return;
         }
         let key = key.to_owned();
+        let pane = self.target(&session).0;
         spawn_local(async move {
-            let body = from_json(&json!({"session":session,"key":key})).unwrap_or(JsValue::NULL);
+            let body = from_json(&json!({"session":session,"pane":pane,"key":key})).unwrap_or(JsValue::NULL);
             if !matches!(request("POST", "/key", body).await, Ok(r) if number(&get(&r, "status")) < 300.) {
                 toast("No se pudo enviar la tecla");
             }
@@ -375,12 +485,28 @@ pub fn install() -> Result<(), JsValue> {
     }
     let chat = Rc::new(Chat::default());
     dock_all();
+    let me_pane = chat.clone();
     // Frames that (re)load after this ask for nothing; they announce `ready`.
     listen(&js_sys::global(), "message", function(move |args| {
         let e = args.get(0);
         let data = get(&e, "data");
         let data = if data.is_string() { invoke(&get(&global("JSON"), "parse"), &[data]).unwrap_or(JsValue::NULL) } else { data };
-        if text(&get(&data, "source")) == "comandos-term" && text(&get(&data, "type")) == "ready" {
+        let from_term = text(&get(&data, "source")) == "comandos-term";
+        let pane = text(&get(&data, "pane"));
+        // A pane touched inside the terminal becomes this phone's target too.
+        if from_term && text(&get(&data, "type")) == "pane-selected" && pane.starts_with('%')
+            && get(&e, "source") == get(&frame(), "contentWindow")
+        {
+            let session = text(&global("activeTerm"));
+            if !session.is_empty() {
+                save(&session, &pane);
+                me_pane.synced.replace(format!("{session}|{pane}"));
+                me_pane.tick(true);
+            }
+        }
+        if from_term && text(&get(&data, "type")) == "ready" {
+            // A reloaded frame lost its per-client focus: select again.
+            me_pane.synced.replace(String::new());
             let source = get(&e, "source");
             if let Ok(m) = invoke(&get(&global("JSON"), "parse"), &[DOCK.into()]) {
                 let _ = call(&source, "postMessage", &[m, get(&global("location"), "origin")]);
@@ -417,6 +543,14 @@ pub fn install() -> Result<(), JsValue> {
             "more" => me.toggle_more(),
             _ => {}
         }
+        let pane = text(&get(&data, "cvPane"));
+        if !pane.is_empty() {
+            let session = text(&global("activeTerm"));
+            if !session.is_empty() {
+                save(&session, &pane);
+                me.tick(true);
+            }
+        }
         let key = text(&get(&data, "cvKey"));
         if !key.is_empty() {
             me.key(&key);
@@ -434,11 +568,13 @@ pub fn install() -> Result<(), JsValue> {
     for host in [el(), id("cv-head"), id("cv-dock")] {
         listen(&host, "click", clicks.clone());
     }
-    // Tapping a key leaves the keyboard and the draft's focus where they were.
-    listen(&query(&id("cv-dock"), ".cv-keys"), "mousedown", function(|args| {
-        let _ = call(&args.get(0), "preventDefault", &[]);
-        Ok(JsValue::UNDEFINED)
-    }));
+    // Tapping a key or a pane chip leaves the keyboard and the draft's focus where they were.
+    for row in [".cv-keys", ".cv-panes"] {
+        listen(&query(&id("cv-dock"), row), "mousedown", function(|args| {
+            let _ = call(&args.get(0), "preventDefault", &[]);
+            Ok(JsValue::UNDEFINED)
+        }));
+    }
     let me = chat.clone();
     listen(&query(&id("cv-dock"), ".cv-compose"), "submit", function(move |args| {
         stop(&args.get(0));
@@ -495,6 +631,54 @@ fn has_term() -> bool {
 }
 }
 
+/// One pane of the active session, from the `/states` rows.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PaneRow {
+    pub pane: String,
+    pub agent: String,
+    pub model: String,
+    pub status: String,
+    pub active: bool,
+}
+pub fn pane_number(pane: &str) -> u64 {
+    pane.trim_start_matches('%').parse().unwrap_or(u64::MAX)
+}
+/// The pane the phone writes to and reads as chat: the one saved for this tab while it
+/// lives, else tmux's active one, else the first. A saved pane that closed gives way to
+/// the next one (`true`: tell the person). No rows yet: keep what was saved.
+pub fn choose(rows: &[PaneRow], saved: &str) -> (String, bool) {
+    if rows.is_empty() || rows.iter().any(|r| r.pane == saved) {
+        return (saved.to_owned(), false);
+    }
+    if !saved.is_empty() {
+        let after = pane_number(saved);
+        let next = rows.iter().find(|r| pane_number(&r.pane) > after).unwrap_or(&rows[0]);
+        return (next.pane.clone(), true);
+    }
+    (rows.iter().find(|r| r.active).unwrap_or(&rows[0]).pane.clone(), false)
+}
+/// «Claude · opus-5.5», «Codex · gpt-6-astra», «Terminal».
+pub fn pane_label(row: &PaneRow) -> String {
+    let agent = match row.agent.as_str() {
+        "" => return "Terminal".into(),
+        "claude" => "Claude".to_owned(),
+        "codex" => "Codex".to_owned(),
+        other => {
+            let mut c = other.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        }
+    };
+    let model = row.model.strip_prefix("claude-").unwrap_or(&row.model);
+    let parts: Vec<&str> = model.split('-').collect();
+    let model = match parts.as_slice() {
+        [head @ .., a, b] if !head.is_empty() && a.bytes().all(|c| c.is_ascii_digit()) && b.bytes().all(|c| c.is_ascii_digit()) => {
+            format!("{}-{a}.{b}", head.join("-"))
+        }
+        _ => model.to_owned(),
+    };
+    if model.is_empty() { agent } else { format!("{agent} · {model}") }
+}
+
 /// Where the collapsed view starts: the last agent answer (and what followed it), or
 /// the last prompt while no answer exists yet.
 pub fn cut(messages: &[(String, String)]) -> usize {
@@ -514,6 +698,29 @@ mod tests {
     use super::*;
     fn m(r: &str, t: &str) -> (String, String) {
         (r.into(), t.into())
+    }
+    fn row(pane: &str, agent: &str, model: &str, active: bool) -> PaneRow {
+        PaneRow { pane: pane.into(), agent: agent.into(), model: model.into(), status: String::new(), active }
+    }
+    #[test]
+    fn the_phone_keeps_its_pane_and_moves_on_when_it_closes() {
+        let rows = [row("%7", "claude", "", false), row("%39", "claude", "", true), row("%44", "", "", false)];
+        assert_eq!(choose(&rows, ""), ("%39".into(), false), "first time: tmux's active pane");
+        assert_eq!(choose(&rows, "%7"), ("%7".into(), false), "a saved pane wins over tmux focus");
+        assert_eq!(choose(&rows, "%40"), ("%44".into(), true), "closed: the next one, with a notice");
+        assert_eq!(choose(&rows, "%99"), ("%7".into(), true), "closed last: wrap to the first");
+        assert_eq!(choose(&[], "%7"), ("%7".into(), false), "rows not loaded yet: keep it");
+        assert_eq!(choose(&rows[..1], ""), ("%7".into(), false));
+    }
+    #[test]
+    fn pane_chips_name_agent_and_model() {
+        assert_eq!(pane_label(&row("%1", "claude", "claude-opus-5-5", false)), "Claude · opus-5.5");
+        assert_eq!(pane_label(&row("%1", "claude", "claude-fable-5-1", false)), "Claude · fable-5.1");
+        assert_eq!(pane_label(&row("%1", "codex", "gpt-6-astra", false)), "Codex · gpt-6-astra");
+        assert_eq!(pane_label(&row("%1", "codex", "gpt-6.1-sol", false)), "Codex · gpt-6.1-sol");
+        assert_eq!(pane_label(&row("%1", "claude", "", false)), "Claude");
+        assert_eq!(pane_label(&row("%1", "", "", false)), "Terminal");
+        assert_eq!(pane_label(&row("%1", "grok", "", false)), "Grok");
     }
     #[test]
     fn collapsed_view_starts_at_the_last_answer() {

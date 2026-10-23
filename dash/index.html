@@ -1441,6 +1441,19 @@ body.chat-on .termpane{visibility:hidden}
 #cv-dock .cv-keys button:active{border-color:var(--brand);color:var(--brand)}
 #cv-dock .cv-keys .hot{border-color:color-mix(in srgb,var(--brand) 55%,var(--line2))}
 #cv-dock .cv-keys svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+/* Chips de panes (celular con split, 22-oct): a quién escribes y qué chat ves; grandes para el pulgar. */
+#cv-dock .cv-panes{display:flex;gap:6px;overflow-x:auto;padding:8px 8px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#cv-dock .cv-panes::-webkit-scrollbar{display:none}
+#cv-dock .cv-panes[hidden]{display:none}
+#cv-dock .cv-pane{flex:none;display:flex;align-items:center;gap:7px;min-height:44px;padding:0 15px;border:1px solid var(--line2);border-radius:999px;background:var(--bg);color:var(--dim);font:600 14px var(--sans);white-space:nowrap;cursor:pointer}
+#cv-dock .cv-pane b{font:700 12px var(--mono);color:var(--faint)}
+#cv-dock .cv-pane i{flex:none;width:9px;height:9px;border-radius:50%;background:var(--line2)}
+#cv-dock .cv-pane i.waiting{background:var(--waiting)}
+#cv-dock .cv-pane i.working{background:var(--working);animation:cv-dot 1.2s ease-in-out infinite}
+#cv-dock .cv-pane i.done{background:var(--done)}
+#cv-dock .cv-pane[aria-pressed=true]{background:var(--brand);border-color:var(--brand);color:#fff}
+#cv-dock .cv-pane[aria-pressed=true] b{color:#fff}
+#cv-dock .cv-pane[aria-pressed=true] i{box-shadow:0 0 0 2px #fff}
 #cv-dock .cv-compose{flex:none;display:flex;gap:8px;align-items:flex-end;padding:2px 8px calc(8px + env(safe-area-inset-bottom,0px))}
 #cv-dock .cv-compose textarea{flex:1;min-width:0;min-height:44px;max-height:30dvh;resize:none;field-sizing:content;padding:11px 14px;border-radius:14px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:16px/1.3 var(--sans)}
 #cv-dock .cv-compose textarea:focus{outline:none;border-color:var(--brand)}
