@@ -10,7 +10,7 @@ pub use web::install;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{PaneRow, choose, cut, pane_label, pane_number, working};
+use super::{PaneRow, choose, cut, pane_label, pane_number, swipe, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -47,6 +47,11 @@ struct Chat {
     chips: RefCell<String>,
     /// `session|pane` last focused in the terminal frame for this phone.
     synced: RefCell<String>,
+    /// The bubble being edited in place (only here; the agent never sees it). While it is
+    /// open the refresh does not touch the list (`paused`) and draws once it closes.
+    editing: RefCell<Option<JsValue>>,
+    dirty: Cell<bool>,
+    paused: Cell<bool>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
 const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
@@ -125,6 +130,133 @@ fn save(session: &str, pane: &str) {
 }
 fn phone() -> bool {
     global("innerWidth").as_f64().is_some_and(|w| w <= 747.)
+}
+fn closest(node: &JsValue, selector: &str) -> JsValue {
+    if !truthy(node) {
+        return JsValue::NULL;
+    }
+    call(node, "closest", &[selector.into()]).unwrap_or(JsValue::NULL)
+}
+/// Text is selected (a long press on the phone): gestures must not move away from it.
+fn selecting() -> bool {
+    let sel = call(&js_sys::global(), "getSelection", &[]).unwrap_or(JsValue::NULL);
+    truthy(&sel) && !truthy(&get(&sel, "isCollapsed"))
+}
+/// The draft grows with its text up to about six lines (CSS caps it), where
+/// `field-sizing` does not do it already (Safari).
+fn grow(area: &JsValue) {
+    let native = call(&global("CSS"), "supports", &["field-sizing".into(), "content".into()]).is_ok_and(|v| truthy(&v));
+    if native || !truthy(area) {
+        return;
+    }
+    style(area, "height", "auto");
+    style(area, "height", &format!("{}px", number(&get(area, "scrollHeight")) + 2.));
+}
+/// «Copiado ✓» on the button for a moment.
+fn flash(button: &JsValue) {
+    classes(button, "ok", true);
+    let b = button.clone();
+    later(function(move |_| {
+        classes(&b, "ok", false);
+        Ok(JsValue::UNDEFINED)
+    }), 1600.);
+}
+fn failed() {
+    toast("No se pudo copiar; mantén presionado el texto para seleccionarlo");
+}
+/// The async clipboard, only where the browser offers it (HTTPS or localhost).
+fn clipboard() -> Option<JsValue> {
+    let clip = get(&global("navigator"), "clipboard");
+    (truthy(&global("isSecureContext")) && truthy(&clip)).then_some(clip)
+}
+fn construct(name: &str, args: &[JsValue]) -> Option<JsValue> {
+    use wasm_bindgen::JsCast;
+    let ctor = global(name).dyn_into::<js_sys::Function>().ok()?;
+    js_sys::Reflect::construct(&ctor, &args.iter().cloned().collect::<js_sys::Array>()).ok()
+}
+fn blob(body: &str, kind: &str) -> Option<JsValue> {
+    let options = object();
+    set(&options, "type", &kind.into()).ok()?;
+    construct("Blob", &[js_sys::Array::of1(&body.into()).into(), options])
+}
+/// Copies through a hidden field, inside the tap itself (works without HTTPS).
+fn field_copy(value: &str) -> bool {
+    let Ok(field) = call(&doc(), "createElement", &["textarea".into()]) else { return false };
+    let _ = set(&field, "value", &value.into());
+    attr(&field, "readonly", "");
+    for (k, v) in [("position", "fixed"), ("top", "0"), ("left", "-9999px"), ("opacity", "0"), ("font-size", "16px")] {
+        style(&field, k, v);
+    }
+    let _ = call(&get(&doc(), "body"), "appendChild", std::slice::from_ref(&field));
+    let _ = call(&field, "select", &[]);
+    let _ = call(&field, "setSelectionRange", &[0.into(), 1_000_000.into()]);
+    let ok = call(&doc(), "execCommand", &["copy".into()]).is_ok_and(|v| truthy(&v));
+    let _ = call(&field, "remove", &[]);
+    ok
+}
+/// Selects a node and copies it: the browser puts both the formatted and the plain text.
+fn selection_copy(node: &JsValue) -> bool {
+    let (Ok(sel), Ok(range)) = (call(&js_sys::global(), "getSelection", &[]), call(&doc(), "createRange", &[])) else { return false };
+    if call(&range, "selectNodeContents", std::slice::from_ref(node)).is_err() {
+        return false;
+    }
+    let _ = call(&sel, "removeAllRanges", &[]);
+    let _ = call(&sel, "addRange", &[range]);
+    let ok = call(&doc(), "execCommand", &["copy".into()]).is_ok_and(|v| truthy(&v));
+    let _ = call(&sel, "removeAllRanges", &[]);
+    ok
+}
+/// Exact text (a code block).
+fn copy_plain(value: String, button: JsValue) {
+    if let Some(clip) = clipboard()
+        && let Ok(pending) = call(&clip, "writeText", &[value.as_str().into()])
+    {
+        spawn_local(async move {
+            if wait(Ok(pending)).await.is_ok() || field_copy(&value) {
+                flash(&button);
+            } else {
+                failed();
+            }
+        });
+        return;
+    }
+    if field_copy(&value) { flash(&button) } else { failed() }
+}
+/// A bubble with its formatting (HTML) plus clean text, for WhatsApp, Docs or a mail.
+fn copy_rich(body: &JsValue, button: JsValue) {
+    if !truthy(body) {
+        return;
+    }
+    let plain = text(&get(body, "innerText")).trim().to_owned();
+    let copy = call(body, "cloneNode", &[true.into()]).unwrap_or(JsValue::NULL);
+    for head in all(&copy, ".cv-code-head") {
+        let _ = call(&head, "remove", &[]);
+    }
+    let _ = call(&copy, "removeAttribute", &["contenteditable".into()]);
+    let html = format!("<meta charset=\"utf-8\"><div>{}</div>", text(&get(&copy, "innerHTML")));
+    let item = (|| {
+        let parts = object();
+        set(&parts, "text/html", &blob(&html, "text/html")?).ok()?;
+        set(&parts, "text/plain", &blob(&plain, "text/plain")?).ok()?;
+        construct("ClipboardItem", &[parts])
+    })();
+    if let (Some(clip), Some(item)) = (clipboard(), item)
+        && let Ok(pending) = call(&clip, "write", &[js_sys::Array::of1(&item).into()])
+    {
+        spawn_local(async move {
+            if wait(Ok(pending)).await.is_ok() {
+                flash(&button);
+                return;
+            }
+            let ok = match call(&get(&global("navigator"), "clipboard"), "writeText", &[plain.as_str().into()]) {
+                Ok(p) => wait(Ok(p)).await.is_ok(),
+                Err(_) => false,
+            };
+            if ok { flash(&button) } else { failed() }
+        });
+        return;
+    }
+    if selection_copy(body) || field_copy(&plain) { flash(&button) } else { failed() }
 }
 fn step(delta: i32) {
     let list = tabs();
@@ -256,6 +388,8 @@ impl Chat {
         let moved = *self.session.borrow() != key;
         if moved {
             self.session.replace(key.clone());
+            self.editing.replace(None);
+            self.paused.set(false);
             self.token.replace(String::new());
             self.expanded.set(false);
             self.messages.borrow_mut().clear();
@@ -310,6 +444,11 @@ impl Chat {
     /// Draws the visible slice into the list, rewriting only from the first message
     /// that changed, and keeps the reader at the bottom when they were there.
     fn draw(&self, first: bool) {
+        if self.editing.borrow().is_some() {
+            self.paused.set(true);
+            self.typing();
+            return;
+        }
         let feed = query(&el(), ".cv-feed");
         let list = query(&el(), ".cv-list");
         let pinned = first
@@ -363,6 +502,7 @@ impl Chat {
         let _ = set(&query(&el(), ".cv-typing"), "hidden", &(!busy).into());
     }
     fn toggle_more(&self) {
+        self.finish(true);
         let feed = query(&el(), ".cv-feed");
         let from_bottom = number(&get(&feed, "scrollHeight")) - number(&get(&feed, "scrollTop"));
         self.expanded.set(!self.expanded.get());
@@ -385,6 +525,7 @@ impl Chat {
             return;
         }
         let _ = set(&area, "value", &"".into());
+        grow(&area);
         if self.on.get() {
             let feed = query(&el(), ".cv-feed");
             let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\"><p>{}</p></div>", esc(&value)).into()]);
@@ -439,6 +580,7 @@ impl Chat {
                     Some(clip) if !clip.is_empty() => {
                         let area = query(&id("cv-dock"), "textarea");
                         let _ = set(&area, "value", &format!("{}{clip}", text(&get(&area, "value"))).into());
+                        grow(&area);
                         let _ = call(&area, "focus", &[]);
                     }
                     _ => {
@@ -453,6 +595,70 @@ impl Chat {
         }
         if !toolbar(json!({"type":"action","action":action})) {
             toast("Abre una sesión primero");
+        }
+    }
+    /// A bubble button: copy (with formatting), copy a code block, or edit in place.
+    fn act(&self, act: &str, button: &JsValue) {
+        let bubble = closest(button, ".cv-ai,.cv-me");
+        match act {
+            "copy-code" => {
+                let code = query(&closest(button, ".cv-code"), "pre");
+                copy_plain(text(&get(&code, "textContent")), button.clone());
+            }
+            "copy" => copy_rich(&query(&bubble, ".cv-body"), button.clone()),
+            "edit" => self.edit(&bubble),
+            "done" => self.finish(true),
+            "undo" => {
+                if self.editing.borrow().as_ref() == Some(&bubble) {
+                    self.finish(false);
+                } else {
+                    self.restore(&bubble);
+                }
+            }
+            _ => {}
+        }
+    }
+    /// The answer's text becomes editable right in its bubble; only one at a time.
+    fn edit(&self, bubble: &JsValue) {
+        if !truthy(bubble) {
+            return;
+        }
+        self.finish(true);
+        // Closing the previous edit may have redrawn the list without this bubble.
+        if !truthy(&get(bubble, "isConnected")) {
+            return;
+        }
+        let body = query(bubble, ".cv-body");
+        attr(&body, "contenteditable", "true");
+        classes(bubble, "editing", true);
+        self.dirty.set(false);
+        self.editing.replace(Some(bubble.clone()));
+        let _ = call(&body, "focus", &[]);
+    }
+    /// Leaves edit mode keeping the changes («Listo») or going back to the agent's text.
+    fn finish(&self, keep: bool) {
+        let Some(bubble) = self.editing.take() else { return };
+        let body = query(&bubble, ".cv-body");
+        let _ = call(&body, "removeAttribute", &["contenteditable".into()]);
+        let _ = call(&body, "blur", &[]);
+        classes(&bubble, "editing", false);
+        if keep {
+            if self.dirty.get() {
+                classes(&bubble, "edited", true);
+            }
+        } else {
+            self.restore(&bubble);
+        }
+        if self.paused.replace(false) {
+            self.draw(false);
+        }
+    }
+    /// Puts back the bubble exactly as the server rendered it.
+    fn restore(&self, bubble: &JsValue) {
+        let children = get(&query(&el(), ".cv-list"), "children");
+        let at = (0..number(&get(&children, "length")) as u32).find(|i| get(&children, &i.to_string()) == *bubble);
+        if let Some(html) = at.and_then(|i| self.shown.borrow().get(i as usize).map(|(_, h)| h.clone())) {
+            let _ = set(bubble, "outerHTML", &html.into());
         }
     }
     fn key(&self, key: &str) {
@@ -531,6 +737,11 @@ pub fn install() -> Result<(), JsValue> {
             return Ok(JsValue::UNDEFINED);
         }
         let data = get(&button, "dataset");
+        let act = text(&get(&data, "cvAct"));
+        if !act.is_empty() {
+            me.act(&act, &button);
+            return Ok(JsValue::UNDEFINED);
+        }
         match text(&get(&data, "cv")).as_str() {
             "prev" => {
                 step(-1);
@@ -591,20 +802,44 @@ pub fn install() -> Result<(), JsValue> {
         }
         Ok(JsValue::UNDEFINED)
     }));
+    let area = query(&id("cv-dock"), "textarea");
+    let grown = area.clone();
+    listen(&area, "input", function(move |_| {
+        grow(&grown);
+        Ok(JsValue::UNDEFINED)
+    }));
+    let me = chat.clone();
+    listen(&el(), "input", function(move |_| {
+        if me.editing.borrow().is_some() {
+            me.dirty.set(true);
+        }
+        Ok(JsValue::UNDEFINED)
+    }));
     let feed = query(&el(), ".cv-feed");
     let me = chat.clone();
     listen(&feed, "touchstart", function(move |args| {
-        let t = get(&get(&args.get(0), "touches"), "0");
+        let e = args.get(0);
+        // Scrolling code or a table sideways, editing, or selecting is not a swipe.
+        let inside = closest(&get(&e, "target"), ".cv-code pre,.cv-table,[contenteditable=true],.cv-acts,.cv-code-head");
+        if truthy(&inside) || selecting() {
+            me.swipe.set(None);
+            return Ok(JsValue::UNDEFINED);
+        }
+        let t = get(&get(&e, "touches"), "0");
         me.swipe.set(Some((number(&get(&t, "clientX")), number(&get(&t, "clientY")))));
         Ok(JsValue::UNDEFINED)
     }));
     let me = chat.clone();
     listen(&feed, "touchend", function(move |args| {
         let Some((x, y)) = me.swipe.take() else { return Ok(JsValue::UNDEFINED) };
+        if selecting() {
+            return Ok(JsValue::UNDEFINED);
+        }
         let t = get(&get(&args.get(0), "changedTouches"), "0");
         let (dx, dy) = (number(&get(&t, "clientX")) - x, number(&get(&t, "clientY")) - y);
-        if dx.abs() > 70. && dx.abs() > dy.abs() * 2. {
-            step(if dx < 0. { 1 } else { -1 });
+        let delta = swipe(dx, dy);
+        if delta != 0 {
+            step(delta);
         }
         Ok(JsValue::UNDEFINED)
     }));
@@ -688,6 +923,15 @@ pub fn cut(messages: &[(String, String)]) -> usize {
         .or_else(|| messages.iter().rposition(|(r, _)| r == "u"))
         .unwrap_or(0)
 }
+/// A finger that moved mostly sideways and far enough changes session: +1 next, -1 back,
+/// 0 for a scroll, a tap or a hesitant drag.
+pub fn swipe(dx: f64, dy: f64) -> i32 {
+    if dx.abs() > 70. && dx.abs() > dy.abs() * 2. {
+        if dx < 0. { 1 } else { -1 }
+    } else {
+        0
+    }
+}
 /// The agent is still on it: the transcript moved recently and does not end in an answer.
 pub fn working(messages: &[(String, String)], age: f64) -> bool {
     age < 90. && messages.last().is_some_and(|(r, _)| r != "a")
@@ -721,6 +965,14 @@ mod tests {
         assert_eq!(pane_label(&row("%1", "claude", "", false)), "Claude");
         assert_eq!(pane_label(&row("%1", "", "", false)), "Terminal");
         assert_eq!(pane_label(&row("%1", "grok", "", false)), "Grok");
+    }
+    #[test]
+    fn only_a_clear_sideways_swipe_changes_session() {
+        assert_eq!(swipe(-120., 10.), 1);
+        assert_eq!(swipe(120., -20.), -1);
+        assert_eq!(swipe(-60., 0.), 0, "too short");
+        assert_eq!(swipe(-100., 80.), 0, "mostly a scroll");
+        assert_eq!(swipe(0., 0.), 0, "a tap");
     }
     #[test]
     fn collapsed_view_starts_at_the_last_answer() {

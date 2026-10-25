@@ -7,7 +7,7 @@ use comandos_runtime::{
     session_configuration,
 };
 use http::StatusCode;
-use comandos_web_view::chat_markdown::render_message;
+use comandos_core::chat_markdown::{escape, to_html};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -176,6 +176,24 @@ fn read_tail(path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(slice).into_owned())
 }
 
+/// One message as the phone draws it. Agent answers and prompts carry their markdown as
+/// HTML in `.cv-body` and big buttons below (labels come from the CSS, so copying the
+/// bubble's text never picks them up); tool calls are slim lines.
+pub fn bubble(role: &str, text: &str) -> String {
+    const COPY: &str = "<button type=\"button\" class=\"cv-act\" data-cv-act=\"copy\" aria-label=\"Copiar\"></button>";
+    match role {
+        "a" => format!(
+            "<div class=\"cv-ai\"><div class=\"cv-body\">{}</div><div class=\"cv-acts\" contenteditable=\"false\">{COPY}<button type=\"button\" class=\"cv-act\" data-cv-act=\"edit\" aria-label=\"Editar para copiar\"></button><button type=\"button\" class=\"cv-act\" data-cv-act=\"done\" aria-label=\"Listo\"></button><button type=\"button\" class=\"cv-act\" data-cv-act=\"undo\" aria-label=\"Deshacer cambios\"></button></div></div>",
+            to_html(text)
+        ),
+        "u" => format!("<div class=\"cv-me\"><div class=\"cv-body\">{}</div><div class=\"cv-acts\">{COPY}</div></div>", to_html(text)),
+        _ => {
+            let lines: String = text.lines().map(|l| format!("<span>{}</span>", escape(l))).collect();
+            format!("<div class=\"cv-tool\">{lines}</div>")
+        }
+    }
+}
+
 pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
     let Some(body) = request.data.as_ref().and_then(Value::as_object) else {
         return error(StatusCode::BAD_REQUEST, "Expected chat request");
@@ -283,7 +301,7 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
             .map(|records| parse(&records))
             .unwrap_or_default()
             .into_iter()
-            .map(|(r, t)| json!({"r":r,"h":render_message(r, &t),"t":t}))
+            .map(|(r, t)| json!({"r":r,"h":bubble(r, &t),"t":t}))
             .collect();
         json!({"ok":true,"agent":agent,"pane":pane,"token":token,"age":age,"messages":messages})
     })
@@ -294,7 +312,20 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{bubble, parse};
+    #[test]
+    fn bubbles_carry_markdown_and_their_buttons() {
+        let a = bubble("a", "**hola** <b>x</b>");
+        assert!(a.starts_with("<div class=\"cv-ai\"><div class=\"cv-body\"><p><strong>hola</strong> &lt;b&gt;x&lt;/b&gt;</p></div><div class=\"cv-acts\""), "{a}");
+        for act in ["copy", "edit", "done", "undo"] {
+            assert!(a.contains(&format!("data-cv-act=\"{act}\"")), "{act}: {a}");
+        }
+        assert_eq!(
+            bubble("u", "hola"),
+            "<div class=\"cv-me\"><div class=\"cv-body\"><p>hola</p></div><div class=\"cv-acts\"><button type=\"button\" class=\"cv-act\" data-cv-act=\"copy\" aria-label=\"Copiar\"></button></div></div>"
+        );
+        assert_eq!(bubble("t", "Bash · ls <x>\nRead · a.rs"), "<div class=\"cv-tool\"><span>Bash · ls &lt;x&gt;</span><span>Read · a.rs</span></div>");
+    }
     #[test]
     fn claude_turns_tools_and_noise() {
         let rows = [

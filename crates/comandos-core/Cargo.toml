@@ -11,6 +11,7 @@ chrono = { workspace = true, features = ["clock"] }
 chrono-tz.workspace = true
 serde = { version = "=1.0.229", features = ["derive"] }
 subtle = { version = "=2.6.1", default-features = false }
+pulldown-cmark = { version = "=0.13.4", default-features = false }
 
 [dev-dependencies]
 comandos-oracle = { path = "../comandos-oracle" }

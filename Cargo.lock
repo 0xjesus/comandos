@@ -461,6 +461,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "comandos-oracle",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "subtle",
