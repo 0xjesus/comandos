@@ -112,7 +112,7 @@ impl ui::clipboard::TmuxIo for TmuxRef{
  fn mode(&self)->RunMode{RunMode::Sandbox}fn socket(&self)->&std::path::Path{std::path::Path::new(&self.socket)}
  fn read(&self,args:&[&str])->Result<comandos_app::tmux::TmuxOut,comandos_app::tmux::TmuxError>{
   self.reads.lock().unwrap().push(args.iter().map(|s|s.to_string()).collect());
-  let stdout=if args[0]=="list-panes"{"%7|0|0|79|23".into()}else if args.last()==Some(&"#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}"){"fixture|111|$1|42|%7".into()}else if args[0]=="list-clients"{"/private/fake-tty|fixture".into()}else if args.last()==Some(&"#{pane_in_mode}|#{pid}|#{session_id}|#{session_created}|#{pane_id}"){format!("{}|111|$1|42|%7",usize::from(self.copy_mode.load(Ordering::Acquire)))}else{"111|$1|42|%7".into()};
+  let stdout=if args[0]=="list-panes"{"%7|0|0|79|23".into()}else if args.last()==Some(&"#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}"){"fixture|111|$1|42|%7".into()}else if args[0]=="list-clients"{"/private/fake-tty|fixture".into()}else if args.last()==Some(&"#{pane_in_mode}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}"){format!("{}|111|$1|42|%7",usize::from(self.copy_mode.load(Ordering::Acquire)))}else{"111|$1|42|%7".into()};
   Ok(comandos_app::tmux::TmuxOut{code:0,stdout,stderr:String::new()})
  }
  fn mutate(&self,args:&[&str],_:Option<&[u8]>)->Result<comandos_app::tmux::TmuxOut,comandos_app::tmux::TmuxError>{self.reads.lock().unwrap().push(args.iter().map(|s|s.to_string()).collect());self.copy_mode.store(false,Ordering::Release);Ok(comandos_app::tmux::TmuxOut{code:0,stdout:String::new(),stderr:String::new()})}

@@ -179,10 +179,12 @@ pub fn read_geometry_when(
     }
     let socket = tmux.socket().to_path_buf();
     let target = format!("={session}");
-    // tmux 3.2a can crash when session_created uses a bare session target
-    // before any client attaches. Provide its explicit current window context.
+    // tmux 3.2a dereferences NULL when a time format (session_created,
+    // *_activity…) meets a target that no longer exists, killing the server
+    // (24-oct-2026). Identity uses the session id digits instead; see
+    // `tests/tmux_time_formats.rs`.
     let identity_target = format!("={session}:");
-    let identity_format = "#{pid}|#{session_id}|#{session_created}|#{session_name}";
+    let identity_format = "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{session_name}";
     let pin = tmux
         .read(&[
             "display-message",

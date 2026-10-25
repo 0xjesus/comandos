@@ -384,7 +384,7 @@ pub fn pane_identity_when(
             "-p",
             "-t",
             pane,
-            "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{pane_id}",
+            "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{session_name}|#{pane_id}",
         ])
         .map_err(|_| "Account pane unavailable".to_string())?;
     if !allowed() || tmux.socket() != socket {

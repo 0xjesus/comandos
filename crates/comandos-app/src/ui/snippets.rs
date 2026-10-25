@@ -129,7 +129,7 @@ pub fn delete_document(items: &[Value], id: &str) -> Vec<Value> {
 }
 
 use super::clipboard::{ClipboardError, TmuxIo};
-const IDENTITY: &str = "#{pid}|#{session_id}|#{session_created}|#{pane_id}";
+const IDENTITY: &str = "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}";
 pub fn paste_snippet(
     session: &str,
     text: &str,

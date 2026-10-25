@@ -1065,7 +1065,7 @@ fn close_work(backend: &dyn Backend, tab: &crate::app::Tab, ticket: &Ticket) -> 
                 "-p",
                 "-t",
                 &pane,
-                "#{pid}|#{session_id}|#{session_created}|#{session_name}",
+                "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{session_name}",
             ],
             &|| ticket.current(),
         )?;

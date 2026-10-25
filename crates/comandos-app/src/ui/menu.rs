@@ -380,7 +380,7 @@ fn read_context_inner(
                 "-p",
                 "-t",
                 pane,
-                "#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .map_err(|e| format!("{e:?}"))?;
         if !out.ok() || out.stdout.trim().split('|').next() != Some(session.as_str()) {
@@ -397,7 +397,7 @@ fn read_context_inner(
                 "-p",
                 "-t",
                 pane,
-                "#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .map_err(|e| format!("{e:?}"))?;
         if !now.ok() || now.stdout.trim() != stamp {
@@ -594,7 +594,7 @@ pub fn context_current(
                 "-p",
                 "-t",
                 pane,
-                "#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .is_ok_and(|out| out.ok() && out.stdout.trim() == stamp && !cancelled()),
         (None, None) => !cancelled(),

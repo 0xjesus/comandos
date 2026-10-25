@@ -36,7 +36,7 @@ impl comandos_app::ui::clipboard::TmuxIo for PrivatePane {
         Ok(comandos_app::tmux::TmuxOut {
             code: 0,
             stdout: if args.last()
-                == Some(&"#{pid}|#{session_id}|#{session_created}|#{session_name}|#{pane_id}")
+                == Some(&"#{pid}|#{session_id}|#{s/[$]//:session_id}|#{session_name}|#{pane_id}")
             {
                 self.record.clone()
             } else {

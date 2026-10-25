@@ -298,7 +298,7 @@ pub fn execute_split_at_expected<T: crate::restore::RestoreTmux>(
                 "-p",
                 "-t",
                 &target,
-                "#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .map_err(CommandError::Failed)?;
         if stamp.trim().is_empty() || expected.is_some_and(|s| s != stamp.trim()) {
@@ -341,7 +341,7 @@ pub fn execute_split_at_expected<T: crate::restore::RestoreTmux>(
                 "-p",
                 "-t",
                 &target,
-                "#{session_name}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{session_name}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .map_err(CommandError::Failed)?;
         if now.trim() != stamp || cancelled() {

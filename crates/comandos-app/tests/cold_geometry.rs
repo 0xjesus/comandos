@@ -44,7 +44,7 @@ fn cold_restore_geometry_and_optimized_snapshot_keep_unattached_local_alive() {
             "-p",
             "-t",
             "=local:",
-            "#{pid}|#{session_id}|#{session_created}|#{pane_id}|#{pane_pid}",
+            "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}|#{pane_pid}",
         ])
         .unwrap();
     for _ in 0..3 {
@@ -62,7 +62,7 @@ fn cold_restore_geometry_and_optimized_snapshot_keep_unattached_local_alive() {
             "-p",
             "-t",
             "=local:",
-            "#{pid}|#{session_id}|#{session_created}|#{pane_id}|#{pane_pid}",
+            "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}|#{pane_pid}",
         ])
         .unwrap();
     assert!(before.ok() && after.ok());

@@ -171,7 +171,7 @@ pub fn exit_copy_mode(
             "-p",
             "-t",
             &target,
-            "#{pane_in_mode}|#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+            "#{pane_in_mode}|#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
         ])
         .map_err(|e| ClipboardError::Tmux(format!("{e:?}")))?;
     if !out.ok() {
@@ -189,7 +189,7 @@ pub fn exit_copy_mode(
             "-p",
             "-t",
             &target,
-            "#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+            "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
         ])
         .map_err(|e| ClipboardError::Tmux(format!("{e:?}")))?;
     if !now.ok() || now.stdout.trim() != stamp {
@@ -228,7 +228,7 @@ pub fn copy_tmux_selection(
             "-p",
             "-t",
             pane,
-            "#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+            "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
         ])
         .map_err(|e| ClipboardError::Tmux(format!("{e:?}")))?;
     if !capture.ok() || capture.stdout.trim().is_empty() {
@@ -248,7 +248,7 @@ pub fn copy_tmux_selection(
                 "-p",
                 "-t",
                 pane,
-                "#{pid}|#{session_id}|#{session_created}|#{pane_id}",
+                "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{pane_id}",
             ])
             .map_err(|e| ClipboardError::Tmux(format!("{e:?}")))?;
         if cancelled() || !now.ok() || now.stdout.trim() != capture.stdout.trim() {

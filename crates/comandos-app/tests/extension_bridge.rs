@@ -338,7 +338,7 @@ fn shadow_inventory_get_is_pinned_before_and_after_inert_http() {
                     "-p",
                     "-t",
                     "%7",
-                    "#{pid}|#{session_id}|#{session_created}|#{session_name}|#{pane_id}"
+                    "#{pid}|#{session_id}|#{s/[$]//:session_id}|#{session_name}|#{pane_id}"
                 ]
             );
             self.reads.set(self.reads.get() + 1);
