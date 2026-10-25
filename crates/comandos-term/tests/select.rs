@@ -414,3 +414,23 @@ fn wrapped_url_does_not_take_the_sentence_period() {
     assert_eq!(urls.len(), 1);
     assert_eq!(urls[0].url, "https://ejemplo.mx/un/camino/largo");
 }
+
+#[test]
+fn a_cropped_pane_copies_only_its_own_columns() {
+    let mut e = eng(20);
+    // Two side-by-side panes: columns 0..10 and 10..20 (no border, for brevity).
+    e.advance(b"left one  RIGHT ONE\r\nleft two  RIGHT TWO\r\nleft 3    RIGHT 3", 0.0);
+    let s = Selection {
+        anchor: (0, 5),
+        head: (2, 19),
+        mode: SelectMode::Simple,
+    };
+    assert_eq!(selected_text_within(&e, &s, (0, 10)), "one\nleft two\nleft 3");
+    assert_eq!(selected_text_within(&e, &s, (10, 20)), "RIGHT ONE\nRIGHT TWO\nRIGHT 3");
+    let other = Selection {
+        anchor: (1, 12),
+        head: (1, 14),
+        mode: SelectMode::Simple,
+    };
+    assert_eq!(selected_text_within(&e, &other, (0, 10)), "");
+}

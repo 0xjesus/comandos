@@ -52,7 +52,7 @@ pub mod theme;
 mod word_links;
 
 use canvas::{Canvas2d, CanvasTheme};
-use comandos_term::select::{Selection, UrlSpan, selected_text};
+use comandos_term::select::{Selection, UrlSpan, selected_text, selected_text_within};
 use comandos_term::{
     engine::{ClipboardTarget, Engine, GridSize, MouseMode, Palette},
     render::{CursorShape, RenderOpts},
@@ -469,6 +469,11 @@ struct Inner {
     is_linux: bool,
     /// El propio estado, para las escuchas que se instalan más tarde.
     weak: Weak<RefCell<Inner>>,
+    /// Grid imposed by the page instead of fitting the host (the whole tmux window
+    /// while a phone shows one pane of it).
+    fixed: Option<GridSize>,
+    /// Columns `left..right` that a copy keeps (the pane the phone shows).
+    clip_cols: Option<(usize, usize)>,
 }
 
 /// Qué hace el `<textarea>` cuando el estado ya está libre (dar el foco
@@ -804,7 +809,10 @@ impl Inner {
     /// Texto seleccionado como lo copia xterm.js.
     fn selection_text(&self) -> String {
         self.selection()
-            .map(|s| selected_text(&self.engine, &s))
+            .map(|s| match self.clip_cols {
+                Some(cols) => selected_text_within(&self.engine, &s, cols),
+                None => selected_text(&self.engine, &s),
+            })
             .unwrap_or_default()
     }
 
@@ -1406,6 +1414,9 @@ impl Inner {
     }
 
     fn proposed_size(&mut self) -> Option<GridSize> {
+        if let Some(fixed) = self.fixed {
+            return Some(fixed);
+        }
         if self.dpr() != self.metrics.dpr {
             let _ = self.remeasure();
         }
@@ -1629,6 +1640,8 @@ impl WebTerm {
             alt_seen: false,
             is_linux,
             weak: Weak::new(),
+            fixed: None,
+            clip_cols: None,
         }));
         let weak = Rc::downgrade(&inner);
         let frame_cb = Closure::<dyn FnMut(f64)>::new(move |_t: f64| {
@@ -1924,6 +1937,21 @@ impl WebTerm {
         if changed == Some(true) {
             self.watch_font();
         }
+    }
+
+    /// Fixes the grid at `cols`×`rows` whatever the host measures (`0` = fit the
+    /// host again); [`WebTerm::resize_to_fit`] applies it.
+    pub fn set_fixed_size(&mut self, cols: u16, rows: u16) {
+        self.with(|i| {
+            i.fixed = (cols >= 2 && rows >= 1).then_some(GridSize { cols, rows });
+        });
+    }
+
+    /// Copies keep only the columns `left..right` (`right == 0` copies whole rows).
+    pub fn set_clip_columns(&mut self, left: u16, right: u16) {
+        self.with(|i| {
+            i.clip_cols = (right > left).then_some((usize::from(left), usize::from(right)));
+        });
     }
 
     /// Respuestas para el PTY (DA, DSR, colores…) desde la última llamada.

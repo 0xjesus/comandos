@@ -12,6 +12,7 @@
 //! al redibujar; una aplicación que no lo pida no ve ninguna diferencia.
 
 pub mod clock;
+pub mod crop;
 pub mod engine;
 pub mod glyphs;
 pub mod input;

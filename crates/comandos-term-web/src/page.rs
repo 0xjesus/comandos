@@ -58,6 +58,15 @@ pub struct Page {
     observer: Option<ResizeObserver>,
     observer_cb: Option<Closure<dyn FnMut(Array, ResizeObserver)>>,
     ack_timers: BTreeMap<u64, timers::Handle>,
+    /// Phone showing one pane of a split ([`crate::crop`]): the client attaches with
+    /// `ignore-size` and the grid is the whole window.
+    crop: Option<comandos_term::crop::Plan>,
+    ignore_size: bool,
+    /// Pane the parent asked for (`select-pane`), and the last pane listing.
+    wanted_pane: Option<String>,
+    panes: Vec<Value>,
+    /// The person's font size (server preferences), restored when the crop ends.
+    base_font: f64,
 }
 fn window() -> Result<web_sys::Window, JsValue> {
     web_sys::window().ok_or_else(|| "sin window".into())
@@ -231,6 +240,9 @@ pub fn send_with_ack(data: &[u8], timeout_ms: u32) -> Promise {
     })
 }
 fn schedule_fit(page: &Rc<RefCell<Page>>) {
+    if page.borrow().crop.is_some() {
+        crop_view(page);
+    }
     let mut p = page.borrow_mut();
     p.fit_timer.take();
     if p.disposed {
@@ -436,6 +448,8 @@ fn connect(page: &Rc<RefCell<Page>>) {
         p.last_size = Some((cols, rows));
         let init = if s.protocol() == "tty" {
             json!({"AuthToken":"","columns":cols,"rows":rows})
+        } else if p.ignore_size {
+            json!({"v":1,"cols":cols,"rows":rows,"session":p.session,"ignoreSize":true})
         } else {
             json!({"v":1,"cols":cols,"rows":rows,"session":p.session})
         };
@@ -514,7 +528,13 @@ fn connect(page: &Rc<RefCell<Page>>) {
                     .ok()
                     .and_then(|v| v.as_f64())
                     .unwrap_or(current_size);
-                t.borrow_mut().set_font(&family, size);
+                // A cropped pane keeps its fitted size; the preference waits for the end.
+                let cropped = {
+                    let mut p = page.borrow_mut();
+                    p.base_font = size;
+                    p.crop.is_some()
+                };
+                t.borrow_mut().set_font(&family, if cropped { current_size } else { size });
                 schedule_fit(&page);
             }
             _ => {}
@@ -637,7 +657,11 @@ fn handle(page: &Rc<RefCell<Page>>, command: Command) {
         }
         Command::ButtonStyle(style) => apply_buttons(&style),
         Command::Session(session) => switch_session(page, &session),
-        Command::SelectPane(pane) => select_pane(page, pane),
+        Command::SelectPane(pane) => {
+            page.borrow_mut().wanted_pane = Some(pane.clone());
+            crop_update(page);
+            select_pane(page, pane)
+        }
         Command::Interaction {
             known,
             busy,
@@ -877,6 +901,193 @@ fn select_pane(page: &Rc<RefCell<Page>>, pane: String) {
             })),
         }
     });
+}
+/// Phones get the pane chips in the parent; the frame follows the same breakpoint
+/// (a cross-origin parent cannot be read: then the frame's own width decides).
+fn phone() -> bool {
+    let Ok(w) = window() else { return false };
+    let own = w.inner_width().ok().and_then(|v| v.as_f64());
+    let top = w
+        .parent()
+        .ok()
+        .flatten()
+        .filter(|p| *p != w)
+        .and_then(|p| Reflect::get(&p, &"innerWidth".into()).ok())
+        .and_then(|v| v.as_f64());
+    top.or(own).is_some_and(|width| width <= comandos_term::crop::PHONE_WIDTH)
+}
+/// The pane chrome's latest `/terminal-panes` listing (no extra request to tmux).
+pub fn panes_seen(panes: &[Value]) {
+    let Some(page) = PAGE.with(|slot| slot.borrow().clone()) else { return };
+    if page.borrow().disposed {
+        return;
+    }
+    page.borrow_mut().panes = panes.to_vec();
+    crop_update(&page);
+}
+/// The pane a phone shows alone, if any (history and copies use it).
+pub fn crop_pane() -> Option<String> {
+    PAGE.with(|slot| slot.borrow().as_ref().and_then(|p| p.try_borrow().ok()?.crop.as_ref().map(|c| c.pane.clone())))
+}
+fn content_size(el: &HtmlElement) -> (f64, f64) {
+    let style = window().ok().and_then(|w| w.get_computed_style(el).ok().flatten());
+    let px = |name: &str| {
+        style
+            .as_ref()
+            .and_then(|s| s.get_property_value(name).ok())
+            .and_then(|v| v.trim_end_matches("px").trim().parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    (px("width"), px("height"))
+}
+fn screen_style(t: &Term, view: Option<(String, String)>) {
+    let Some(screen) = t.try_borrow().ok().and_then(|t| t.screen()) else { return };
+    let style = screen.style();
+    match view {
+        Some((transform, clip)) => {
+            let _ = style.set_property("transform-origin", "0 0");
+            let _ = style.set_property("transform", &transform);
+            let _ = style.set_property("clip-path", &clip);
+        }
+        None => {
+            for name in ["transform-origin", "transform", "clip-path"] {
+                let _ = style.remove_property(name);
+            }
+        }
+    }
+}
+/// Starts, moves or ends the one-pane view after a listing or a `select-pane`.
+fn crop_update(page: &Rc<RefCell<Page>>) {
+    let (plan, was) = {
+        let p = page.borrow();
+        if p.disposed {
+            return;
+        }
+        (comandos_term::crop::plan(&p.panes, p.wanted_pane.as_deref(), phone()), p.crop.clone())
+    };
+    if plan == was {
+        return;
+    }
+    let Some(t) = term(page) else { return };
+    {
+        // Busy terminal: the next listing (2 s) tries again.
+        let Ok(mut tb) = t.try_borrow_mut() else { return };
+        match &plan {
+            Some(c) => {
+                tb.set_fixed_size(c.cols, c.rows);
+                tb.set_clip_columns(c.left, c.left.saturating_add(c.width));
+            }
+            None => {
+                tb.set_fixed_size(0, 0);
+                tb.set_clip_columns(0, 0);
+            }
+        }
+    }
+    let reconnect = plan.is_some() != was.is_some();
+    let base = {
+        let mut p = page.borrow_mut();
+        p.crop = plan.clone();
+        p.ignore_size = plan.is_some();
+        p.base_font
+    };
+    if let Some(root) = window().ok().and_then(|w| w.document()).and_then(|d| d.document_element()) {
+        let _ = root.class_list().toggle_with_force("cropped", plan.is_some());
+    }
+    if plan.is_none() {
+        screen_style(&t, None);
+        if let Ok(mut tb) = t.try_borrow_mut() {
+            let family = tb.with(|i| i.opts.font_family.clone()).unwrap_or_else(|| FONT.into());
+            tb.set_font(&family, base);
+        }
+    }
+    if reconnect {
+        // The attach flags change: a new client, exactly like a column change.
+        let mut p = page.borrow_mut();
+        if socket_open(&p) {
+            p.resizing = true;
+            if let Some(socket) = &p.socket {
+                let _ = socket.close_with_code_and_reason(1000, "resize");
+            }
+        }
+        drop(p);
+        crop_view(page);
+    } else {
+        schedule_fit(page);
+    }
+}
+/// Fits the chosen pane to the frame: font from its width and height, then the
+/// window's cells shifted and clipped to it.
+fn crop_view(page: &Rc<RefCell<Page>>) {
+    let (plan, base) = {
+        let p = page.borrow();
+        (p.crop.clone(), p.base_font)
+    };
+    let (Some(plan), Some(t), Some(host)) = (plan, term(page), element("term")) else {
+        return;
+    };
+    let host_size = content_size(&host);
+    if host_size.0 <= 0.0 || host_size.1 <= 0.0 {
+        return;
+    }
+    let measure = |t: &Term| {
+        t.try_borrow().ok()?.with(|i| {
+            let (cw, ch) = i.metrics.css_cell(i.size.cols, i.size.rows).unwrap_or((0.0, 0.0));
+            (i.opts.font_size, i.opts.font_family.clone(), cw, ch)
+        })
+    };
+    let Some((font, family, cw, ch)) = measure(&t) else { return };
+    if cw <= 0.0 || ch <= 0.0 {
+        return;
+    }
+    let target = comandos_term::crop::font_size(base, (cw / font, ch / font), host_size, (plan.width, plan.height));
+    let mut cell = (cw, ch);
+    if (target - font).abs() >= 0.25 {
+        if let Ok(mut tb) = t.try_borrow_mut() {
+            tb.set_font(&family, target);
+        }
+        // Cells round to device pixels: step down until the pane really fits.
+        for _ in 0..8 {
+            let Some((now, _, w, h)) = measure(&t) else { break };
+            cell = (w, h);
+            if f64::from(plan.width) * w <= host_size.0 + 0.5 || now <= comandos_term::crop::MIN_FONT {
+                break;
+            }
+            if let Ok(mut tb) = t.try_borrow_mut() {
+                tb.set_font(&family, (now - 0.25).max(comandos_term::crop::MIN_FONT));
+            }
+        }
+    }
+    screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell)));
+    if (target - font).abs() >= 0.25 {
+        // The new size finishes loading asynchronously and may re-measure the cell.
+        let weak = Rc::downgrade(page);
+        timers::timeout_detached(400, move || {
+            if let Some(page) = weak.upgrade()
+                && page.borrow().crop.is_some()
+                && let (Some(plan), Some(t)) = (page.borrow().crop.clone(), term(&page))
+                && let Some(cell) = t.try_borrow().ok().and_then(|t| {
+                    t.with(|i| i.metrics.css_cell(i.size.cols, i.size.rows)).flatten()
+                })
+            {
+                screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell)));
+            }
+        });
+    }
+}
+/// Whether a pointer at `(x, y)` (client px) falls outside the pane shown alone:
+/// those cells belong to hidden panes and a tap there would focus one of them.
+fn outside_crop(page: &Rc<RefCell<Page>>, x: f64, y: f64) -> bool {
+    let Some(plan) = page.borrow().crop.clone() else { return false };
+    let Some(t) = term(page) else { return false };
+    let Some((screen, cell)) = t.try_borrow().ok().and_then(|t| {
+        Some((t.screen()?, t.with(|i| i.metrics.css_cell(i.size.cols, i.size.rows)).flatten()?))
+    }) else {
+        return false;
+    };
+    let r = screen.get_bounding_client_rect();
+    let (x0, y0) = (r.left() + f64::from(plan.left) * cell.0, r.top() + f64::from(plan.top) * cell.1);
+    let (x1, y1) = (x0 + f64::from(plan.width) * cell.0, y0 + f64::from(plan.height) * cell.1);
+    !(x >= x0 && x < x1 && y >= y0 && y < y1)
 }
 /// Generic web-build loader entrypoint.
 #[wasm_bindgen]
@@ -1132,6 +1343,11 @@ fn attach_main() -> Result<(), JsValue> {
         observer: None,
         observer_cb: None,
         ack_timers: BTreeMap::new(),
+        crop: None,
+        ignore_size: false,
+        wanted_pane: None,
+        panes: Vec::new(),
+        base_font: 14.0,
     }));
     if page.borrow().debug
         && let Some(dbg) = element("dbg")
@@ -1252,6 +1468,48 @@ fn attach_main() -> Result<(), JsValue> {
                 }
                 p.last_interaction = now();
                 post("user-interaction", None);
+            },
+        ));
+    }
+    // Before every other handler (window, capture): pointers on the hidden cells
+    // around a cropped pane go nowhere.
+    for kind in ["pointerdown", "mousedown", "mouseup", "click", "dblclick", "contextmenu", "wheel", "touchstart"] {
+        let weak = Rc::downgrade(&page);
+        listeners.push(events::on_with(
+            w.as_ref(),
+            kind,
+            events::Options {
+                capture: true,
+                ..Default::default()
+            },
+            move |event| {
+                let Some(page) = weak.upgrade() else { return };
+                if page.borrow().crop.is_none() {
+                    return;
+                }
+                let inside_term = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                    .and_then(|e| e.closest("#term").ok().flatten())
+                    .is_some();
+                if !inside_term {
+                    return;
+                }
+                let point = if let Some(touch) = event.dyn_ref::<web_sys::TouchEvent>() {
+                    touch.touches().get(0).map(|t| (f64::from(t.client_x()), f64::from(t.client_y())))
+                } else {
+                    event
+                        .dyn_ref::<web_sys::MouseEvent>()
+                        .map(|m| (f64::from(m.client_x()), f64::from(m.client_y())))
+                };
+                if let Some((x, y)) = point
+                    && outside_crop(&page, x, y)
+                {
+                    event.stop_immediate_propagation();
+                    if event.cancelable() && event.type_() != "touchstart" {
+                        event.prevent_default();
+                    }
+                }
             },
         ));
     }

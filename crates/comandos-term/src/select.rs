@@ -279,6 +279,29 @@ pub fn selected_text(engine: &Engine, s: &Selection) -> String {
     parts.join("\n").replace('\u{a0}', " ")
 }
 
+/// Selected text limited to the columns `cols.0..cols.1` of every row: the phone
+/// showing one pane of a split copies only that pane, never the neighbour drawn
+/// beside it on the same rows. Rows are never joined (tmux pads each pane row).
+pub fn selected_text_within(engine: &Engine, s: &Selection, cols: (usize, usize)) -> String {
+    let Some(((row0, col0), (row1, col1))) = selection_bounds(engine, s) else {
+        return String::new();
+    };
+    let (left, right) = cols;
+    let block = s.mode == SelectMode::Block;
+    let mut parts = Vec::new();
+    for row in row0..=row1 {
+        let from = if row == row0 || block { usize::from(col0).max(left) } else { left };
+        let to = if row == row1 || block { (usize::from(col1) + 1).min(right) } else { right };
+        let text = if from < to {
+            cells(engine, row).map(|line| row_text(line, from, Some(to))).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        parts.push(text.trim_end().to_owned());
+    }
+    parts.join("\n").replace('\u{a0}', " ")
+}
+
 /// Palabra bajo `point` como la elige el doble clic de xterm.js
 /// (`_getWordAt` con `allowWhitespaceOnlySelection`): sobre una racha de
 /// espacios es la racha entera. Devuelve la primera y la última celda de la

@@ -418,6 +418,10 @@ fn pane_label(pane: &JsValue, index: u32) -> (String, String) {
     };
     (path, label)
 }
+/// History of the pane a phone shows alone (the whole window has two or more).
+fn shown_pane() -> Value {
+    crate::page::crop_pane().map_or_else(|| json!({}), |pane| json!({ "pane": pane }))
+}
 async fn history_open(ui: Ui, request: Value) -> Result<JsValue, JsValue> {
     gestures::prepare_history(&ui);
     let (revision, session, auth) = {
@@ -1365,12 +1369,12 @@ fn mount(ui: &Ui) -> Result<(), JsValue> {
             return Ok(JsValue::UNDEFINED);
         }
         match get(&data, "action").as_string().as_deref() {
-            Some("history") => return Ok(promise(history_open(u.clone(), json!({})))),
+            Some("history") => return Ok(promise(history_open(u.clone(), shown_pane()))),
             Some("mode") if u.borrow().controls => {
                 if u.borrow().history {
                     history_close(&u)
                 } else {
-                    return Ok(promise(history_open(u.clone(), json!({}))));
+                    return Ok(promise(history_open(u.clone(), shown_pane())));
                 }
             }
             Some("panes") => return Ok(promise(panes_open(u.clone()))),
@@ -1417,7 +1421,7 @@ fn mount(ui: &Ui) -> Result<(), JsValue> {
                 return Ok(promise(async move {
                     if !copy(&u).await {
                         if !u.borrow().history {
-                            history_open(u.clone(), json!({})).await?;
+                            history_open(u.clone(), shown_pane()).await?;
                         }
                         text(
                             "history-status",

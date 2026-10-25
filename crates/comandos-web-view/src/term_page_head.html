@@ -168,6 +168,9 @@
   /* Manita (1-oct): agarrar al pasar por el canal, agarrando mientras se arrastra. */
   #term:is(.resize-col,.resize-row) .xterm-screen, #term:is(.resize-col,.resize-row) .xterm-screen * { cursor:grab !important; }
   #term.grabbing .xterm-screen, #term.grabbing .xterm-screen * { cursor:grabbing !important; }
+  /* Phone showing one pane of a split (crop.rs): the pane alone, edge to edge, no frames. */
+  html.cropped #term { padding: 2px 0 0 2px; }
+  html.cropped #pane-chrome { display:none; }
   #pane-chrome .pc-head { position:absolute; box-sizing:border-box; display:flex; align-items:center; gap:8px; padding:0 10px;
     border-radius:9px 9px 0 0; background:color-mix(in srgb, var(--term-panel) 65%, var(--term-line2)); font:11px var(--sans); color:var(--term-text); }
   #pane-chrome .pc-head b { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%; }

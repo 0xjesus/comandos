@@ -201,8 +201,13 @@ fn draw(rc: &Shared) {
     if s.disposed {
         return;
     }
-    let Some(a) = geometry(&s) else {
+    // A phone showing one pane alone: no frames over it and no gutters to drag
+    // (they would resize the desktop's split).
+    let cropped = crate::page::crop_pane().is_some();
+    let Some(a) = geometry(&s).filter(|_| !cropped) else {
         s.frames.set_inner_html("");
+        let _ = Reflect::set(s.frames.as_ref(), &"_html".into(), &"".into());
+        s.hot = None;
         s.gutters.clear();
         drop(s);
         draw_grip(rc);
@@ -489,6 +494,8 @@ fn refresh(rc: &Shared) {
             }
             s.busy = false;
         }
+        let panes = rc.borrow().panes.clone();
+        crate::page::panes_seen(&panes);
         draw(&rc);
     });
 }

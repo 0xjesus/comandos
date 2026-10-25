@@ -8,6 +8,12 @@ fn closed_commands_and_exact_names() {
         AttachCommand::Attach {
             session: "s".into(),
             active_pane: true,
+            ignore_size: false,
+        },
+        AttachCommand::Attach {
+            session: "s".into(),
+            active_pane: true,
+            ignore_size: true,
         },
     ] {
         let args = command.args().join(" ");
@@ -44,10 +50,30 @@ fn closed_commands_and_exact_names() {
     assert_eq!(
         AttachCommand::Attach {
             session: "s".into(),
-            active_pane: true
+            active_pane: true,
+            ignore_size: false,
         }
         .args(),
         ["attach", "-f", "active-pane", "-t", "=s"]
+    );
+    assert_eq!(
+        AttachCommand::Attach {
+            session: "s".into(),
+            active_pane: true,
+            ignore_size: true,
+        }
+        .args(),
+        ["attach", "-f", "active-pane,ignore-size", "-t", "=s"]
+    );
+    // tmux before 3.2 has no `attach -f`: the flag is dropped with active-pane.
+    assert_eq!(
+        AttachCommand::Attach {
+            session: "s".into(),
+            active_pane: false,
+            ignore_size: true,
+        }
+        .args(),
+        ["attach", "-t", "=s"]
     );
 }
 #[path = "support/private_tmux.rs"]
@@ -96,6 +122,7 @@ fn init() -> Init {
         cols: 100,
         rows: 30,
         session: Some("t1".into()),
+        ignore_size: false,
     }
 }
 #[tokio::test]
@@ -523,6 +550,7 @@ async fn no_sessions_uses_private_home_shell_and_reaps_on_exit() {
             cols: 80,
             rows: 24,
             session: None,
+            ignore_size: false,
         },
         Source::Pty {
             target: comandos_server::dash::term::attach::TmuxTarget::Private(home.root.clone()),
@@ -748,6 +776,7 @@ async fn child_exit_drains_final_pty_bytes_before_close() {
             cols: 80,
             rows: 24,
             session: None,
+            ignore_size: false,
         },
         Source::Pty {
             target: comandos_server::dash::term::attach::TmuxTarget::Private(home.root.clone()),
@@ -978,4 +1007,86 @@ async fn scoped_private_attach_and_free_shell_preserve_interaction_and_reap() {
         wait_clients(&tmux, 0).await;
         assert!(tmux.tmux(&["has-session", "-t", "=t1"]).status.success());
     }
+}
+
+/// A phone that crops one pane of a desktop split attaches with `ignore-size`: its
+/// typing and resizes leave the shared window at the desktop's size.
+#[tokio::test]
+async fn an_ignore_size_phone_never_sizes_the_shared_window() {
+    let Some(tmux) = private_tmux::PrivateTmux::start(&["t1"]) else {
+        return;
+    };
+    assert!(tmux.tmux(&["set", "-g", "window-size", "latest"]).status.success());
+    let window = || {
+        String::from_utf8_lossy(
+            &tmux
+                .tmux(&["display", "-p", "-t", "=t1:", "#{window_width}x#{window_height}"])
+                .stdout,
+        )
+        .trim()
+        .to_owned()
+    };
+    let target = tmux.target();
+    let bridge = |init: Init| {
+        let target = target.clone();
+        async move {
+        let (server, mut client) = pair().await;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(run_bridge(
+            server,
+            Dialect::V1,
+            init,
+            Source::Pty {
+                target,
+                session: None,
+            },
+            BridgeLimits::default(),
+            rx,
+        ));
+        client.next().await.unwrap().unwrap();
+        client.next().await.unwrap().unwrap();
+        (client, stop, task)
+        }
+    };
+    let (mut desktop, _d, desktop_task) = bridge(init()).await;
+    wait_clients(&tmux, 1).await;
+    timeout(WAIT, async {
+        while window() != "100x29" {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (mut phone, _p, phone_task) = bridge(Init {
+        cols: 45,
+        rows: 30,
+        session: Some("t1".into()),
+        ignore_size: true,
+    })
+    .await;
+    wait_clients(&tmux, 2).await;
+    phone.send(Message::binary(b"0printf 'phone-typed\\n'\r".to_vec())).await.unwrap();
+    phone.send(Message::text("1{\"columns\":41,\"rows\":20}")).await.unwrap();
+    timeout(WAIT, async {
+        while !tmux.capture().contains("phone-typed") {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(window(), "100x29", "the phone must not take the window");
+    desktop.send(Message::text("1{\"columns\":120,\"rows\":40}")).await.unwrap();
+    timeout(WAIT, async {
+        while window() != "120x39" {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(phone);
+    drop(desktop);
+    timeout(WAIT, phone_task).await.unwrap().unwrap().unwrap();
+    timeout(WAIT, desktop_task).await.unwrap().unwrap().unwrap();
+    wait_clients(&tmux, 0).await;
 }

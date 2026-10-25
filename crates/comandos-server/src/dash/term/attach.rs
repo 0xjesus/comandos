@@ -13,7 +13,13 @@ pub enum AttachCommand {
     Version,
     HasSession(String),
     ListSessionNames,
-    Attach { session: String, active_pane: bool },
+    /// `ignore_size` only applies with `active_pane` (both are `attach -f` flags of
+    /// tmux 3.2): a phone cropping one pane of a desktop split never sizes the window.
+    Attach {
+        session: String,
+        active_pane: bool,
+        ignore_size: bool,
+    },
 }
 impl AttachCommand {
     pub fn args(&self) -> Vec<String> {
@@ -28,10 +34,12 @@ impl AttachCommand {
             Self::Attach {
                 session,
                 active_pane,
+                ignore_size,
             } => {
                 let mut args = vec!["attach".into()];
                 if *active_pane {
-                    args.extend(["-f".into(), "active-pane".into()]);
+                    let flags = if *ignore_size { "active-pane,ignore-size" } else { "active-pane" };
+                    args.extend(["-f".into(), flags.into()]);
                 }
                 args.extend(["-t".into(), format!("={session}")]);
                 args

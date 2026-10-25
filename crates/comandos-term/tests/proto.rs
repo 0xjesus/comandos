@@ -14,7 +14,18 @@ fn v1_init_carries_session() {
     )
     .unwrap();
     assert_eq!(init.session.as_deref(), Some("term-1-2"));
+    assert!(!init.ignore_size);
     assert!(parse_init(Dialect::V1, br#"{"v":2,"cols":80,"rows":24}"#).is_err());
+}
+
+#[test]
+fn only_an_explicit_v1_flag_keeps_a_client_from_sizing_the_window() {
+    let init = |raw: &[u8]| parse_init(Dialect::V1, raw).unwrap().ignore_size;
+    assert!(init(br#"{"v":1,"cols":156,"rows":41,"session":"s","ignoreSize":true}"#));
+    assert!(!init(br#"{"v":1,"cols":156,"rows":41,"ignoreSize":"yes"}"#));
+    assert!(!init(br#"{"v":1,"cols":156,"rows":41,"ignoreSize":false}"#));
+    let tty = parse_init(Dialect::Tty, br#"{"columns":96,"rows":30,"ignoreSize":true}"#).unwrap();
+    assert!(!tty.ignore_size, "the ttyd dialect has no such flag");
 }
 
 #[test]

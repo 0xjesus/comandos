@@ -100,6 +100,8 @@
   #paste-dialog button { background:var(--term-panel2); border:1px solid var(--term-line2); color:var(--term-text);
     border-radius:4px; padding:6px 10px; font:inherit; }
   #paste-dialog button:hover { border-color:var(--term-brand); }
+  /* Remoto: la barra de teclas y el borrador los dibuja la página padre (una sola barra en chat y terminal). */
+  html.docked #term-toolbar, html.docked #mobile-compose { display:none !important; }
   #mobile-compose { display:flex; gap:6px; padding:6px; border-top:1px solid var(--term-line2); background:var(--term-panel); min-width:0; }
   #mobile-draft { flex:1; min-width:0; resize:none; max-height:25dvh; box-sizing:border-box; padding:8px;
     border:1px solid var(--term-line2); border-radius:4px; background:var(--term-bg); color:var(--term-text);
@@ -168,6 +170,9 @@
   /* Manita (1-oct): agarrar al pasar por el canal, agarrando mientras se arrastra. */
   #term:is(.resize-col,.resize-row) .xterm-screen, #term:is(.resize-col,.resize-row) .xterm-screen * { cursor:grab !important; }
   #term.grabbing .xterm-screen, #term.grabbing .xterm-screen * { cursor:grabbing !important; }
+  /* Phone showing one pane of a split (crop.rs): the pane alone, edge to edge, no frames. */
+  html.cropped #term { padding: 2px 0 0 2px; }
+  html.cropped #pane-chrome { display:none; }
   #pane-chrome .pc-head { position:absolute; box-sizing:border-box; display:flex; align-items:center; gap:8px; padding:0 10px;
     border-radius:9px 9px 0 0; background:color-mix(in srgb, var(--term-panel) 65%, var(--term-line2)); font:11px var(--sans); color:var(--term-text); }
   #pane-chrome .pc-head b { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%; }

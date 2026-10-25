@@ -123,6 +123,9 @@ pub struct Init {
     pub cols: u16,
     pub rows: u16,
     pub session: Option<String>,
+    /// v1 `"ignoreSize":true`: this client must never size the shared tmux window
+    /// (a phone showing one pane of a desktop split).
+    pub ignore_size: bool,
 }
 
 /// Lee `cols_key`/`rows_key` como enteros dentro de los rangos aceptados.
@@ -158,6 +161,7 @@ pub fn parse_init(dialect: Dialect, frame: &[u8]) -> Result<Init, ProtoError> {
                 cols,
                 rows,
                 session: None,
+                ignore_size: false,
             })
         }
         Dialect::V1 => {
@@ -169,6 +173,7 @@ pub fn parse_init(dialect: Dialect, frame: &[u8]) -> Result<Init, ProtoError> {
                 cols,
                 rows,
                 session: v.get("session").and_then(Value::as_str).map(str::to_string),
+                ignore_size: v.get("ignoreSize").and_then(Value::as_bool) == Some(true),
             })
         }
     }

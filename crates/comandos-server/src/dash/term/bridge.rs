@@ -110,6 +110,7 @@ where
                 command: Some(AttachCommand::Attach {
                     session,
                     active_pane,
+                    ignore_size: init.ignore_size,
                 }),
                 tail: Vec::new(),
                 skip_lf: false,
@@ -180,6 +181,7 @@ where
                                 AttachCommand::Attach {
                                     session: session.clone(),
                                     active_pane,
+                                    ignore_size: init.ignore_size,
                                 }
                             }),
                             tail,
