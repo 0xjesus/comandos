@@ -145,11 +145,26 @@ paned separator { background: @LINE@; min-width: 2px; }
 .help-hint { color: @FAINT@; }
 /* Vista chat (escritorio): la conversación del agente en lugar de la terminal. */
 .cv-root { background-color: @BG@; }
-.cv-title { padding: 8px 14px; color: @TEXT@; font-weight: 600; border-bottom: 1px solid @LINE@; background-color: @BAR@; }
+.cv-head { padding: 6px 10px 6px 14px; border-bottom: 1px solid @LINE@; background-color: @BAR@; }
+.cv-title { color: @TEXT@; font-weight: 600; padding-right: 6px; }
+.cv-chip { background-image: none; background-color: @BG@; color: @DIM@; border: 1px solid @LINE2@; border-radius: 999px; padding: 2px 12px; min-height: 26px; font-size: 12px; font-weight: 600; }
+.cv-chip:hover { color: @TEXT@; border-color: @BRAND@; }
+.cv-chip.on { background-color: @BRAND@; border-color: @BRAND@; color: #ffffff; }
+.cv-act { background-image: none; background-color: transparent; color: @DIM@; border: 1px solid @LINE2@; border-radius: 8px; padding: 2px 10px; min-height: 26px; font-size: 12px; font-weight: 600; }
+.cv-act:hover { color: @TEXT@; border-color: @BRAND@; background-color: @BG@; }
+.cv-act.cv-primary { background-color: @BRAND@; border-color: @BRAND@; color: #ffffff; }
+.cv-act-me { margin-right: 4px; }
+.cv-acts { margin-top: 2px; }
+.cv-rich, .cv-rich text { background-color: transparent; color: @TEXT@; font-size: 14px; }
+.cv-rich text selection, .cv-text selection { background-color: @BRAND@; color: #ffffff; }
+.cv-rich.cv-editing { border: 1px dashed @BRAND@; border-radius: 8px; padding: 6px 8px; }
+.cv-rich.cv-editing text { background-color: @BG@; }
+.cv-copy { background-image: none; background-color: @BAR@; color: @TEXT@; border: 1px solid @LINE2@; border-radius: 7px; padding: 0 10px; min-height: 22px; font-size: 11px; font-weight: 600; }
+.cv-copy:hover { border-color: @BRAND@; }
 .cv-feed { padding: 16px 20px 20px; }
 .cv-me { background-color: @BRAND@; padding: 10px 15px; border-radius: 18px 18px 4px 18px; margin-left: 80px; }
 .cv-me .cv-text { color: #ffffff; }
-.cv-ai { background-color: @BAR@; padding: 13px 17px; border-radius: 18px 18px 18px 4px; border: 1px solid @LINE@; margin-right: 60px; }
+.cv-ai { background-color: @BAR@; padding: 13px 17px 10px; border-radius: 18px 18px 18px 4px; border: 1px solid @LINE@; }
 .cv-text { color: @TEXT@; font-size: 14px; }
 .cv-codeblock { background-color: @BG@; border: 1px solid @LINE@; border-radius: 10px; margin: 2px 0; }
 .cv-lang { color: @FAINT@; font-family: monospace; font-size: 11px; padding: 7px 14px 0; }

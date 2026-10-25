@@ -874,6 +874,12 @@ impl App {
         .map_err(|e| format!("{e:?}"))?;
         self.attach_term_keys(key, &term);
         self.attach_term_t16(key, &term);
+        let (weak, wheel_key) = (Rc::downgrade(self), key.to_string());
+        term.on_wheel_up(Rc::new(move |col, row| {
+            weak.upgrade()
+                .filter(|a| !a.closed.load(Ordering::Acquire))
+                .is_some_and(|app| app.chat_wheel(&wheel_key, col, row))
+        }));
         Ok(term)
     }
     fn add_tab(self: &Rc<Self>, key: &str, label: &str, attach: bool, error: Option<&str>) {
@@ -1876,9 +1882,19 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         *app.dashboard_observation.borrow_mut() = observation;
         let terminals = gtk::Box::new(gtk::Orientation::Vertical, 0);
         terminals.pack_start(app.tab_layout.widget(), false, false, 0);
-        terminals.pack_start(&notebook, true, true, 0);
-        app.install_chat(&terminals, &notebook);
-        terminals.pack_start(app.workspace.widget(), true, true, 0);
+        // The tabs or the mosaic are the `term` page; the chat is its own page, so
+        // whatever re-shows the notebook or the mosaic never draws tmux under the chat.
+        let term_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        term_page.pack_start(&notebook, true, true, 0);
+        term_page.pack_start(app.workspace.widget(), true, true, 0);
+        let pages = gtk::Stack::new();
+        pages.set_transition_type(gtk::StackTransitionType::None);
+        pages.set_hhomogeneous(false);
+        pages.set_vhomogeneous(false);
+        pages.add_named(&term_page, "term");
+        app.install_chat(&pages);
+        pages.set_visible_child_name("term");
+        terminals.pack_start(&pages, true, true, 0);
         terminals.pack_start(&app.status, false, false, 0);
         app.t18.side.pack1(&webview, true, false);
         paned.pack1(&app.t18.side, true, false);
