@@ -806,3 +806,16 @@ fn underline_color_without_underline_does_not_split_runs() {
         [("xy", None), ("z", Some(p.ansi[1]))]
     );
 }
+
+#[test]
+fn device_size_keeps_real_pixels_and_fixes_css_sized_reports() {
+    use comandos_term::render::device_size;
+    // A phone at dpr 3 reports real device pixels: kept, rounding included.
+    assert_eq!(device_size(1056, 552, (352.0, 184.0), 3.0), (1056, 552));
+    assert_eq!(device_size(1057, 551, (352.3, 183.8), 3.0), (1057, 551));
+    // Emulation reporting the CSS size at dpr 3: painted at CSS times dpr instead.
+    assert_eq!(device_size(352, 184, (352.0, 184.0), 3.0), (1056, 552));
+    // dpr 1 and a fractional dpr stay as reported.
+    assert_eq!(device_size(800, 600, (800.0, 600.0), 1.0), (800, 600));
+    assert_eq!(device_size(1101, 826, (880.6, 660.6), 1.25), (1101, 826));
+}

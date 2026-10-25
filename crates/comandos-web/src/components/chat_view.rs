@@ -96,6 +96,13 @@ fn dock_all() {
         let _ = post(&get(&get(&frames, &i.to_string()), "frame"), serde_json::from_str(DOCK).unwrap_or_default());
     }
 }
+/// Whether `source` (a message's window) is one of the open session terminals.
+fn is_session_frame(source: &JsValue) -> bool {
+    let frames = invoke(&get(&global("Array"), "from"), &[call(&global("openTerms"), "values", &[]).unwrap_or(JsValue::NULL)])
+        .unwrap_or(JsValue::NULL);
+    (0..number(&get(&frames, "length")) as u32)
+        .any(|i| get(&get(&get(&frames, &i.to_string()), "frame"), "contentWindow") == *source)
+}
 /// The live panes of a session, in tmux order (`/states` rows, polled by the page).
 fn rows(session: &str) -> Vec<PaneRow> {
     let state = invoke(&global("__comandosState"), &[]).unwrap_or_else(|_| global("S"));
@@ -714,6 +721,11 @@ pub fn install() -> Result<(), JsValue> {
             // A reloaded frame lost its per-client focus: select again.
             me_pane.synced.replace(String::new());
             let source = get(&e, "source");
+            // Only session terminals hand their bar to this page. The side panel's
+            // terminal keeps its own keys and draft: nothing here draws them for it.
+            if !is_session_frame(&source) {
+                return Ok(JsValue::UNDEFINED);
+            }
             if let Ok(m) = invoke(&get(&global("JSON"), "parse"), &[DOCK.into()]) {
                 let _ = call(&source, "postMessage", &[m, get(&global("location"), "origin")]);
             }

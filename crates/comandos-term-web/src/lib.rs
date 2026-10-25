@@ -1399,6 +1399,7 @@ impl Inner {
         let (Some(w), Some(h)) = (dim("inlineSize"), dim("blockSize")) else {
             return;
         };
+        let (w, h) = self.trusted_device_size(&entry, w, h);
         // Otro monitor con otro `devicePixelRatio` sin cambio de tamaño CSS:
         // hay que volver a medir, si no se pinta con la celda vieja.
         if self.dpr() != self.metrics.dpr && matches!(self.remeasure(), Ok(true)) {
@@ -1411,6 +1412,28 @@ impl Inner {
             self.scheduler.resize(self.size.rows);
             self.touch();
         }
+    }
+
+    /// The device size to paint at. A browser can report the CSS size as the device
+    /// size while `devicePixelRatio` is not 1 (Chrome's device emulation does); the
+    /// fonts are drawn at `dpr`, so trusting it would draw the text `dpr` times too big
+    /// into a third of the screen. Then the size comes from the CSS box times `dpr`.
+    fn trusted_device_size(&self, entry: &JsValue, w: u32, h: u32) -> (u32, u32) {
+        let css = js_sys::Reflect::get(entry, &"contentBoxSize".into())
+            .ok()
+            .and_then(|list| js_sys::Reflect::get_u32(&list, 0).ok())
+            .filter(|v| v.is_object());
+        let Some(css) = css else { return (w, h) };
+        let get = |key: &str| {
+            js_sys::Reflect::get(&css, &key.into())
+                .ok()
+                .and_then(|v| v.as_f64())
+                .filter(|v| v.is_finite() && *v > 0.0)
+        };
+        let (Some(cw), Some(ch)) = (get("inlineSize"), get("blockSize")) else {
+            return (w, h);
+        };
+        comandos_term::render::device_size(w, h, (cw, ch), self.dpr())
     }
 
     fn proposed_size(&mut self) -> Option<GridSize> {

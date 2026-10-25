@@ -789,6 +789,13 @@ button.wm-suggest{font:600 10px var(--sans);padding:2px 7px;border-radius:999px;
 #command-sidebar.terms-hidden .sec-terms{flex:none}
 #command-sidebar.terms-hidden .mini{display:none}
 body.ws-dragging #command-sidebar .sb-term{pointer-events:none}
+/* Teléfono: la terminal del panel trae su barra de teclas y su cuadro de texto, así que se queda
+   con la mayor parte de la columna; los archivos de arriba hacen scroll en lo que queda
+   (command_sidebar.rs les pone flex en línea: de ahí el !important). */
+@media (max-width:600px){
+  #command-sidebar:not(.no-terms):not(.terms-hidden) .cs-empty-terms{flex:0 1 24%!important;min-height:120px!important}
+  #command-sidebar:not(.no-terms):not(.terms-hidden) .sec-terms{flex:1 1 76%;min-height:300px}
+}
 /* Barra de herramientas (grill 1-oct, diseño 1): fila Comandos · Cadenas · Servidores; su
    panel flota encima de la terminal, que siempre se queda con la columna. */
 #command-sidebar{position:relative}

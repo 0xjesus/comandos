@@ -879,3 +879,17 @@ mod tests {
         assert_eq!(dim_toward([255, 0, 10], [0, 255, 10]), [128, 127, 10]);
     }
 }
+
+/// The canvas size in device pixels: the observed `(w, h)` when it matches the CSS box
+/// times `dpr` within rounding, else the CSS box times `dpr`. Chrome's device emulation
+/// reports the CSS size as the device size at `dpr` 3; the glyphs are drawn at `dpr`, so
+/// trusting it would draw the text three times too big into a third of the screen.
+pub fn device_size(w: u32, h: u32, css: (f64, f64), dpr: f64) -> (u32, u32) {
+    let want = |c: f64| (c * dpr).round().clamp(1.0, f64::from(u32::MAX)) as u32;
+    let near = |got: u32, c: f64| (f64::from(got) - c * dpr).abs() <= dpr.ceil() + 1.0;
+    if near(w, css.0) && near(h, css.1) {
+        (w, h)
+    } else {
+        (want(css.0), want(css.1))
+    }
+}
