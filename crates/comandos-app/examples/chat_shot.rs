@@ -28,12 +28,20 @@ fn main() {
     view.set_size_request(width, -1);
     window.add(&view);
     window.show_all();
-    for _ in 0..200 {
-        while gtk::events_pending() {
-            gtk::main_iteration();
+    let settle = || {
+        for _ in 0..200 {
+            while gtk::events_pending() {
+                gtk::main_iteration();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    };
+    settle();
+    // The reading column takes its width after the first layout: measure again.
+    let (_, natural) = view.preferred_height_for_width(width);
+    window.resize(width, natural);
+    view.set_size_request(width, natural);
+    settle();
     if std::env::var_os("CHAT_SHOT_EXPORT").is_some()
         && let Some((_, text)) = raw.iter().rev().find(|(r, _)| r == "a")
     {

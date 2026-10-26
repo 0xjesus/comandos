@@ -2,9 +2,9 @@
 //! types into the pane and quick keys. It is its own page of the terminal stack, so
 //! nothing that re-shows the tabs or the mosaic can draw tmux under it. Answers are
 //! rich text (`chat_rich`): select across a whole answer, copy with formatting, edit in
-//! place and copy the edit (the agent never sees it). Scrolling up over an agent pane
-//! opens this view on that pane; «Historial de tmux» hands the wheel back to tmux.
-//! The timer only fetches while the view is visible; an unchanged transcript costs
+//! place and copy the edit (the agent never sees it). The header, the messages and the
+//! composer share one centered reading column. The chat opens and closes only with the
+//! tab strip's chat button; the wheel always scrolls tmux. The timer only fetches while the view is visible; an unchanged transcript costs
 //! one tiny answer from the server.
 use super::*;
 use crate::ui::chat_markdown::{self, Block};
@@ -20,8 +20,6 @@ pub(super) struct Owned {
     pane: RefCell<String>,
     /// Pane the server answered for.
     answered: RefCell<String>,
-    /// Panes whose wheel goes to tmux again (after «Historial de tmux»).
-    raw: RefCell<std::collections::BTreeSet<String>>,
     token: RefCell<String>,
     busy: Cell<bool>,
     /// Bubbles being edited: the list is not redrawn under them.
@@ -76,14 +74,6 @@ fn pane_label(n: usize, command: &str) -> String {
     format!("{n} · {what}")
 }
 
-/// The pane under a terminal cell (pane headers sit on the row above each pane).
-fn pane_at(panes: &[ui::overlays::PaneRecord], col: u16, row: u16) -> Option<&ui::overlays::PaneRecord> {
-    panes.iter().find(|p| {
-        let g = &p.geometry;
-        col >= g.left && col < g.left + g.width && row + 1 >= g.top && row < g.top + g.height
-    })
-}
-
 fn text_label(markup: Option<&str>, plain: &str, class: &str) -> gtk::Label {
     let label = gtk::Label::new(None);
     match markup {
@@ -131,9 +121,10 @@ struct Ctx {
     composer: Option<gtk::TextView>,
 }
 
+/// A quiet text button (answer and prompt actions); `cv-primary` makes it the main one.
 fn small_button(label: &str, class: &str, tip: &str) -> gtk::Button {
     let button = gtk::Button::with_label(label);
-    button.style_context().add_class("cv-act");
+    button.style_context().add_class("cv-ghost");
     if !class.is_empty() {
         button.style_context().add_class(class);
     }
@@ -145,7 +136,7 @@ fn small_button(label: &str, class: &str, tip: &str) -> gtk::Button {
 /// An agent answer: rich text plus «Copiar» and «✎ Editar»; editing swaps the row to
 /// «Copiar editado», «Listo» and «Deshacer».
 fn answer(text: &str, ctx: &Ctx) -> gtk::Widget {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
     column.style_context().add_class("cv-ai");
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let rich = Rc::new(RefCell::new(Rich::new(text, &ctx.colors, &ctx.palette, &ctx.hooks)));
@@ -155,7 +146,7 @@ fn answer(text: &str, ctx: &Ctx) -> gtk::Widget {
     let acts = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     acts.style_context().add_class("cv-acts");
     let copy = small_button("Copiar", "", "Copiar la respuesta con su formato");
-    let edit = small_button("✎ Editar", "", "Editar el texto aquí para copiarlo; la IA no ve el cambio");
+    let edit = small_button("Editar", "", "Editar el texto aquí para copiarlo; la IA no ve el cambio");
     let copy_edit = small_button("Copiar editado", "cv-primary", "Copiar tu versión con su formato");
     let done = small_button("Listo", "", "Terminar de editar");
     let undo = small_button("Deshacer", "", "Volver al texto original");
@@ -247,7 +238,8 @@ fn forward_typing(rich: &Rich, ctx: &Ctx) {
     });
 }
 
-/// One message as a widget: answers are rich text, prompts a bubble, tool calls a slim line.
+/// One message as a widget: answers are rich text on the page, prompts a bubble on the
+/// right, tool calls a faint line (two lines at most; the tooltip has all of it).
 fn bubble(role: &str, text: &str, ctx: &Ctx) -> gtk::Widget {
     match role {
         "a" => answer(text, ctx),
@@ -255,7 +247,7 @@ fn bubble(role: &str, text: &str, ctx: &Ctx) -> gtk::Widget {
             let mut parts = Vec::new();
             prompt_markup(&chat_markdown::parse(text), &mut parts);
             let label = text_label(Some(&parts.join("\n\n")), "", "cv-text");
-            label.set_max_width_chars(72);
+            label.set_max_width_chars(64);
             let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
             column.style_context().add_class("cv-me");
             column.pack_start(&label, false, false, 0);
@@ -276,11 +268,33 @@ fn bubble(role: &str, text: &str, ctx: &Ctx) -> gtk::Widget {
             row.upcast()
         }
         _ => {
-            let label = text_label(None, text, "cv-tool");
-            label.set_max_width_chars(140);
+            let label = text_label(None, &tool_summary(text), "cv-tool");
+            label.set_tooltip_text(Some(text));
             label.upcast()
         }
     }
+}
+
+/// Tool calls in short: each call on one line of at most 96 characters, and three calls
+/// at most (the tooltip keeps the full text).
+fn tool_summary(text: &str) -> String {
+    const WIDTH: usize = 96;
+    const SHOWN: usize = 3;
+    let calls: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut out: Vec<String> = calls
+        .iter()
+        .take(SHOWN)
+        .map(|line| {
+            let line = line.trim_end();
+            if line.chars().count() > WIDTH { format!("{}…", line.chars().take(WIDTH - 1).collect::<String>()) } else { line.to_owned() }
+        })
+        .collect();
+    match calls.len().saturating_sub(SHOWN) {
+        0 => {}
+        1 => out.push("y 1 paso más".into()),
+        n => out.push(format!("y {n} pasos más")),
+    }
+    out.join("\n")
 }
 
 fn hex(c: &str) -> Option<[f64; 3]> {
@@ -319,7 +333,8 @@ fn colors(theme: Option<&crate::theme::ThemeTokens>) -> Colors {
         dim: token("dim", "#9aa3b5"),
         faint: chat_markdown::CodePalette::from_ansi(&[], &token("faint", "#7f848e"), &text, &bg).comment,
         brand: token("brand", "#8b7cf6"),
-        code_bg: bg,
+        // Answers sit on the page background, so code gets the raised panel color.
+        code_bg: bar.clone(),
         quote_bg: mix(&bar, &text, 0.05),
     }
 }
@@ -332,8 +347,8 @@ fn code_palette(theme: Option<&crate::theme::ThemeTokens>) -> chat_markdown::Cod
     let token = |name: &str, fallback: &'static str| {
         theme.values.get(name).and_then(Value::as_str).unwrap_or(fallback).to_owned()
     };
-    // Code blocks sit on the theme background.
-    chat_markdown::CodePalette::from_ansi(&theme.ansi, &token("faint", "#7f848e"), &token("text", "#d4d4d4"), &token("bg", "#0b0f17"))
+    // Code blocks sit on the panel color (see `colors`).
+    chat_markdown::CodePalette::from_ansi(&theme.ansi, &token("faint", "#7f848e"), &token("text", "#d4d4d4"), &token("bar", "#151a24"))
 }
 
 /// Text and HTML on the clipboard (HTML pastes with formatting in docs and mail).
@@ -383,97 +398,178 @@ fn preview_ctx(theme: Option<&crate::theme::ThemeTokens>) -> Ctx {
     }
 }
 
-/// The message list exactly as the chat view draws it, for off-screen checks.
-pub fn preview(messages: &[(String, String)], theme: Option<&crate::theme::ThemeTokens>) -> gtk::Widget {
-    let ctx = preview_ctx(theme);
+/// Widest reading column, and the least room kept on each side of it.
+const COLUMN: i32 = 820;
+const SIDE: i32 = 32;
+
+fn column(child: &impl IsA<gtk::Widget>) -> ui::column::Column {
+    ui::column::Column::new(child, COLUMN, SIDE)
+}
+
+/// The chat page: a header, the messages and the composer card, all on one centered
+/// column. Built the same way for the app and for off-screen previews.
+struct Page {
+    root: gtk::Box,
+    title: gtk::Label,
+    chips: gtk::Box,
+    list: gtk::Box,
+    more: gtk::Button,
+    typing: gtk::Box,
+    scroll: gtk::ScrolledWindow,
+    input: gtk::TextView,
+    send: gtk::Button,
+    keys: Vec<(gtk::Button, &'static str)>,
+}
+
+fn build_page() -> Page {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.style_context().add_class("cv-root");
-    let feed = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    feed.style_context().add_class("cv-feed");
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 14);
+
+    let head_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    head_bar.style_context().add_class("cv-head");
+    let head = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let title = gtk::Label::new(None);
+    title.style_context().add_class("cv-title");
+    title.set_xalign(0.);
+    title.set_ellipsize(pango::EllipsizeMode::End);
+    let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    chips.style_context().add_class("cv-chips");
+    head.pack_start(&title, false, false, 0);
+    head.pack_start(&chips, false, false, 0);
+    head_bar.pack_start(&column(&head), true, true, 0);
+
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 26);
     list.style_context().add_class("cv-list");
-    for (role, text) in messages {
-        list.pack_start(&bubble(role, text, &ctx), false, false, 0);
-    }
+    let more = gtk::Button::with_label("");
+    more.style_context().add_class("cv-more");
+    more.set_halign(gtk::Align::Center);
+    more.set_no_show_all(true);
+    let typing = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    typing.style_context().add_class("cv-typing");
+    typing.set_halign(gtk::Align::Start);
+    let spinner = gtk::Spinner::new();
+    spinner.start();
+    typing.pack_start(&spinner, false, false, 0);
+    typing.pack_start(&gtk::Label::new(Some("Trabajando…")), false, false, 0);
+    typing.set_no_show_all(true);
+    typing.children().iter().for_each(|c| c.show());
+    let feed = gtk::Box::new(gtk::Orientation::Vertical, 22);
+    feed.style_context().add_class("cv-feed");
+    feed.pack_start(&more, false, false, 0);
     feed.pack_start(&list, false, false, 0);
-    root.pack_start(&feed, true, true, 0);
-    root.upcast()
+    feed.pack_start(&typing, false, false, 0);
+    let scroll = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.add(&column(&feed));
+
+    // Composer: one card with the message on top and the keys, Pegar and Enviar below.
+    let dock = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    dock.style_context().add_class("cv-dock");
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    card.style_context().add_class("cv-card");
+    let input = gtk::TextView::new();
+    input.set_wrap_mode(gtk::WrapMode::WordChar);
+    input.style_context().add_class("cv-input");
+    input.set_accepts_tab(false);
+    let field = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
+    field.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    field.set_propagate_natural_height(true);
+    field.set_max_content_height(220);
+    field.add(&input);
+    let hint = gtk::Label::new(Some("Escribe un mensaje…   Enter envía · Shift+Enter, nueva línea"));
+    hint.style_context().add_class("cv-hint");
+    hint.set_halign(gtk::Align::Start);
+    hint.set_valign(gtk::Align::Start);
+    let overlay = gtk::Overlay::new();
+    overlay.add(&field);
+    overlay.add_overlay(&hint);
+    overlay.set_overlay_pass_through(&hint, true);
+    if let Some(buffer) = input.buffer() {
+        let hint = hint.clone();
+        buffer.connect_changed(move |b| hint.set_visible(b.char_count() == 0));
+    }
+    // The card lights up while the message has the focus.
+    let lit = card.clone();
+    input.connect_focus_in_event(move |_, _| {
+        lit.style_context().add_class("cv-focus");
+        glib::Propagation::Proceed
+    });
+    let lit = card.clone();
+    input.connect_focus_out_event(move |_, _| {
+        lit.style_context().remove_class("cv-focus");
+        glib::Propagation::Proceed
+    });
+    let tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    tools.style_context().add_class("cv-tools");
+    let mut keys = Vec::new();
+    for (label, key, tip) in [
+        ("Esc", "Escape", "Interrumpir o cerrar un menú"),
+        ("↑", "Up", "Flecha arriba"),
+        ("↓", "Down", "Flecha abajo"),
+        ("1", "1", "Elegir la opción 1"),
+        ("2", "2", "Elegir la opción 2"),
+        ("Tab", "Tab", "Tab"),
+    ] {
+        let button = gtk::Button::with_label(label);
+        button.style_context().add_class("cv-key");
+        button.set_tooltip_text(Some(tip));
+        button.set_can_focus(false);
+        tools.pack_start(&button, false, false, 0);
+        keys.push((button, key));
+    }
+    let send = gtk::Button::with_label("Enviar ↵");
+    send.style_context().add_class("cv-send");
+    send.set_tooltip_text(Some("Enviar (Enter). Shift+Enter agrega una línea"));
+    send.set_can_focus(false);
+    let paste = small_button("Pegar", "", "Pegar el portapapeles en el mensaje");
+    let target = input.clone();
+    paste.connect_clicked(move |_| {
+        let target = target.clone();
+        gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
+            if let (Some(text), Some(buffer)) = (text, target.buffer()) {
+                buffer.insert_at_cursor(text);
+                target.grab_focus();
+            }
+        });
+    });
+    tools.pack_end(&send, false, false, 0);
+    tools.pack_end(&paste, false, false, 0);
+    card.pack_start(&overlay, false, false, 0);
+    card.pack_start(&tools, false, false, 0);
+    dock.pack_start(&column(&card), false, false, 0);
+
+    root.pack_start(&head_bar, false, false, 0);
+    root.pack_start(&scroll, true, true, 0);
+    root.pack_start(&dock, false, false, 0);
+    root.show_all();
+    Page { root, title, chips, list, more, typing, scroll, input, send, keys }
+}
+
+/// The chat page exactly as the app draws it, for off-screen checks.
+pub fn preview(messages: &[(String, String)], theme: Option<&crate::theme::ThemeTokens>) -> gtk::Widget {
+    let ctx = preview_ctx(theme);
+    let page = build_page();
+    page.title.set_text("Vista previa");
+    page.scroll.set_propagate_natural_height(true);
+    for (role, text) in messages {
+        page.list.pack_start(&bubble(role, text, &ctx), false, false, 0);
+    }
+    page.more.set_label("Ver 12 mensajes anteriores");
+    page.more.show();
+    page.list.show_all();
+    page.root.upcast()
 }
 
 impl App {
     /// Adds the chat as the `chat` page of the terminal stack (`term` is the other).
     pub(super) fn install_chat(self: &Rc<Self>, stack: &gtk::Stack) {
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.style_context().add_class("cv-root");
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        head.style_context().add_class("cv-head");
-        let title = gtk::Label::new(None);
-        title.style_context().add_class("cv-title");
-        title.set_xalign(0.);
-        title.set_ellipsize(pango::EllipsizeMode::End);
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        chips.style_context().add_class("cv-chips");
-        let raw = small_button("Historial de tmux", "", "Volver a la terminal; la rueda vuelve a recorrer el historial de tmux en este pane");
-        let back = small_button("Terminal", "cv-primary", "Volver a la terminal");
-        head.pack_start(&title, false, false, 0);
-        head.pack_start(&chips, false, false, 0);
-        head.pack_end(&back, false, false, 0);
-        head.pack_end(&raw, false, false, 0);
-        let weak = Rc::downgrade(self);
-        back.connect_clicked(move |_| {
-            if let Some(app) = weak.upgrade() {
-                app.chat_show(false);
-            }
-        });
-        let weak = Rc::downgrade(self);
-        raw.connect_clicked(move |_| {
-            if let Some(app) = weak.upgrade() {
-                let pane = app.chat.answered.borrow().clone();
-                if !pane.is_empty() {
-                    app.chat.raw.borrow_mut().insert(pane);
-                }
-                app.chat_show(false);
-            }
-        });
-        let list = gtk::Box::new(gtk::Orientation::Vertical, 14);
-        list.style_context().add_class("cv-list");
-        let more = gtk::Button::with_label("");
-        more.style_context().add_class("cv-more");
-        more.set_halign(gtk::Align::Center);
-        more.set_no_show_all(true);
+        let Page { root, title, chips, list, more, typing, scroll, input, send, keys } = build_page();
+        stack.add_named(&root, "chat");
         let weak = Rc::downgrade(self);
         more.connect_clicked(move |_| {
             if let Some(app) = weak.upgrade() {
                 app.chat.expanded.set(!app.chat.expanded.get());
                 app.chat_draw(false);
-            }
-        });
-        let typing = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        typing.style_context().add_class("cv-typing");
-        typing.set_halign(gtk::Align::Start);
-        let spinner = gtk::Spinner::new();
-        spinner.start();
-        typing.pack_start(&spinner, false, false, 0);
-        typing.pack_start(&gtk::Label::new(Some("Trabajando…")), false, false, 0);
-        typing.set_no_show_all(true);
-        spinner.show();
-        typing.children().iter().for_each(|c| c.show());
-        let feed = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        feed.style_context().add_class("cv-feed");
-        feed.set_halign(gtk::Align::Center);
-        feed.pack_start(&more, false, false, 0);
-        feed.pack_start(&list, false, false, 0);
-        feed.pack_start(&typing, false, false, 0);
-        let scroll = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
-        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.add(&feed);
-        // A readable column on wide windows.
-        let column = feed.clone();
-        scroll.connect_size_allocate(move |_, alloc| {
-            let width = (alloc.width() - 40).clamp(300, 1100);
-            if column.width_request() != width {
-                let column = column.clone();
-                glib::idle_add_local_once(move || column.set_size_request(width, -1));
             }
         });
         // Stay at the bottom while answers grow (rich text lays out in steps).
@@ -492,54 +588,14 @@ impl App {
                 adj.set_value(adj.upper() - adj.page_size());
             }
         });
-        let keys = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        keys.style_context().add_class("cv-keys");
-        for (label, key) in [("Esc", "Escape"), ("↑", "Up"), ("↓", "Down"), ("1", "1"), ("2", "2"), ("Tab", "Tab")] {
-            let button = gtk::Button::with_label(label);
-            button.style_context().add_class("cv-key");
+        for (button, key) in keys {
             let weak = Rc::downgrade(self);
             button.connect_clicked(move |_| {
                 if let Some(app) = weak.upgrade() {
                     app.chat_post("/key", json!({"key": key}));
                 }
             });
-            keys.pack_start(&button, false, false, 0);
         }
-        let input = gtk::TextView::new();
-        input.set_wrap_mode(gtk::WrapMode::WordChar);
-        input.style_context().add_class("cv-input");
-        input.set_accepts_tab(false);
-        let paste = gtk::Button::with_label("Pegar");
-        paste.style_context().add_class("cv-key");
-        paste.set_tooltip_text(Some("Pegar el portapapeles en el mensaje"));
-        let target = input.clone();
-        paste.connect_clicked(move |_| {
-            let target = target.clone();
-            gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
-                if let (Some(text), Some(buffer)) = (text, target.buffer()) {
-                    buffer.insert_at_cursor(text);
-                    target.grab_focus();
-                }
-            });
-        });
-        keys.pack_end(&paste, false, false, 0);
-        let field = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
-        field.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        field.set_propagate_natural_height(true);
-        field.set_max_content_height(200);
-        field.add(&input);
-        let send = gtk::Button::with_label("Enviar ↵");
-        send.style_context().add_class("cv-send");
-        let compose = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        compose.style_context().add_class("cv-compose");
-        compose.pack_start(&field, true, true, 0);
-        compose.pack_start(&send, false, false, 0);
-        root.pack_start(&head, false, false, 0);
-        root.pack_start(&scroll, true, true, 0);
-        root.pack_start(&keys, false, false, 0);
-        root.pack_start(&compose, false, false, 0);
-        root.show_all();
-        stack.add_named(&root, "chat");
         let weak = Rc::downgrade(self);
         send.connect_clicked(move |_| {
             if let Some(app) = weak.upgrade() {
@@ -565,9 +621,7 @@ impl App {
             if let Some(app) = weak.upgrade() {
                 let on = !app.chat.on.get();
                 if on {
-                    // Opened by hand: the active pane, and the wheel opens the chat again.
                     app.chat.pane.replace(String::new());
-                    app.chat.raw.borrow_mut().clear();
                 }
                 app.chat_show(on);
             }
@@ -613,29 +667,6 @@ impl App {
         }
         self.chat.session.replace(String::new());
         self.chat_tick(true);
-    }
-    /// The wheel went up over `key`'s terminal at a cell: over an agent pane, the chat
-    /// opens on that pane instead of tmux's scrollback (which mixes widths and repeats
-    /// redraws). Returns whether it took the wheel.
-    pub(super) fn chat_wheel(self: &Rc<Self>, key: &str, col: u16, row: u16) -> bool {
-        if self.chat.on.get() || self.chat.view.borrow().is_none() {
-            return false;
-        }
-        let pane = {
-            let boxes = self.t17.boxes.borrow();
-            let Some(owner) = boxes.get(key) else { return false };
-            let panes = owner.panes.borrow();
-            match pane_at(&panes, col, row) {
-                Some(p) if is_agent(&p.command) && !self.chat.raw.borrow().contains(&p.geometry.id) => p.geometry.id.clone(),
-                _ => return false,
-            }
-        };
-        if self.current_session().as_deref() != Some(key) {
-            self.select(key);
-        }
-        self.chat.pane.replace(pane);
-        self.chat_show(true);
-        true
     }
     fn chat_title(&self, session: &str) -> String {
         let key = self.current_session().unwrap_or_default();
@@ -943,22 +974,18 @@ mod tests {
         assert_eq!(cut(&[]), 0);
     }
 
-    fn record(id: &str, left: u16, top: u16, width: u16, height: u16, command: &str) -> ui::overlays::PaneRecord {
-        ui::overlays::PaneRecord {
-            geometry: ui::overlays::PaneGeometry { id: id.into(), left, top, width, height },
-            command: command.into(),
-            active: false,
-        }
-    }
-
     #[test]
-    fn the_wheel_finds_the_pane_under_it_including_its_header_row() {
-        let panes = [record("%1", 0, 1, 80, 30, "claude"), record("%2", 81, 1, 79, 30, "zsh")];
-        assert_eq!(pane_at(&panes, 10, 0).map(|p| p.geometry.id.as_str()), Some("%1"));
-        assert_eq!(pane_at(&panes, 79, 30).map(|p| p.geometry.id.as_str()), Some("%1"));
-        assert_eq!(pane_at(&panes, 90, 5).map(|p| p.geometry.id.as_str()), Some("%2"));
-        assert!(pane_at(&panes, 80, 5).is_none(), "the divider column belongs to no pane");
-        assert!(is_agent("claude") && is_agent("codex") && !is_agent("zsh"));
+    fn tool_lines_are_cut_to_one_line_each_and_three_calls() {
+        let long = format!("Bash · {}", "x".repeat(200));
+        let text = format!("{long}\nRead · a.rs\nWrite · b.rs\nBash · ls\nBash · pwd");
+        let out = tool_summary(&text);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].chars().count(), 96);
+        assert!(lines[0].ends_with('…'));
+        assert_eq!(lines[1], "Read · a.rs");
+        assert_eq!(lines[3], "y 2 pasos más");
+        assert_eq!(tool_summary("Bash · ls\n\n"), "Bash · ls");
     }
 
     #[test]

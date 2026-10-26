@@ -28,8 +28,6 @@ pub type AppKeyCallback = Rc<dyn Fn(&gdk::EventKey) -> bool>;
 pub type KeyObserver = Rc<dyn Fn(&gdk::EventKey)>;
 pub type LinkCallback = Rc<dyn Fn(&str, &gdk::EventButton, (u16, u16), bool)>;
 pub type ContextCallback = Rc<dyn Fn(&gdk::EventButton, (u16, u16))>;
-/// The wheel went up at a cell; `true` when the host took it (the chat opens).
-pub type WheelUpCallback = Rc<dyn Fn(u16, u16) -> bool>;
 pub struct TermOptions {
     pub argv: Vec<String>,
     pub cwd: PathBuf,
@@ -108,7 +106,6 @@ struct Inner {
     replay: RefCell<crate::ui::clipboard::Replay<(gdk::EventKey, f64)>>,
     app_key: RefCell<Option<AppKeyCallback>>,
     key_observer: RefCell<Option<KeyObserver>>,
-    wheel_up: RefCell<Option<WheelUpCallback>>,
     last_ctrl_c: Cell<Option<f64>>,
     cleanup_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     clipboard: Rc<crate::ui::clipboard::Clipboard>,
@@ -227,7 +224,6 @@ impl TermView {
             replay: RefCell::new(crate::ui::clipboard::Replay::default()),
             app_key: RefCell::new(None),
             key_observer: RefCell::new(None),
-            wheel_up: RefCell::new(None),
             last_ctrl_c: Cell::new(None),
             cleanup_cancelled,
             clipboard,
@@ -255,7 +251,6 @@ impl TermView {
             .store(true, std::sync::atomic::Ordering::Release);
         self.inner.app_key.borrow_mut().take();
         self.inner.key_observer.borrow_mut().take();
-        self.inner.wheel_up.borrow_mut().take();
         for source in [
             &self.inner.read_source,
             &self.inner.write_source,
@@ -273,10 +268,6 @@ impl TermView {
     }
     pub fn on_key_observer(&self, callback: KeyObserver) {
         *self.inner.key_observer.borrow_mut() = Some(callback);
-    }
-    /// Plain wheel-up (no Shift, no selection) asks this first.
-    pub fn on_wheel_up(&self, callback: WheelUpCallback) {
-        *self.inner.wheel_up.borrow_mut() = Some(callback);
     }
     pub fn cell_geometry(&self) -> CellGeom {
         self.inner.model.borrow().geom
@@ -1013,7 +1004,6 @@ impl Drop for Inner {
             .store(true, std::sync::atomic::Ordering::Release);
         self.app_key.get_mut().take();
         self.key_observer.get_mut().take();
-        self.wheel_up.get_mut().take();
         for source in [
             &mut self.read_source,
             &mut self.write_source,
@@ -1477,18 +1467,6 @@ fn connect_events(inner: &Rc<Inner>) {
                 .map_or(0., |(_, dy)| (dy * 2.).clamp(-8., 8.)),
             _ => 0.,
         };
-        if amount < 0.
-            && !event.state().contains(gdk::ModifierType::SHIFT_MASK)
-            && inner.model.borrow().selection.is_none()
-        {
-            let callback = inner.wheel_up.borrow().clone();
-            if let Some(callback) = callback
-                && callback(col, row)
-            {
-                inner.model.borrow_mut().wheel_delta = 0.;
-                return glib::Propagation::Stop;
-            }
-        }
         let mut m = inner.model.borrow_mut();
         let ssh = inner
             .options

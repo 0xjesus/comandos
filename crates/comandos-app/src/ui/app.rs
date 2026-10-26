@@ -874,12 +874,6 @@ impl App {
         .map_err(|e| format!("{e:?}"))?;
         self.attach_term_keys(key, &term);
         self.attach_term_t16(key, &term);
-        let (weak, wheel_key) = (Rc::downgrade(self), key.to_string());
-        term.on_wheel_up(Rc::new(move |col, row| {
-            weak.upgrade()
-                .filter(|a| !a.closed.load(Ordering::Acquire))
-                .is_some_and(|app| app.chat_wheel(&wheel_key, col, row))
-        }));
         Ok(term)
     }
     fn add_tab(self: &Rc<Self>, key: &str, label: &str, attach: bool, error: Option<&str>) {

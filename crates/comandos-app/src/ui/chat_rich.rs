@@ -69,8 +69,8 @@ fn tags(table: &gtk::TextTagTable, c: &Colors) -> Tags {
         new_tag(table, |t| {
             t.set_weight(700);
             t.set_scale(scale);
-            t.set_pixels_above_lines(10);
-            t.set_pixels_below_lines(4);
+            t.set_pixels_above_lines(12);
+            t.set_pixels_below_lines(8);
         })
     };
     let h = [heading(1.45), heading(1.28), heading(1.14), heading(1.05), heading(1.0), heading(1.0)];
@@ -97,7 +97,6 @@ fn tags(table: &gtk::TextTagTable, c: &Colors) -> Tags {
         t.set_wrap_mode(gtk::WrapMode::Char);
         t.set_pixels_above_lines(0);
         t.set_pixels_below_lines(0);
-        t.set_right_margin(12);
     });
     let head = new_tag(table, |t| {
         t.set_paragraph_background(Some(&c.code_bg));
@@ -119,7 +118,7 @@ fn tags(table: &gtk::TextTagTable, c: &Colors) -> Tags {
     });
     let item = new_tag(table, |t| t.set_pixels_below_lines(3));
     // Created last: wins over `item`/`pre` spacing on the line it marks.
-    let gap = new_tag(table, |t| t.set_pixels_below_lines(10));
+    let gap = new_tag(table, |t| t.set_pixels_below_lines(14));
     Tags { b, i, s, sup, sub, code, pre, head, quote, dim, mark, done, rule, h, item, gap }
 }
 
@@ -433,11 +432,17 @@ impl Rich {
         if last.backward_char() && last.char() == Some('\n') {
             buffer.delete(&mut last, &mut end);
         }
+        // Nor the paragraph gap: the buttons under the answer sit close to it.
+        let (end, mut line) = (buffer.end_iter(), buffer.end_iter());
+        line.set_line_offset(0);
+        buffer.remove_tag(&builder.state.tags.gap, &line, &end);
         let view = gtk::TextView::with_buffer(&buffer);
         view.style_context().add_class("cv-rich");
         view.set_editable(false);
         view.set_cursor_visible(false);
         view.set_wrap_mode(gtk::WrapMode::WordChar);
+        // Air between wrapped lines: long paragraphs read like a page, not a log.
+        view.set_pixels_inside_wrap(4);
         view.set_accepts_tab(false);
         view.set_hexpand(true);
         for (anchor, widget) in builder.anchors.drain(..) {

@@ -5,6 +5,7 @@ pub mod bridge;
 pub mod chat_markdown;
 pub mod chat_rich;
 pub mod clipboard;
+pub mod column;
 pub mod confirm;
 pub mod drag;
 pub mod extensions;

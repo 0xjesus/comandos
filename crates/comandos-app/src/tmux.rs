@@ -8,6 +8,20 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// `systemd-run` arguments that start the tmux server on `socket` inside the transient
+/// scope `unit`: the server outlives the app, and an empty server does not exit (as
+/// `tmux.service` does). The scope stays while the server lives.
+pub fn detached_server_argv(socket: &Path, unit: &str) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = ["--user", "--scope", "--collect", "--quiet", "-p", "ManagedOOMPreference=avoid"]
+        .iter()
+        .map(OsString::from)
+        .collect();
+    argv.push(format!("--unit={unit}").into());
+    argv.extend(["tmux".into(), "-S".into(), socket.as_os_str().to_owned()]);
+    argv.extend(["start-server", ";", "set-option", "-s", "exit-empty", "off"].iter().map(OsString::from));
+    argv
+}
+
 /// Plazo de `tmuxc` (`bin/cc-app:414`).
 pub const TMUX_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -254,6 +268,35 @@ impl TmuxCtl {
         self.exec_when(args, stdin, TMUX_TIMEOUT, &|| true)
     }
 
+    /// Before a `new-session`: when no server is running, start one in a systemd unit
+    /// of its own. A server born from this app lives in the app's cgroup, and closing
+    /// the app kills that cgroup with every session in it (2026-09-04 and 2026-10-26).
+    /// If this fails, `new-session` still starts the server the old way.
+    fn ensure_server(&self) {
+        if self.mode != RunMode::Live || !cfg!(target_os = "linux") {
+            return;
+        }
+        if self.exec(&["list-sessions", "-F", "#{session_id}"], None).is_ok_and(|o| o.ok()) {
+            return;
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let spec = ProcSpec {
+            program: "systemd-run".into(),
+            args: detached_server_argv(&self.socket, &format!("comandos-tmux-{stamp}.scope")),
+            stdin: None,
+            env: Vec::new(),
+            clear_env: false,
+            env_remove: vec!["TMUX".into(), "TMUX_PANE".into()],
+            cwd: None,
+            timeout: TMUX_TIMEOUT,
+        };
+        if let Err(error) = run_when(&spec, &|| true) {
+            eprintln!("comandos-app: tmux en su propia unidad: {error:?}");
+        }
+    }
+
     fn exec_when(
         &self,
         args: &[&str],
@@ -354,6 +397,9 @@ impl TmuxCtl {
 
     pub fn mutate(&self, args: &[&str]) -> Result<TmuxOut, TmuxError> {
         self.check_mutate(args)?;
+        if args.first() == Some(&"new-session") {
+            self.ensure_server();
+        }
         self.exec(args, None)
     }
 
@@ -477,6 +523,7 @@ impl TmuxCtl {
         }
         let name = session.ok_or_else(|| TmuxError::BadArgs("new-session sin -s válido".into()))?;
         let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        self.ensure_server();
         let mut out = self.exec(&refs, None)?;
         let owned = if out.ok() {
             let (identity, requested) = out.stdout.split_once('|').ok_or_else(|| {
