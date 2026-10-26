@@ -1,63 +1,80 @@
-//! Renders the desktop chat view off screen (no window is shown) to a PNG, with the
-//! app's theme CSS, from a JSON list of `[role, text]` messages.
+//! Draws the desktop chat page off screen (no window is shown) to a PNG, with WebKit,
+//! from a saved `/chat/transcript` answer: `{"messages":[{r,t,h}], "ask":…, "busy":…}`.
 //!
-//! chat_shot <messages.json> <out.png> [width] [theme]
+//! chat_shot <transcript.json> <out.png> [width] [height] [theme]
+use comandos_app::ui::chat_page;
 use gtk::prelude::*;
+use serde_json::{Value, json};
+use std::{cell::RefCell, rc::Rc, time::Duration};
+use webkit2gtk::WebViewExt;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [input, out, rest @ ..] = args.as_slice() else {
-        eprintln!("uso: chat_shot <messages.json> <out.png> [ancho] [tema]");
+        eprintln!("uso: chat_shot <transcript.json> <out.png> [ancho] [alto] [tema]");
         std::process::exit(2);
     };
     let width: i32 = rest.first().and_then(|w| w.parse().ok()).unwrap_or(1100);
-    let theme_name = rest.get(1).map(String::as_str).unwrap_or("noche");
+    let height: i32 = rest.get(1).and_then(|h| h.parse().ok()).unwrap_or(900);
+    let theme_name = rest.get(2).map(String::as_str).unwrap_or("noche");
     gtk::init().expect("gtk");
-    let raw: Vec<(String, String)> =
-        serde_json::from_str(&std::fs::read_to_string(input).expect("json")).expect("[[r,t]]");
-    let theme = comandos_app::theme::desktop_theme(theme_name, &serde_json::Value::Null).expect("tema");
-    let css = gtk::CssProvider::new();
-    css.load_from_data(comandos_app::theme::theme_css(&theme).as_bytes()).expect("css");
-    gtk::StyleContext::add_provider_for_screen(
-        &gdk::Screen::default().expect("screen"),
-        &css,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    let data: Value = serde_json::from_str(&std::fs::read_to_string(input).expect("json")).expect("json");
+    let theme = comandos_app::theme::desktop_theme(theme_name, &Value::Null).expect("tema");
+    let ready = Rc::new(RefCell::new(false));
+    let flag = ready.clone();
+    let view = chat_page::view(move |m| {
+        if m["type"] == "ready" {
+            *flag.borrow_mut() = true;
+        }
+    });
     let window = gtk::OffscreenWindow::new();
-    let view = comandos_app::ui::app::chat_preview(&raw, Some(&theme));
-    view.set_size_request(width, -1);
+    view.set_size_request(width, height);
     window.add(&view);
     window.show_all();
-    let settle = || {
-        for _ in 0..200 {
+    let pump = |ms: u64| {
+        let end = std::time::Instant::now() + Duration::from_millis(ms);
+        while std::time::Instant::now() < end {
             while gtk::events_pending() {
                 gtk::main_iteration();
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
     };
-    settle();
-    // The reading column takes its width after the first layout: measure again.
-    let (_, natural) = view.preferred_height_for_width(width);
-    window.resize(width, natural);
-    view.set_size_request(width, natural);
-    settle();
-    if std::env::var_os("CHAT_SHOT_EXPORT").is_some()
-        && let Some((_, text)) = raw.iter().rev().find(|(r, _)| r == "a")
-    {
-        let colors = comandos_app::ui::chat_rich::Colors {
-            dim: "#999999".into(),
-            faint: "#777777".into(),
-            brand: "#8b7cf6".into(),
-            code_bg: "#000000".into(),
-            quote_bg: "#111111".into(),
-        };
-        let palette = comandos_app::ui::chat_markdown::CodePalette::from_ansi(&[], "#777777", "#dddddd", "#000000");
-        let hooks = comandos_app::ui::chat_rich::Hooks { copy: std::rc::Rc::new(|_, _| {}), open: std::rc::Rc::new(|_| {}) };
-        let (html, plain) = comandos_app::ui::chat_rich::Rich::new(text, &colors, &palette, &hooks).export();
-        println!("--- plain\n{plain}\n--- html\n{html}");
+    for _ in 0..400 {
+        if *ready.borrow() {
+            break;
+        }
+        pump(10);
     }
-    let pixbuf = window.pixbuf().expect("pixbuf");
+    let messages = data["messages"].clone();
+    let state = json!({"messages": messages, "folded": 12, "busy": data["busy"], "first": true, "ask": data["ask"]});
+    for script in [
+        chat_page::call("theme", &chat_page::theme_vars(Some(&theme))),
+        chat_page::call("update", &state),
+    ] {
+        view.evaluate_javascript(&script, None, None, None::<&gio::Cancellable>, |_| {});
+    }
+    pump(1200);
+    let done = Rc::new(RefCell::new(None));
+    let slot = done.clone();
+    view.snapshot(
+        webkit2gtk::SnapshotRegion::Visible,
+        webkit2gtk::SnapshotOptions::NONE,
+        None::<&gio::Cancellable>,
+        move |result| {
+            *slot.borrow_mut() = Some(result);
+        },
+    );
+    for _ in 0..500 {
+        if done.borrow().is_some() {
+            break;
+        }
+        pump(10);
+    }
+    let surface = done.borrow_mut().take().expect("snapshot").expect("snapshot");
+    let image = cairo::ImageSurface::try_from(surface).expect("image surface");
+    let (w, h) = (image.width(), image.height());
+    let pixbuf = gdk::pixbuf_get_from_surface(&image, 0, 0, w, h).expect("pixbuf");
     pixbuf.savev(out, "png", &[]).expect("png");
-    println!("{}x{} -> {out}", pixbuf.width(), pixbuf.height());
+    println!("{w}x{h} -> {out}");
 }

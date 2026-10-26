@@ -1,14 +1,17 @@
-//! Chat view of the current session: its agent transcript as bubbles, a composer that
-//! types into the pane and quick keys. It is its own page of the terminal stack, so
-//! nothing that re-shows the tabs or the mosaic can draw tmux under it. Answers are
-//! rich text (`chat_rich`): select across a whole answer, copy with formatting, edit in
-//! place and copy the edit (the agent never sees it). The header, the messages and the
-//! composer share one centered reading column. The chat opens and closes only with the
-//! tab strip's chat button; the wheel always scrolls tmux. The timer only fetches while the view is visible; an unchanged transcript costs
-//! one tiny answer from the server.
+//! Chat view of the current session. The header (session and pane chips) is native;
+//! the messages and the composer are a web page (`chat_page`) drawn from the HTML the
+//! server renders for each message, like the phone: markdown, highlighted code, tables,
+//! copy and edit in place, a card for approvals, files and pasted images. It is its
+//! own page of the terminal stack, so nothing that re-shows the tabs or the mosaic can
+//! draw tmux under it. It opens and closes only with the tab strip's chat button; the
+//! wheel always scrolls tmux. The timer only fetches while the view is visible; an
+//! unchanged transcript costs one tiny answer from the server.
 use super::*;
-use crate::ui::chat_markdown::{self, Block};
-use crate::ui::chat_rich::{self, Colors, Hooks, Rich};
+use crate::ui::chat_page;
+use webkit2gtk::WebViewExt;
+
+/// One message: role (`a` answer, `u` prompt, `t` tool calls), its text and its HTML.
+type Message = (String, String, String);
 
 #[derive(Default)]
 pub(super) struct Owned {
@@ -22,39 +25,33 @@ pub(super) struct Owned {
     answered: RefCell<String>,
     token: RefCell<String>,
     busy: Cell<bool>,
-    /// Bubbles being edited: the list is not redrawn under them.
-    editing: Cell<usize>,
-    pinned: Cell<bool>,
     chips: RefCell<String>,
-    /// Messages currently drawn, one list child each; a refresh only redraws the tail
-    /// that changed.
-    shown: RefCell<Vec<(String, String)>>,
     /// The transcript as last received; older turns stay folded until asked for.
-    messages: RefCell<Vec<(String, String)>>,
+    messages: RefCell<Vec<Message>>,
     expanded: Cell<bool>,
     /// Seconds since the transcript moved, as the server reported it.
     age: Cell<u64>,
+    /// What the agent waits on (approval card), as last sent to the page.
+    ask: RefCell<Value>,
+    /// Scripts for the page before it finished loading.
+    queue: RefCell<Vec<String>>,
+    ready: Cell<bool>,
 }
 struct View {
     stack: gtk::Stack,
-    list: gtk::Box,
-    more: gtk::Button,
-    typing: gtk::Box,
-    send: gtk::Button,
-    scroll: gtk::ScrolledWindow,
+    web: webkit2gtk::WebView,
     title: gtk::Label,
     chips: gtk::Box,
-    input: gtk::TextView,
     toggle: gtk::Button,
 }
 
 /// Where the collapsed view starts: the last agent answer (and what followed it), or
 /// the last prompt while no answer exists yet.
-fn cut(messages: &[(String, String)]) -> usize {
+fn cut(messages: &[Message]) -> usize {
     messages
         .iter()
-        .rposition(|(r, _)| r == "a")
-        .or_else(|| messages.iter().rposition(|(r, _)| r == "u"))
+        .rposition(|(r, _, _)| r == "a")
+        .or_else(|| messages.iter().rposition(|(r, _, _)| r == "u"))
         .unwrap_or(0)
 }
 
@@ -72,283 +69,6 @@ fn pane_label(n: usize, command: &str) -> String {
         c => c.to_owned(),
     };
     format!("{n} · {what}")
-}
-
-fn text_label(markup: Option<&str>, plain: &str, class: &str) -> gtk::Label {
-    let label = gtk::Label::new(None);
-    match markup {
-        Some(m) => label.set_markup(m),
-        None => label.set_text(plain),
-    }
-    label.set_line_wrap(true);
-    label.set_line_wrap_mode(pango::WrapMode::WordChar);
-    label.set_selectable(true);
-    label.set_can_focus(false);
-    label.set_xalign(0.);
-    label.style_context().add_class(class);
-    label
-}
-
-/// A prompt the person wrote, as one selectable label (prompts are short).
-fn prompt_markup(blocks: &[Block], out: &mut Vec<String>) {
-    for block in blocks {
-        match block {
-            Block::Para(m) | Block::Heading(_, m) => out.push(m.clone()),
-            Block::Code { body, .. } => out.push(chat_markdown::code_span(body)),
-            Block::Quote(inner) => prompt_markup(inner, out),
-            Block::List { items, .. } => {
-                for item in items {
-                    let mut inner = Vec::new();
-                    prompt_markup(&item.blocks, &mut inner);
-                    out.push(format!("• {}", inner.join("\n")));
-                }
-            }
-            Block::Table { rows, .. } => out.extend(rows.iter().map(|r| r.join("  ·  "))),
-            Block::Rule => out.push("—".into()),
-        }
-    }
-}
-
-/// What a bubble needs from its host (the live app, or an off-screen preview).
-#[derive(Clone)]
-struct Ctx {
-    palette: chat_markdown::CodePalette,
-    colors: Colors,
-    hooks: Hooks,
-    /// Called with `true` when a bubble starts being edited and `false` when it ends.
-    editing: Rc<dyn Fn(bool)>,
-    /// Typing on an answer goes to the composer.
-    composer: Option<gtk::TextView>,
-}
-
-/// A quiet text button (answer and prompt actions); `cv-primary` makes it the main one.
-fn small_button(label: &str, class: &str, tip: &str) -> gtk::Button {
-    let button = gtk::Button::with_label(label);
-    button.style_context().add_class("cv-ghost");
-    if !class.is_empty() {
-        button.style_context().add_class(class);
-    }
-    button.set_tooltip_text(Some(tip));
-    button.set_can_focus(false);
-    button
-}
-
-/// An agent answer: rich text plus «Copiar» and «✎ Editar»; editing swaps the row to
-/// «Copiar editado», «Listo» and «Deshacer».
-fn answer(text: &str, ctx: &Ctx) -> gtk::Widget {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    column.style_context().add_class("cv-ai");
-    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let rich = Rc::new(RefCell::new(Rich::new(text, &ctx.colors, &ctx.palette, &ctx.hooks)));
-    holder.pack_start(&rich.borrow().view, false, false, 0);
-    forward_typing(&rich.borrow(), ctx);
-    column.pack_start(&holder, false, false, 0);
-    let acts = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    acts.style_context().add_class("cv-acts");
-    let copy = small_button("Copiar", "", "Copiar la respuesta con su formato");
-    let edit = small_button("Editar", "", "Editar el texto aquí para copiarlo; la IA no ve el cambio");
-    let copy_edit = small_button("Copiar editado", "cv-primary", "Copiar tu versión con su formato");
-    let done = small_button("Listo", "", "Terminar de editar");
-    let undo = small_button("Deshacer", "", "Volver al texto original");
-    for b in [&copy, &edit, &copy_edit, &done, &undo] {
-        acts.pack_start(b, false, false, 0);
-    }
-    for b in [&copy_edit, &done, &undo] {
-        b.set_no_show_all(true);
-    }
-    column.pack_start(&acts, false, false, 0);
-    let mode = {
-        let (copy, edit, copy_edit, done, undo) = (copy.clone(), edit.clone(), copy_edit.clone(), done.clone(), undo.clone());
-        Rc::new(move |editing: bool| {
-            copy.set_visible(!editing);
-            edit.set_visible(!editing);
-            copy_edit.set_visible(editing);
-            done.set_visible(editing);
-            undo.set_visible(editing);
-        })
-    };
-    let copy_now = {
-        let (rich, hooks) = (rich.clone(), ctx.hooks.clone());
-        Rc::new(move || {
-            let (html, plain) = rich.borrow().export();
-            (hooks.copy)(&plain, Some(&html));
-        })
-    };
-    let run = copy_now.clone();
-    copy.connect_clicked(move |b| {
-        run();
-        chat_rich::flash(b, "Copiar");
-    });
-    let run = copy_now;
-    copy_edit.connect_clicked(move |b| {
-        run();
-        chat_rich::flash(b, "Copiar editado");
-    });
-    {
-        let (rich, mode, editing) = (rich.clone(), mode.clone(), ctx.editing.clone());
-        edit.connect_clicked(move |_| {
-            editing(true);
-            mode(true);
-            rich.borrow().set_editing(true);
-        });
-    }
-    {
-        let (rich, mode, editing) = (rich.clone(), mode.clone(), ctx.editing.clone());
-        done.connect_clicked(move |_| {
-            rich.borrow().set_editing(false);
-            mode(false);
-            editing(false);
-        });
-    }
-    {
-        let (rich, mode, ctx, holder, text) = (rich.clone(), mode, ctx.clone(), holder.clone(), text.to_owned());
-        undo.connect_clicked(move |_| {
-            let fresh = Rich::new(&text, &ctx.colors, &ctx.palette, &ctx.hooks);
-            forward_typing(&fresh, &ctx);
-            holder.remove(&rich.borrow().view);
-            holder.pack_start(&fresh.view, false, false, 0);
-            fresh.view.show_all();
-            *rich.borrow_mut() = fresh;
-            mode(false);
-            (ctx.editing)(false);
-        });
-    }
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    row.style_context().add_class("cv-row-ai");
-    row.pack_start(&column, true, true, 0);
-    row.upcast()
-}
-
-/// Letters typed while an answer (not being edited) has the focus go to the composer.
-fn forward_typing(rich: &Rich, ctx: &Ctx) {
-    let Some(input) = ctx.composer.clone() else { return };
-    rich.view.connect_key_press_event(move |view, event| {
-        let plain = !event.state().intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::MOD1_MASK);
-        let typed = event.keyval().to_unicode().filter(|c| !c.is_control());
-        match typed {
-            Some(c) if plain && !view.is_editable() => {
-                input.grab_focus();
-                if let Some(buffer) = input.buffer() {
-                    buffer.insert_at_cursor(&c.to_string());
-                }
-                glib::Propagation::Stop
-            }
-            _ => glib::Propagation::Proceed,
-        }
-    });
-}
-
-/// One message as a widget: answers are rich text on the page, prompts a bubble on the
-/// right, tool calls a faint line (two lines at most; the tooltip has all of it).
-fn bubble(role: &str, text: &str, ctx: &Ctx) -> gtk::Widget {
-    match role {
-        "a" => answer(text, ctx),
-        "u" => {
-            let mut parts = Vec::new();
-            prompt_markup(&chat_markdown::parse(text), &mut parts);
-            let label = text_label(Some(&parts.join("\n\n")), "", "cv-text");
-            label.set_max_width_chars(64);
-            let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
-            column.style_context().add_class("cv-me");
-            column.pack_start(&label, false, false, 0);
-            let copy = small_button("Copiar", "", "Copiar este mensaje");
-            copy.style_context().add_class("cv-act-me");
-            copy.set_halign(gtk::Align::End);
-            let (hooks, raw) = (ctx.hooks.clone(), text.to_owned());
-            copy.connect_clicked(move |b| {
-                (hooks.copy)(&raw, None);
-                chat_rich::flash(b, "Copiar");
-            });
-            let outer = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            outer.pack_start(&column, false, false, 0);
-            outer.pack_start(&copy, false, false, 0);
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-            row.style_context().add_class("cv-row-me");
-            row.pack_end(&outer, false, false, 0);
-            row.upcast()
-        }
-        _ => {
-            let label = text_label(None, &tool_summary(text), "cv-tool");
-            label.set_tooltip_text(Some(text));
-            label.upcast()
-        }
-    }
-}
-
-/// Tool calls in short: each call on one line of at most 96 characters, and three calls
-/// at most (the tooltip keeps the full text).
-fn tool_summary(text: &str) -> String {
-    const WIDTH: usize = 96;
-    const SHOWN: usize = 3;
-    let calls: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    let mut out: Vec<String> = calls
-        .iter()
-        .take(SHOWN)
-        .map(|line| {
-            let line = line.trim_end();
-            if line.chars().count() > WIDTH { format!("{}…", line.chars().take(WIDTH - 1).collect::<String>()) } else { line.to_owned() }
-        })
-        .collect();
-    match calls.len().saturating_sub(SHOWN) {
-        0 => {}
-        1 => out.push("y 1 paso más".into()),
-        n => out.push(format!("y {n} pasos más")),
-    }
-    out.join("\n")
-}
-
-fn hex(c: &str) -> Option<[f64; 3]> {
-    let h = c.strip_prefix('#')?;
-    let byte = |i: usize| h.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()).map(f64::from);
-    Some([byte(0)?, byte(2)?, byte(4)?])
-}
-
-/// `a` moved toward `b` by `k` (0–1), as `#rrggbb`.
-fn mix(a: &str, b: &str, k: f64) -> String {
-    match (hex(a), hex(b)) {
-        (Some(a), Some(b)) => {
-            let m = |i: usize| (a[i] + (b[i] - a[i]) * k).round().clamp(0., 255.) as u8;
-            format!("#{:02x}{:02x}{:02x}", m(0), m(1), m(2))
-        }
-        _ => a.to_owned(),
-    }
-}
-
-fn theme_or_default(theme: Option<&crate::theme::ThemeTokens>) -> Option<crate::theme::ThemeTokens> {
-    theme.cloned().or_else(|| crate::theme::desktop_theme("noche", &Value::Null))
-}
-
-fn colors(theme: Option<&crate::theme::ThemeTokens>) -> Colors {
-    let theme = theme_or_default(theme);
-    let token = |name: &str, fallback: &str| {
-        theme
-            .as_ref()
-            .and_then(|t| t.values.get(name))
-            .and_then(Value::as_str)
-            .unwrap_or(fallback)
-            .to_owned()
-    };
-    let (bar, text, bg) = (token("bar", "#151a24"), token("text", "#d4d4d4"), token("bg", "#0b0f17"));
-    Colors {
-        dim: token("dim", "#9aa3b5"),
-        faint: chat_markdown::CodePalette::from_ansi(&[], &token("faint", "#7f848e"), &text, &bg).comment,
-        brand: token("brand", "#8b7cf6"),
-        // Answers sit on the page background, so code gets the raised panel color.
-        code_bg: bar.clone(),
-        quote_bg: mix(&bar, &text, 0.05),
-    }
-}
-
-/// Code colors from a theme: its ANSI palette, like the terminal.
-fn code_palette(theme: Option<&crate::theme::ThemeTokens>) -> chat_markdown::CodePalette {
-    let Some(theme) = theme_or_default(theme) else {
-        return chat_markdown::CodePalette::from_ansi(&[], "#7f848e", "#d4d4d4", "#0b0f17");
-    };
-    let token = |name: &str, fallback: &'static str| {
-        theme.values.get(name).and_then(Value::as_str).unwrap_or(fallback).to_owned()
-    };
-    // Code blocks sit on the panel color (see `colors`).
-    chat_markdown::CodePalette::from_ansi(&theme.ansi, &token("faint", "#7f848e"), &token("text", "#d4d4d4"), &token("bar", "#151a24"))
 }
 
 /// Text and HTML on the clipboard (HTML pastes with formatting in docs and mail).
@@ -388,45 +108,40 @@ fn open_url(url: &str) {
     }
 }
 
-fn preview_ctx(theme: Option<&crate::theme::ThemeTokens>) -> Ctx {
-    Ctx {
-        palette: code_palette(theme),
-        colors: colors(theme),
-        hooks: Hooks { copy: Rc::new(copy_to_clipboard), open: Rc::new(open_url) },
-        editing: Rc::new(|_| {}),
-        composer: None,
+/// A pasted or dropped image (a `data:` URL) saved where the agent can read it.
+fn save_image(data_url: &str) -> Option<std::path::PathBuf> {
+    let (head, body) = data_url.strip_prefix("data:")?.split_once(',')?;
+    let (mime, encoding) = head.split_once(';')?;
+    if encoding != "base64" || !mime.starts_with("image/") {
+        return None;
     }
+    let ext = match mime {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    };
+    let bytes = glib::base64_decode(body);
+    if bytes.is_empty() {
+        return None;
+    }
+    let dir = glib::user_cache_dir().join("comandos").join("chat-files");
+    std::fs::create_dir_all(&dir).ok()?;
+    let stamp = glib::DateTime::now_local().ok()?.format("%Y%m%d-%H%M%S").ok()?;
+    let mut path = dir.join(format!("imagen-{stamp}.{ext}"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("imagen-{stamp}-{n}.{ext}"));
+        n += 1;
+    }
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
 }
 
-/// Widest reading column, and the least room kept on each side of it.
-const COLUMN: i32 = 820;
-const SIDE: i32 = 32;
-
-fn column(child: &impl IsA<gtk::Widget>) -> ui::column::Column {
-    ui::column::Column::new(child, COLUMN, SIDE)
-}
-
-/// The chat page: a header, the messages and the composer card, all on one centered
-/// column. Built the same way for the app and for off-screen previews.
-struct Page {
-    root: gtk::Box,
-    title: gtk::Label,
-    chips: gtk::Box,
-    list: gtk::Box,
-    more: gtk::Button,
-    typing: gtk::Box,
-    scroll: gtk::ScrolledWindow,
-    input: gtk::TextView,
-    send: gtk::Button,
-    keys: Vec<(gtk::Button, &'static str)>,
-}
-
-fn build_page() -> Page {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    root.style_context().add_class("cv-root");
-
-    let head_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    head_bar.style_context().add_class("cv-head");
+/// Header: the session's name and, in a split, one chip per pane.
+fn build_head() -> (gtk::Box, gtk::Label, gtk::Box) {
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    bar.style_context().add_class("cv-head");
     let head = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let title = gtk::Label::new(None);
     title.style_context().add_class("cv-title");
@@ -436,183 +151,26 @@ fn build_page() -> Page {
     chips.style_context().add_class("cv-chips");
     head.pack_start(&title, false, false, 0);
     head.pack_start(&chips, false, false, 0);
-    head_bar.pack_start(&column(&head), true, true, 0);
-
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 26);
-    list.style_context().add_class("cv-list");
-    let more = gtk::Button::with_label("");
-    more.style_context().add_class("cv-more");
-    more.set_halign(gtk::Align::Center);
-    more.set_no_show_all(true);
-    let typing = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    typing.style_context().add_class("cv-typing");
-    typing.set_halign(gtk::Align::Start);
-    let spinner = gtk::Spinner::new();
-    spinner.start();
-    typing.pack_start(&spinner, false, false, 0);
-    typing.pack_start(&gtk::Label::new(Some("Trabajando…")), false, false, 0);
-    typing.set_no_show_all(true);
-    typing.children().iter().for_each(|c| c.show());
-    let feed = gtk::Box::new(gtk::Orientation::Vertical, 22);
-    feed.style_context().add_class("cv-feed");
-    feed.pack_start(&more, false, false, 0);
-    feed.pack_start(&list, false, false, 0);
-    feed.pack_start(&typing, false, false, 0);
-    let scroll = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
-    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroll.add(&column(&feed));
-
-    // Composer: one card with the message on top and the keys, Pegar and Enviar below.
-    let dock = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    dock.style_context().add_class("cv-dock");
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    card.style_context().add_class("cv-card");
-    let input = gtk::TextView::new();
-    input.set_wrap_mode(gtk::WrapMode::WordChar);
-    input.style_context().add_class("cv-input");
-    input.set_accepts_tab(false);
-    let field = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
-    field.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    field.set_propagate_natural_height(true);
-    field.set_max_content_height(220);
-    field.add(&input);
-    let hint = gtk::Label::new(Some("Escribe un mensaje…   Enter envía · Shift+Enter, nueva línea"));
-    hint.style_context().add_class("cv-hint");
-    hint.set_halign(gtk::Align::Start);
-    hint.set_valign(gtk::Align::Start);
-    let overlay = gtk::Overlay::new();
-    overlay.add(&field);
-    overlay.add_overlay(&hint);
-    overlay.set_overlay_pass_through(&hint, true);
-    if let Some(buffer) = input.buffer() {
-        let hint = hint.clone();
-        buffer.connect_changed(move |b| hint.set_visible(b.char_count() == 0));
-    }
-    // The card lights up while the message has the focus.
-    let lit = card.clone();
-    input.connect_focus_in_event(move |_, _| {
-        lit.style_context().add_class("cv-focus");
-        glib::Propagation::Proceed
-    });
-    let lit = card.clone();
-    input.connect_focus_out_event(move |_, _| {
-        lit.style_context().remove_class("cv-focus");
-        glib::Propagation::Proceed
-    });
-    let tools = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    tools.style_context().add_class("cv-tools");
-    let mut keys = Vec::new();
-    for (label, key, tip) in [
-        ("Esc", "Escape", "Interrumpir o cerrar un menú"),
-        ("↑", "Up", "Flecha arriba"),
-        ("↓", "Down", "Flecha abajo"),
-        ("1", "1", "Elegir la opción 1"),
-        ("2", "2", "Elegir la opción 2"),
-        ("Tab", "Tab", "Tab"),
-    ] {
-        let button = gtk::Button::with_label(label);
-        button.style_context().add_class("cv-key");
-        button.set_tooltip_text(Some(tip));
-        button.set_can_focus(false);
-        tools.pack_start(&button, false, false, 0);
-        keys.push((button, key));
-    }
-    let send = gtk::Button::with_label("Enviar ↵");
-    send.style_context().add_class("cv-send");
-    send.set_tooltip_text(Some("Enviar (Enter). Shift+Enter agrega una línea"));
-    send.set_can_focus(false);
-    let paste = small_button("Pegar", "", "Pegar el portapapeles en el mensaje");
-    let target = input.clone();
-    paste.connect_clicked(move |_| {
-        let target = target.clone();
-        gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).request_text(move |_, text| {
-            if let (Some(text), Some(buffer)) = (text, target.buffer()) {
-                buffer.insert_at_cursor(text);
-                target.grab_focus();
-            }
-        });
-    });
-    tools.pack_end(&send, false, false, 0);
-    tools.pack_end(&paste, false, false, 0);
-    card.pack_start(&overlay, false, false, 0);
-    card.pack_start(&tools, false, false, 0);
-    dock.pack_start(&column(&card), false, false, 0);
-
-    root.pack_start(&head_bar, false, false, 0);
-    root.pack_start(&scroll, true, true, 0);
-    root.pack_start(&dock, false, false, 0);
-    root.show_all();
-    Page { root, title, chips, list, more, typing, scroll, input, send, keys }
-}
-
-/// The chat page exactly as the app draws it, for off-screen checks.
-pub fn preview(messages: &[(String, String)], theme: Option<&crate::theme::ThemeTokens>) -> gtk::Widget {
-    let ctx = preview_ctx(theme);
-    let page = build_page();
-    page.title.set_text("Vista previa");
-    page.scroll.set_propagate_natural_height(true);
-    for (role, text) in messages {
-        page.list.pack_start(&bubble(role, text, &ctx), false, false, 0);
-    }
-    page.more.set_label("Ver 12 mensajes anteriores");
-    page.more.show();
-    page.list.show_all();
-    page.root.upcast()
+    bar.pack_start(&ui::column::Column::new(&head, 780, 32), true, true, 0);
+    (bar, title, chips)
 }
 
 impl App {
     /// Adds the chat as the `chat` page of the terminal stack (`term` is the other).
     pub(super) fn install_chat(self: &Rc<Self>, stack: &gtk::Stack) {
-        let Page { root, title, chips, list, more, typing, scroll, input, send, keys } = build_page();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.style_context().add_class("cv-root");
+        let (bar, title, chips) = build_head();
+        let weak = Rc::downgrade(self);
+        let web = chat_page::view(move |message| {
+            if let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) {
+                app.chat_message(&message);
+            }
+        });
+        root.pack_start(&bar, false, false, 0);
+        root.pack_start(&web, true, true, 0);
+        root.show_all();
         stack.add_named(&root, "chat");
-        let weak = Rc::downgrade(self);
-        more.connect_clicked(move |_| {
-            if let Some(app) = weak.upgrade() {
-                app.chat.expanded.set(!app.chat.expanded.get());
-                app.chat_draw(false);
-            }
-        });
-        // Stay at the bottom while answers grow (rich text lays out in steps).
-        let adj = scroll.vadjustment();
-        let weak = Rc::downgrade(self);
-        adj.connect_value_changed(move |adj| {
-            if let Some(app) = weak.upgrade() {
-                app.chat.pinned.set(adj.upper() - adj.value() - adj.page_size() < 60.);
-            }
-        });
-        let weak = Rc::downgrade(self);
-        adj.connect_changed(move |adj| {
-            if let Some(app) = weak.upgrade()
-                && app.chat.pinned.get()
-            {
-                adj.set_value(adj.upper() - adj.page_size());
-            }
-        });
-        for (button, key) in keys {
-            let weak = Rc::downgrade(self);
-            button.connect_clicked(move |_| {
-                if let Some(app) = weak.upgrade() {
-                    app.chat_post("/key", json!({"key": key}));
-                }
-            });
-        }
-        let weak = Rc::downgrade(self);
-        send.connect_clicked(move |_| {
-            if let Some(app) = weak.upgrade() {
-                app.chat_send();
-            }
-        });
-        let weak = Rc::downgrade(self);
-        input.connect_key_press_event(move |_, event| {
-            let enter = matches!(event.keyval(), gdk::keys::constants::Return | gdk::keys::constants::KP_Enter);
-            if enter && !event.state().contains(gdk::ModifierType::SHIFT_MASK) {
-                if let Some(app) = weak.upgrade() {
-                    app.chat_send();
-                }
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
         let toggle = ui::icons::button("chat", 18, "Ver como chat");
         toggle.set_widget_name("chat");
         toggle.style_context().add_class("cc-key");
@@ -628,19 +186,7 @@ impl App {
         });
         self.tab_layout.actions().pack_start(&toggle, false, false, 0);
         toggle.show();
-        *self.chat.view.borrow_mut() = Some(View {
-            stack: stack.clone(),
-            list,
-            more,
-            typing,
-            send,
-            scroll,
-            title,
-            chips,
-            input,
-            toggle,
-        });
-        self.chat.pinned.set(true);
+        *self.chat.view.borrow_mut() = Some(View { stack: stack.clone(), web, title, chips, toggle });
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(1500), move || {
             let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) else {
@@ -650,12 +196,87 @@ impl App {
             glib::ControlFlow::Continue
         });
     }
+    /// Runs `CV.<function>(arg)` in the page, or queues it until the page is ready.
+    fn chat_js(&self, function: &str, arg: &Value) {
+        let script = chat_page::call(function, arg);
+        if !self.chat.ready.get() {
+            self.chat.queue.borrow_mut().push(script);
+            return;
+        }
+        if let Some(view) = &*self.chat.view.borrow() {
+            view.web.evaluate_javascript(&script, None, None, None::<&gio::Cancellable>, |_| {});
+        }
+    }
+    /// What the page asks for.
+    fn chat_message(self: &Rc<Self>, message: &Value) {
+        match message["type"].as_str().unwrap_or("") {
+            "ready" => {
+                self.chat.ready.set(true);
+                let theme = chat_page::theme_vars(self.applied_theme.borrow().as_ref());
+                self.chat_js("theme", &theme);
+                let queued: Vec<String> = self.chat.queue.borrow_mut().drain(..).collect();
+                if let Some(view) = &*self.chat.view.borrow() {
+                    for script in queued {
+                        view.web.evaluate_javascript(&script, None, None, None::<&gio::Cancellable>, |_| {});
+                    }
+                }
+            }
+            "send" => {
+                if let Some(text) = message["text"].as_str().filter(|t| !t.trim().is_empty()) {
+                    self.chat.age.set(0);
+                    self.chat_post("/send", json!({"text": text}));
+                }
+            }
+            "key" => {
+                if let Some(key) = message["key"].as_str() {
+                    self.chat_post("/key", json!({"key": key}));
+                }
+            }
+            "more" => {
+                self.chat.expanded.set(!self.chat.expanded.get());
+                self.chat_draw(false, true);
+            }
+            "copy" => copy_to_clipboard(message["plain"].as_str().unwrap_or(""), message["html"].as_str()),
+            "open" => open_url(message["url"].as_str().unwrap_or("")),
+            "attach" => self.chat_attach(),
+            "image" => {
+                if let Some(path) = message["data"].as_str().and_then(save_image) {
+                    let data = message["data"].clone();
+                    self.chat_js("files", &json!([{"path": path, "thumb": data}]));
+                }
+            }
+            _ => {}
+        }
+    }
+    /// «+»: pick files; their paths go into the message (the agent reads them, and
+    /// Claude takes image paths as images).
+    fn chat_attach(self: &Rc<Self>) {
+        let dialog = gtk::FileChooserNative::new(
+            Some("Adjuntar archivos"),
+            Some(&self.window),
+            gtk::FileChooserAction::Open,
+            Some("Adjuntar"),
+            Some("Cancelar"),
+        );
+        dialog.set_select_multiple(true);
+        if dialog.run() == gtk::ResponseType::Accept {
+            let files: Vec<Value> = dialog
+                .filenames()
+                .into_iter()
+                .map(|p| json!({"path": p.to_string_lossy()}))
+                .collect();
+            if !files.is_empty() {
+                self.chat_js("files", &Value::Array(files));
+            }
+        }
+        dialog.destroy();
+    }
     fn chat_show(self: &Rc<Self>, on: bool) {
         self.chat.on.set(on);
         if let Some(view) = &*self.chat.view.borrow() {
             view.stack.set_visible_child_name(if on { "chat" } else { "term" });
             if on {
-                view.input.grab_focus();
+                view.web.grab_focus();
             }
             view.toggle.set_tooltip_text(Some(if on { "Ver terminal" } else { "Ver como chat" }));
             let ctx = view.toggle.style_context();
@@ -665,6 +286,9 @@ impl App {
             self.focus_current_term();
             return;
         }
+        let theme = chat_page::theme_vars(self.applied_theme.borrow().as_ref());
+        self.chat_js("theme", &theme);
+        self.chat_js("focus", &Value::Null);
         self.chat.session.replace(String::new());
         self.chat_tick(true);
     }
@@ -727,25 +351,6 @@ impl App {
         }
         view.chips.show_all();
     }
-    fn chat_ctx(self: &Rc<Self>) -> Ctx {
-        let theme = self.applied_theme.borrow();
-        let weak = Rc::downgrade(self);
-        Ctx {
-            palette: code_palette(theme.as_ref()),
-            colors: colors(theme.as_ref()),
-            hooks: Hooks { copy: Rc::new(copy_to_clipboard), open: Rc::new(open_url) },
-            editing: Rc::new(move |on| {
-                if let Some(app) = weak.upgrade() {
-                    let n = app.chat.editing.get();
-                    app.chat.editing.set(if on { n + 1 } else { n.saturating_sub(1) });
-                    if !on && app.chat.editing.get() == 0 {
-                        app.chat_draw(false);
-                    }
-                }
-            }),
-            composer: self.chat.view.borrow().as_ref().map(|v| v.input.clone()),
-        }
-    }
     fn chat_tick(self: &Rc<Self>, force: bool) {
         if !self.chat.on.get() || !self.window.is_active() && !force {
             return;
@@ -760,28 +365,13 @@ impl App {
             self.chat.session.replace(identity.clone());
             self.chat.token.replace(String::new());
             self.chat.answered.replace(String::new());
-            self.chat.editing.set(0);
-            self.chat.pinned.set(true);
+            self.chat.messages.borrow_mut().clear();
+            self.chat.expanded.set(false);
+            self.chat.ask.replace(Value::Null);
             if let Some(view) = &*self.chat.view.borrow() {
                 view.title.set_text(&self.chat_title(&session));
-                for child in view.list.children() {
-                    view.list.remove(&child);
-                }
-                self.chat.shown.borrow_mut().clear();
-                self.chat.messages.borrow_mut().clear();
-                self.chat.expanded.set(false);
-                view.more.hide();
-                view.typing.hide();
-                let loading = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-                loading.style_context().add_class("cv-loading");
-                loading.set_halign(gtk::Align::Center);
-                let spinner = gtk::Spinner::new();
-                spinner.start();
-                loading.pack_start(&spinner, false, false, 0);
-                loading.pack_start(&gtk::Label::new(Some("Cargando conversación…")), false, false, 0);
-                view.list.pack_start(&loading, false, false, 0);
-                view.list.show_all();
             }
+            self.chat_js("update", &json!({"reset": true, "messages": [], "note": "Cargando conversación…", "ask": null}));
         }
         self.chat_chips();
         if self.chat.busy.replace(true) {
@@ -805,27 +395,24 @@ impl App {
                     app.chat.answered.replace(pane.to_owned());
                     app.chat_chips();
                 }
+                let ask = v.get("ask").cloned().unwrap_or(Value::Null);
+                if *app.chat.ask.borrow() != ask {
+                    app.chat.ask.replace(ask.clone());
+                    app.chat_js("ask", &ask);
+                }
                 if v["unchanged"] == true {
-                    app.chat_typing();
+                    app.chat_js("busy", &json!(app.chat_busy()));
                     return;
                 }
                 app.chat.token.replace(v["token"].as_str().unwrap_or("").into());
                 if v["agent"].is_null() {
                     app.chat.messages.borrow_mut().clear();
-                    app.chat.shown.borrow_mut().clear();
-                    let ctx = app.chat_ctx();
-                    if let Some(view) = &*app.chat.view.borrow() {
-                        for child in view.list.children() {
-                            view.list.remove(&child);
-                        }
-                        let note = if app.chat.chips.borrow().contains("Terminal") {
-                            "Este pane es una terminal sin Claude ni Codex. Elige otro pane arriba o vuelve a la terminal."
-                        } else {
-                            "Sin conversación de Claude o Codex en esta sesión. Usa la terminal."
-                        };
-                        view.list.pack_start(&bubble("t", note, &ctx), false, false, 0);
-                        view.list.show_all();
-                    }
+                    let note = if app.chat.chips.borrow().contains("Terminal") {
+                        "Este pane es una terminal sin Claude ni Codex. Elige otro pane arriba o vuelve a la terminal."
+                    } else {
+                        "Sin conversación de Claude o Codex en esta sesión. Usa la terminal."
+                    };
+                    app.chat_js("update", &json!({"reset": true, "messages": [], "note": note}));
                     return;
                 }
                 let empty = Vec::new();
@@ -833,102 +420,39 @@ impl App {
                     .as_array()
                     .unwrap_or(&empty)
                     .iter()
-                    .map(|m| (m["r"].as_str().unwrap_or("t").to_owned(), m["t"].as_str().unwrap_or("").to_owned()))
+                    .map(|m| {
+                        let text = |k: &str| m[k].as_str().unwrap_or("").to_owned();
+                        (m["r"].as_str().unwrap_or("t").to_owned(), text("t"), text("h"))
+                    })
                     .collect();
-                app.chat_draw(since.is_empty());
+                app.chat_draw(since.is_empty(), false);
             },
         );
     }
-    /// Draws the visible slice (the last answer, or everything when expanded), rebuilding
-    /// only from the first message that changed. Waits while a bubble is being edited.
-    fn chat_draw(self: &Rc<Self>, first: bool) {
-        if self.chat.editing.get() > 0 {
-            return;
-        }
-        let ctx = self.chat_ctx();
-        let Some(view) = &*self.chat.view.borrow() else { return };
-        let adj = view.scroll.vadjustment();
-        let from_bottom = adj.upper() - adj.value();
-        if first {
-            self.chat.pinned.set(true);
-        }
-        let messages = self.chat.messages.borrow();
-        let folded = cut(&messages);
-        let from = if self.chat.expanded.get() { 0 } else { folded };
-        let slice = &messages[from..];
-        let children = view.list.children();
-        let mut shown = self.chat.shown.borrow_mut();
-        let keep = if children.len() == shown.len() {
-            shown.iter().zip(slice).take_while(|(a, b)| a == b).count()
-        } else {
-            0
-        };
-        for child in children.iter().skip(keep) {
-            view.list.remove(child);
-        }
-        if slice.is_empty() {
-            view.list.pack_start(&bubble("t", "Sin conversación todavía. Escribe abajo o vuelve a la terminal.", &ctx), false, false, 0);
-            shown.clear();
-        } else {
-            for (role, text) in &slice[keep..] {
-                view.list.pack_start(&bubble(role, text, &ctx), false, false, 0);
-            }
-            *shown = slice.to_vec();
-        }
-        view.list.show_all();
-        view.more.set_label(&match (self.chat.expanded.get(), folded) {
-            (true, _) => "Ocultar mensajes anteriores".to_owned(),
-            (false, 1) => "Ver 1 mensaje anterior".to_owned(),
-            (false, n) => format!("Ver {n} mensajes anteriores"),
-        });
-        view.more.set_visible(folded > 0);
-        drop(shown);
-        drop(messages);
-        self.chat_typing();
-        let scroll = view.scroll.clone();
-        let expanded = self.chat.expanded.get() && !self.chat.pinned.get();
-        let pinned = self.chat.pinned.get();
-        glib::idle_add_local_once(move || {
-            let adj = scroll.vadjustment();
-            if pinned {
-                adj.set_value(adj.upper() - adj.page_size());
-            } else if expanded {
-                adj.set_value(adj.upper() - from_bottom);
-            }
-        });
-    }
     /// «Working» while the transcript moved in the last 90 s and does not end in an answer.
-    fn chat_typing(&self) {
-        let Some(view) = &*self.chat.view.borrow() else { return };
-        let busy = self.chat.age.get() < 90 && self.chat.messages.borrow().last().is_some_and(|(r, _)| r != "a");
-        view.typing.set_visible(busy);
+    fn chat_busy(&self) -> bool {
+        self.chat.age.get() < 90 && self.chat.messages.borrow().last().is_some_and(|(r, _, _)| r != "a")
     }
-    fn chat_send(self: &Rc<Self>) {
-        let ctx = self.chat_ctx();
-        let text = {
-            let Some(view) = &*self.chat.view.borrow() else { return };
-            let buffer = view.input.buffer().expect("text view buffer");
-            let (start, end) = buffer.bounds();
-            let text = buffer.text(&start, &end, false).map(|t| t.to_string()).unwrap_or_default();
-            if text.trim().is_empty() {
-                return;
-            }
-            buffer.set_text("");
-            let pending = bubble("u", &text, &ctx);
-            pending.set_opacity(0.6);
-            view.list.pack_start(&pending, false, false, 0);
-            // The pending bubble breaks the list↔shown pairing, so the next draw rebuilds.
-            view.list.show_all();
-            view.typing.show();
-            view.send.set_sensitive(false);
-            view.send.set_label("Enviando…");
-            self.chat.pinned.set(true);
-            let adj = view.scroll.vadjustment();
-            glib::idle_add_local_once(move || adj.set_value(adj.upper() - adj.page_size()));
-            text
+    /// Sends the visible slice (the last answer, or everything when expanded); the page
+    /// redraws only from the first message that changed and waits while one is edited.
+    fn chat_draw(self: &Rc<Self>, first: bool, keep_scroll: bool) {
+        let state = {
+            let messages = self.chat.messages.borrow();
+            let folded = cut(&messages);
+            let from = if self.chat.expanded.get() { 0 } else { folded };
+            let slice: Vec<Value> = messages[from..].iter().map(|(r, t, h)| json!({"r": r, "t": t, "h": h})).collect();
+            let note = slice.is_empty().then_some("Sin conversación todavía. Escribe abajo o vuelve a la terminal.");
+            json!({
+                "messages": slice,
+                "folded": folded,
+                "expanded": self.chat.expanded.get(),
+                "busy": self.chat_busy(),
+                "first": first,
+                "keepScroll": keep_scroll,
+                "note": note,
+            })
         };
-        self.chat.age.set(0);
-        self.chat_post("/send", json!({"text": text}));
+        self.chat_js("update", &state);
     }
     fn chat_post(self: &Rc<Self>, path: &'static str, mut body: Value) {
         let session = self.chat_target();
@@ -951,10 +475,7 @@ impl App {
                     app.status.set_text(&format!("Chat: {error:?}"));
                 }
                 if path == "/send" {
-                    if let Some(view) = &*app.chat.view.borrow() {
-                        view.send.set_sensitive(true);
-                        view.send.set_label("Enviar ↵");
-                    }
+                    app.chat_js("sent", &Value::Null);
                 }
                 app.chat_tick(true);
             },
@@ -968,24 +489,10 @@ mod tests {
 
     #[test]
     fn collapsed_view_starts_at_the_last_answer() {
-        let m = |r: &str| (r.to_owned(), String::new());
+        let m = |r: &str| (r.to_owned(), String::new(), String::new());
         assert_eq!(cut(&[m("u"), m("a"), m("u"), m("t"), m("a"), m("t")]), 4);
         assert_eq!(cut(&[m("t"), m("u"), m("t")]), 1);
         assert_eq!(cut(&[]), 0);
-    }
-
-    #[test]
-    fn tool_lines_are_cut_to_one_line_each_and_three_calls() {
-        let long = format!("Bash · {}", "x".repeat(200));
-        let text = format!("{long}\nRead · a.rs\nWrite · b.rs\nBash · ls\nBash · pwd");
-        let out = tool_summary(&text);
-        let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines.len(), 4);
-        assert_eq!(lines[0].chars().count(), 96);
-        assert!(lines[0].ends_with('…'));
-        assert_eq!(lines[1], "Read · a.rs");
-        assert_eq!(lines[3], "y 2 pasos más");
-        assert_eq!(tool_summary("Bash · ls\n\n"), "Bash · ls");
     }
 
     #[test]
@@ -996,8 +503,14 @@ mod tests {
     }
 
     #[test]
-    fn quote_tint_mixes_toward_the_text_color() {
-        assert_eq!(mix("#000000", "#ffffff", 0.5), "#808080");
-        assert_eq!(mix("#101010", "nope", 0.5), "#101010");
+    fn pasted_images_are_saved_and_other_data_is_refused() {
+        // 1×1 transparent PNG.
+        let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        let path = save_image(png).expect("saved");
+        assert!(path.extension().is_some_and(|e| e == "png"));
+        assert!(std::fs::read(&path).unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
+        std::fs::remove_file(path).unwrap();
+        assert!(save_image("data:text/plain;base64,aG9sYQ==").is_none());
+        assert!(save_image("hola").is_none());
     }
 }

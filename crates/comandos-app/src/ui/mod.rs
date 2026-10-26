@@ -3,6 +3,7 @@ pub mod app;
 pub mod app_commands;
 pub mod bridge;
 pub mod chat_markdown;
+pub mod chat_page;
 pub mod chat_rich;
 pub mod clipboard;
 pub mod column;

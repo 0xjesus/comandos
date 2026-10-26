@@ -194,6 +194,103 @@ pub fn bubble(role: &str, text: &str) -> String {
     }
 }
 
+/// Box drawing and the cursor marks a terminal dialog uses, trimmed off a screen line.
+fn screen_line(line: &str) -> &str {
+    line.trim_matches(|c: char| c.is_whitespace() || matches!(c, '│' | '┃' | '║' | '|'))
+}
+
+/// `❯ 1. Yes` → (cursor here, "1", "Yes"); `2) No` → (false, "2", "No").
+fn option_line(line: &str) -> Option<(bool, String, String)> {
+    let mut rest = screen_line(line);
+    let cursor = ['❯', '›', '>', '▶', '→'].iter().any(|m| rest.starts_with(*m));
+    if cursor {
+        rest = rest[rest.chars().next()?.len_utf8()..].trim_start();
+    }
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() || digits.len() > 2 {
+        return None;
+    }
+    let after = &rest[digits.len()..];
+    let label = after.strip_prefix('.').or_else(|| after.strip_prefix(')'))?;
+    if !label.starts_with(' ') || label.trim().is_empty() {
+        return None;
+    }
+    Some((cursor, digits, label.trim().to_owned()))
+}
+
+fn is_rule(line: &str) -> bool {
+    let t = line.trim();
+    t.chars().any(|c| matches!(c, '─' | '━' | '═' | '-'))
+        && t.chars().all(|c| matches!(c, '─' | '━' | '═' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘' | '-' | '│' | ' '))
+}
+
+/// The choice an agent is waiting on (a permission, a plan, a question), read from its
+/// screen: the last numbered list that has the `❯` cursor, numbered from 1, the line
+/// asking above it and up to eight lines of detail above that. `None` when nothing waits.
+pub fn ask(screen: &str) -> Option<Value> {
+    let lines: Vec<&str> = screen.lines().collect();
+    let last = lines.iter().rposition(|l| option_line(l).is_some())?;
+    // Walk up to the first option; wrapped labels (indented, not options) belong to the one above.
+    let mut first = last;
+    let mut i = last;
+    while i > 0 {
+        i -= 1;
+        let line = screen_line(lines[i]);
+        if option_line(lines[i]).is_some() {
+            first = i;
+        } else if line.is_empty() || is_rule(lines[i]) || first - i > 2 {
+            break;
+        }
+    }
+    // The last label may wrap too: take its indented lines down to a gap or a border.
+    let mut end = last;
+    while end + 1 < lines.len() && !screen_line(lines[end + 1]).is_empty() && !is_rule(lines[end + 1]) && end - last < 3 {
+        end += 1;
+    }
+    let mut options: Vec<(bool, String, String)> = Vec::new();
+    for line in &lines[first..=end] {
+        match option_line(line) {
+            Some(o) => options.push(o),
+            None => {
+                if let Some(prev) = options.last_mut() {
+                    let more = screen_line(line);
+                    if !more.is_empty() {
+                        prev.2.push(' ');
+                        prev.2.push_str(more);
+                    }
+                }
+            }
+        }
+    }
+    let numbered = options.iter().enumerate().all(|(n, o)| o.1 == (n + 1).to_string());
+    if options.len() < 2 || !numbered || !options.iter().any(|o| o.0) {
+        return None;
+    }
+    let mut above = lines[..first].iter().rev().map(|l| screen_line(l)).skip_while(|l| l.is_empty());
+    let question = above.next().filter(|q| !is_rule(q)).unwrap_or("").to_owned();
+    let mut detail: Vec<String> = Vec::new();
+    let start = lines[..first].iter().rposition(|l| screen_line(l) == question).unwrap_or(first);
+    for line in lines[..start].iter().rev() {
+        if is_rule(line) || detail.len() >= 8 {
+            break;
+        }
+        let text = screen_line(line);
+        if text.is_empty() && detail.is_empty() {
+            continue;
+        }
+        detail.push(text.to_owned());
+    }
+    while detail.last().is_some_and(String::is_empty) {
+        detail.pop();
+    }
+    detail.reverse();
+    Some(json!({
+        "question": question,
+        "detail": detail,
+        "options": options.iter().map(|(on, key, label)| json!({"key": key, "label": label, "on": on})).collect::<Vec<_>>(),
+    }))
+}
+
 pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
     let Some(body) = request.data.as_ref().and_then(Value::as_object) else {
         return error(StatusCode::BAD_REQUEST, "Expected chat request");
@@ -307,6 +404,14 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
     })
     .await
     .map_err(|_| super::Fault::Error(crate::HandlerError::Failure))?;
+    let mut result = result;
+    // What the agent waits on, from its visible screen (read-only, no time formats).
+    if let Some(pane) = result["pane"].as_str().filter(|p| p.starts_with('%')).map(str::to_owned)
+        && let Ok(screen) = native.options().tmux.run(&["capture-pane", "-p", "-t", &pane]).await
+        && screen.ok
+    {
+        result["ask"] = ask(&screen.stdout).unwrap_or(Value::Null);
+    }
     reply(StatusCode::OK, &result)
 }
 
@@ -326,6 +431,45 @@ mod tests {
         );
         assert_eq!(bubble("t", "Bash · ls <x>\nRead · a.rs"), "<div class=\"cv-tool\"><span>Bash · ls &lt;x&gt;</span><span>Read · a.rs</span></div>");
     }
+    #[test]
+    fn a_permission_dialog_becomes_a_question_with_its_options() {
+        let screen = "\
+● Voy a subirlo.
+
+╭──────────────────────────────────────────────╮
+│ Bash command                                 │
+│                                              │
+│   git push origin main                       │
+│   Push the fix                               │
+│                                              │
+│ Do you want to proceed?                      │
+│ ❯ 1. Yes                                     │
+│   2. Yes, and don't ask again for git push   │
+│      commands in /home/x/repo                │
+│   3. No, and tell Claude what to do          │
+│   differently (esc)                          │
+╰──────────────────────────────────────────────╯
+";
+        let a = super::ask(screen).expect("ask");
+        assert_eq!(a["question"], "Do you want to proceed?");
+        assert_eq!(a["detail"], serde_json::json!(["Bash command", "", "git push origin main", "Push the fix"]));
+        let options = a["options"].as_array().unwrap();
+        assert_eq!(options.len(), 3);
+        assert_eq!(options[0], serde_json::json!({"key":"1","label":"Yes","on":true}));
+        assert_eq!(options[1]["label"], "Yes, and don't ask again for git push commands in /home/x/repo");
+        assert_eq!(options[2]["label"], "No, and tell Claude what to do differently (esc)");
+    }
+
+    #[test]
+    fn plain_lists_and_prompts_are_not_questions() {
+        assert!(super::ask("Pasos:\n1. Compilar\n2. Probar\n\n> escribe aquí").is_none(), "no cursor");
+        assert!(super::ask("❯ 2. algo\n  3. otro").is_none(), "not numbered from 1");
+        assert!(super::ask("╭────╮\n│ > hola │\n╰────╯").is_none());
+        let codex = super::ask("Allow command?\n› 1. Yes\n  2. No").unwrap();
+        assert_eq!(codex["question"], "Allow command?");
+        assert_eq!(codex["options"][1]["key"], "2");
+    }
+
     #[test]
     fn claude_turns_tools_and_noise() {
         let rows = [

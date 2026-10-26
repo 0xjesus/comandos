@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<style>
+:root{
+  --bg:#0A0D13;--panel:#121722;--panel2:#161C29;--line:#222A3A;--line2:#2E3852;
+  --text:#EAF0FB;--dim:#9AA6BF;--faint:#5E6980;--brand:#8B7CFF;--on-brand:#080B11;
+  --waiting:#FFAE1A;--working:#7AA5FF;--ok:#2EE59D;--warn:#FFAE1A;--err:#FF7580;
+  --sans:"Inter","Cantarell","Ubuntu","Noto Sans",system-ui,sans-serif;
+  --mono:"JetBrains Mono","Fira Code","Ubuntu Mono","DejaVu Sans Mono",monospace;
+  --col:780px;
+  --tk-kw:var(--brand);--tk-str:var(--ok);--tk-num:var(--warn);--tk-com:var(--faint);--tk-fn:var(--working);
+  --tk-ty:color-mix(in srgb,var(--working) 55%,var(--ok));--tk-add:var(--ok);--tk-del:var(--err);--tk-meta:var(--working);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:15.5px/1.7 var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit}
+::selection{background:color-mix(in srgb,var(--brand) 40%,transparent)}
+#feed{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:auto}
+#feed::-webkit-scrollbar{width:10px}
+#feed::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--line2) 80%,transparent);border-radius:10px;border:3px solid var(--bg)}
+#col{max-width:calc(var(--col) + 64px);margin:0 auto;padding:28px 32px 28px;display:flex;flex-direction:column;gap:30px}
+#more{align-self:center;height:32px;padding:0 16px;border:1px solid var(--line2);border-radius:999px;background:var(--panel);color:var(--dim);font-size:12.5px;font-weight:600;cursor:pointer}
+#more:hover{color:var(--text);border-color:var(--brand)}
+#more[hidden],#typing[hidden],#ask[hidden],#note[hidden]{display:none}
+#list{display:flex;flex-direction:column;gap:30px;min-width:0}
+#note{margin:12vh auto 0;color:var(--dim);text-align:center;max-width:42ch}
+
+/* Messages */
+.cv-ai,.cv-me{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cv-me{align-self:flex-end;align-items:flex-end;max-width:min(78%,640px)}
+.cv-me .cv-body{background:var(--panel2);border:1px solid var(--line);border-radius:20px 20px 6px 20px;padding:10px 16px;white-space:normal}
+.cv-me.pending .cv-body{opacity:.6;white-space:pre-wrap}
+.cv-body{display:flex;flex-direction:column;gap:12px;min-width:0;overflow-wrap:break-word;cursor:text}
+.cv-body>*,.cv-body :is(li,blockquote)>*{margin:0;min-width:0;max-width:100%}
+.cv-body p{margin:0}
+.cv-body strong{font-weight:650}
+.cv-body :not(pre)>code{font:.86em var(--mono);padding:2px 6px;border-radius:6px;background:color-mix(in srgb,var(--line2) 60%,transparent);overflow-wrap:anywhere}
+.cv-body .cv-h,.cv-body :is(h1,h2,h3,h4,h5,h6){font-weight:700;line-height:1.3;margin-top:8px}
+.cv-body h1{font-size:22px}.cv-body h2{font-size:19px}.cv-body h3{font-size:17px}.cv-body h4{font-size:16px}.cv-body h5{font-size:15px}.cv-body h6{font-size:14px;color:var(--dim)}
+.cv-body :is(ul,ol){padding-left:26px;display:flex;flex-direction:column;gap:6px}
+.cv-body li{padding-left:3px}
+.cv-body li>:is(ul,ol){margin-top:6px}
+.cv-body li::marker{color:var(--dim)}
+.cv-body li:has(>input[type=checkbox]:first-child),.cv-body li:has(>p:first-child>input[type=checkbox]:first-child){list-style:none}
+.cv-body input[type=checkbox]{width:16px;height:16px;margin:0 8px 0 -22px;vertical-align:-3px;accent-color:var(--brand)}
+.cv-body a{color:var(--brand);text-underline-offset:3px;overflow-wrap:anywhere;cursor:pointer}
+.cv-body blockquote{display:flex;flex-direction:column;gap:8px;margin:0;padding:2px 0 2px 14px;border-left:3px solid var(--line2);color:var(--dim)}
+.cv-body .cv-alert{padding:12px 14px;border-radius:12px;border:1px solid var(--line);border-left:4px solid var(--working);background:color-mix(in srgb,var(--working) 8%,transparent);color:var(--text)}
+.cv-body :is(.cv-alert-warning,.cv-alert-caution){border-left-color:var(--warn);background:color-mix(in srgb,var(--warn) 9%,transparent)}
+.cv-body .cv-alert-tip{border-left-color:var(--ok);background:color-mix(in srgb,var(--ok) 8%,transparent)}
+.cv-body .cv-alert-t{font-weight:700}
+.cv-body hr{width:100%;border:0;border-top:1px solid var(--line)}
+.cv-body :is(.cv-fn,.cv-fnref){font-size:12.5px;color:var(--dim)}
+.cv-body .cv-raw{font:12.5px/1.5 var(--mono);white-space:pre-wrap;color:var(--dim)}
+.cv-body img{max-width:100%;border-radius:10px}
+
+/* Code */
+.cv-code{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+.cv-code-head{display:flex;align-items:center;justify-content:space-between;gap:8px;height:36px;padding:0 6px 0 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--panel2) 70%,var(--panel));-webkit-user-select:none;user-select:none}
+.cv-code-head::before{content:attr(data-lang);font:600 12px var(--mono);color:var(--faint)}
+.cv-code pre{margin:0;padding:13px 16px;overflow-x:auto;white-space:pre;font:13px/1.6 var(--mono);tab-size:4;color:var(--text)}
+.cv-code pre::-webkit-scrollbar{height:8px}
+.cv-code pre::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+.cv-code code{font:inherit;background:none;padding:0}
+/* No language is usually prose (a message to paste): wrap it instead of scrolling. */
+.cv-code-head[data-lang="código"]+pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.tk-kw{color:var(--tk-kw);font-weight:600}.tk-str{color:var(--tk-str)}.tk-num{color:var(--tk-num)}
+.tk-com{color:var(--tk-com);font-style:italic}.tk-fn{color:var(--tk-fn)}.tk-ty{color:var(--tk-ty)}.tk-meta{color:var(--tk-meta)}
+.tk-add{color:var(--tk-add);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.tk-del{color:var(--tk-del);background:color-mix(in srgb,var(--err) 12%,transparent)}
+
+/* Tables */
+.cv-table{overflow-x:auto;max-width:100%;border:1px solid var(--line);border-radius:12px}
+.cv-table table{min-width:100%;border-collapse:collapse;font-size:14px;line-height:1.5}
+.cv-table :is(th,td){padding:9px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:left;vertical-align:top}
+.cv-table :is(th,td):last-child{border-right:0}
+.cv-table tr:last-child td{border-bottom:0}
+.cv-table th{background:var(--panel);font-weight:650}
+.cv-table .cv-c{text-align:center}.cv-table .cv-r{text-align:right}
+
+/* Actions: quiet, full on hover and on the last answer */
+.cv-acts{display:flex;gap:2px;-webkit-user-select:none;user-select:none;opacity:0;transition:opacity .12s}
+.cv-ai:hover .cv-acts,.cv-me:hover .cv-acts,.cv-ai.last .cv-acts,.cv-ai.editing .cv-acts,.cv-ai.edited .cv-acts{opacity:1}
+.cv-me .cv-acts{justify-content:flex-end}
+.cv-ai .cv-acts{margin-left:-8px}
+:is(.cv-act,.cv-copy){height:28px;padding:0 9px;border:1px solid transparent;border-radius:8px;background:none;color:var(--faint);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+:is(.cv-act,.cv-copy):hover{color:var(--text);background:var(--panel2);border-color:var(--line)}
+:is(.cv-act,.cv-copy)::before{display:inline-block}
+.cv-copy::before,.cv-act[data-cv-act=copy]::before{content:"⧉  Copiar"}
+.cv-act[data-cv-act=edit]::before{content:"✎  Editar"}
+.cv-act[data-cv-act=done]::before{content:"✓  Listo"}
+.cv-act[data-cv-act=undo]::before{content:"↺  Deshacer"}
+.cv-ai:not(.editing) .cv-act[data-cv-act=done],.cv-ai:not(.editing):not(.edited) .cv-act[data-cv-act=undo]{display:none}
+.cv-ai.editing .cv-act[data-cv-act=edit]{display:none}
+.cv-ai.editing .cv-act[data-cv-act=copy]{background:var(--brand);color:var(--on-brand)}
+.cv-ai.editing .cv-act[data-cv-act=copy]::before{content:"⧉  Copiar editado"}
+.cv-ai.edited:not(.editing) .cv-act[data-cv-act=undo]::before{content:"↺  Ver original"}
+:is(.cv-act,.cv-copy).ok{color:var(--ok)}
+:is(.cv-act,.cv-copy).ok::before{content:"✓  Copiado"}
+.cv-ai.editing .cv-body{outline:2px dashed color-mix(in srgb,var(--brand) 70%,transparent);outline-offset:8px;border-radius:4px;caret-color:var(--brand)}
+.cv-ai.editing .cv-body:focus{outline-style:solid}
+.cv-ai.edited:not(.editing)::after{content:"Editado solo aquí: Claude no ve el cambio";font-size:11.5px;font-weight:600;color:var(--faint)}
+
+/* Tool calls: one quiet line, open for the list */
+.tools{align-self:flex-start;max-width:100%;min-width:0;color:var(--faint);font-size:13px}
+.tools summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);-webkit-user-select:none;user-select:none;max-width:100%}
+.tools summary::-webkit-details-marker{display:none}
+.tools summary:hover{color:var(--text)}
+.tools summary .chev{transition:transform .15s;display:inline-block}
+.tools[open] summary .chev{transform:rotate(90deg)}
+.tools summary .first{font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:56ch}
+.tools .cv-tool{display:flex;flex-direction:column;gap:2px;margin:8px 0 0 6px;padding-left:12px;border-left:2px solid var(--line2)}
+.tools .cv-tool span{font:12px/1.6 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Working */
+#typing{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:13.5px}
+#typing i{width:6px;height:6px;border-radius:50%;background:var(--brand);display:inline-block;animation:dot 1.2s infinite ease-in-out}
+#typing i:nth-child(2){animation-delay:.15s}#typing i:nth-child(3){animation-delay:.3s}
+@keyframes dot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+
+/* Approval card */
+#ask{border:1px solid color-mix(in srgb,var(--waiting) 55%,var(--line));background:color-mix(in srgb,var(--waiting) 6%,var(--panel));border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+#ask .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--waiting)}
+#ask .who::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--waiting);box-shadow:0 0 0 4px color-mix(in srgb,var(--waiting) 20%,transparent)}
+#ask pre{margin:0;padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--line);font:12.5px/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);max-height:220px;overflow:auto}
+#ask .q{font-weight:650;font-size:15.5px}
+#ask .opts{display:flex;flex-direction:column;gap:8px}
+#ask .opt{display:flex;align-items:center;gap:12px;width:100%;min-height:42px;padding:8px 14px;text-align:left;border:1px solid var(--line2);border-radius:12px;background:var(--bg);cursor:pointer;line-height:1.4}
+#ask .opt:hover{border-color:var(--brand);background:var(--panel2)}
+#ask .opt.yes{border-color:color-mix(in srgb,var(--ok) 50%,var(--line2))}
+#ask .opt.no{color:var(--dim)}
+#ask .opt kbd{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;border:1px solid var(--line2);font:600 12px var(--mono);color:var(--dim);background:var(--panel)}
+#ask .hint{font-size:12px;color:var(--faint)}
+
+/* Composer */
+#dock{flex:none;padding:6px 32px 18px;background:var(--bg)}
+#box{max-width:var(--col);margin:0 auto;background:var(--panel);border:1px solid var(--line2);border-radius:26px;padding:10px 10px 10px 18px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 30px rgba(0,0,0,.18);transition:border-color .12s}
+#box:focus-within{border-color:color-mix(in srgb,var(--brand) 55%,var(--line2))}
+#box.drop{border-color:var(--brand);border-style:dashed}
+#atts{display:flex;flex-wrap:wrap;gap:8px}
+#atts:empty{display:none}
+.att{display:flex;align-items:center;gap:8px;max-width:260px;height:44px;padding:0 8px 0 6px;border:1px solid var(--line2);border-radius:12px;background:var(--panel2);font-size:12.5px}
+.att img,.att .ico{flex:none;width:32px;height:32px;border-radius:8px;object-fit:cover;display:grid;place-items:center;background:var(--bg);color:var(--dim);font-size:15px}
+.att span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att button{flex:none;width:22px;height:22px;border:0;border-radius:50%;background:none;color:var(--faint);cursor:pointer}
+.att button:hover{background:var(--line);color:var(--text)}
+#ta{width:100%;min-height:28px;max-height:40vh;resize:none;border:0;outline:0;background:transparent;color:var(--text);font:15.5px/1.6 var(--sans);padding:4px 0;overflow-y:auto}
+#ta::placeholder{color:var(--faint)}
+#row{display:flex;align-items:center;gap:8px}
+#row .grow{flex:1}
+.round{flex:none;width:36px;height:36px;border-radius:50%;border:1px solid var(--line2);background:transparent;color:var(--dim);cursor:pointer;display:grid;place-items:center;font-size:20px;line-height:1}
+.round:hover{color:var(--text);background:var(--panel2)}
+#send{background:var(--brand);border-color:var(--brand);color:var(--on-brand);font-size:18px;font-weight:700}
+#send:hover{filter:brightness(1.1);background:var(--brand)}
+#send:disabled{background:var(--line2);border-color:var(--line2);color:var(--faint);cursor:default;filter:none}
+#stop{height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--line2);background:var(--panel2);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+#stop::before{content:"";width:10px;height:10px;border-radius:2px;background:currentColor}
+#stop:hover{border-color:var(--err);color:var(--err)}
+#stop[hidden]{display:none}
+#keys{font-size:12px;color:var(--faint)}
+#tip{max-width:var(--col);margin:8px auto 0;text-align:center;font-size:11.5px;color:var(--faint)}
+</style>
+</head>
+<body>
+<div id="feed"><div id="col">
+  <button id="more" hidden></button>
+  <div id="list"></div>
+  <div id="note" hidden></div>
+  <div id="ask" hidden></div>
+  <div id="typing" hidden><i></i><i></i><i></i><span>Trabajando…</span></div>
+</div></div>
+<div id="dock">
+  <div id="box">
+    <div id="atts"></div>
+    <textarea id="ta" rows="1" placeholder="Escribe un mensaje…"></textarea>
+    <div id="row">
+      <button class="round" id="attach" title="Adjuntar archivos o imágenes (también puedes pegar o arrastrar)">+</button>
+      <span class="grow"></span>
+      <button id="stop" title="Detener (Esc en el agente)" hidden>Detener</button>
+      <button class="round" id="send" title="Enviar (Enter)" disabled>↑</button>
+    </div>
+  </div>
+  <div id="tip">Enter envía · Shift+Enter nueva línea · pega o arrastra imágenes y archivos</div>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const feed = $("feed"), list = $("list"), more = $("more"), note = $("note"), ask = $("ask"),
+        typing = $("typing"), ta = $("ta"), send = $("send"), stop = $("stop"), atts = $("atts"), box = $("box");
+  const post = (msg) => { try { window.webkit.messageHandlers.chat.postMessage(JSON.stringify(msg)); } catch (e) {} };
+  let shown = [];          // keys of the messages drawn, one per #list child
+  let deferred = null;     // an update that waits while an answer is being edited
+  let files = [];          // attachments: {path, name, thumb}
+  let busy = false;
+  const key = (m) => m.r + "\u0000" + m.t;
+  const nearBottom = () => feed.scrollHeight - feed.scrollTop - feed.clientHeight < 90;
+  const toBottom = () => { feed.scrollTop = feed.scrollHeight; };
+
+  function toolNode(m) {
+    const d = document.createElement("details");
+    d.className = "tools";
+    const lines = m.t.split("\n").filter((l) => l.trim());
+    const n = lines.length;
+    const s = document.createElement("summary");
+    s.innerHTML = '<span class="chev">›</span><span></span><span class="first"></span>';
+    s.children[1].textContent = n === 1 ? "1 paso" : n + " pasos";
+    s.children[2].textContent = lines[lines.length - 1] || "";
+    d.appendChild(s);
+    const body = document.createElement("div");
+    body.className = "cv-tool";
+    lines.forEach((l) => { const span = document.createElement("span"); span.textContent = l; body.appendChild(span); });
+    d.appendChild(body);
+    return d;
+  }
+  function node(m) {
+    if (m.r !== "a" && m.r !== "u") return toolNode(m);
+    const t = document.createElement("template");
+    t.innerHTML = m.h;
+    const el = t.content.firstElementChild || document.createElement("div");
+    el.dataset.raw = m.t;
+    return el;
+  }
+  function markLast() {
+    list.querySelectorAll(".cv-ai.last").forEach((e) => e.classList.remove("last"));
+    const answers = list.querySelectorAll(".cv-ai");
+    if (answers.length) answers[answers.length - 1].classList.add("last");
+  }
+
+  function update(s) {
+    if (list.querySelector(".cv-ai.editing")) { deferred = s; return; }
+    const pinned = s.first || nearBottom();
+    const fromBottom = feed.scrollHeight - feed.scrollTop;
+    if (s.reset) { list.textContent = ""; shown = []; }
+    const msgs = s.messages || [];
+    const keys = msgs.map(key);
+    let keep = 0;
+    if (list.children.length - list.querySelectorAll(".pending").length === shown.length)
+      while (keep < shown.length && keep < keys.length && shown[keep] === keys[keep]) keep++;
+    list.querySelectorAll(".pending").forEach((e) => e.remove());
+    while (list.children.length > keep) list.lastElementChild.remove();
+    for (const m of msgs.slice(keep)) list.appendChild(node(m));
+    shown = keys;
+    markLast();
+    more.hidden = !(s.folded > 0);
+    more.textContent = s.expanded ? "Ocultar mensajes anteriores" : (s.folded === 1 ? "Ver 1 mensaje anterior" : "Ver " + s.folded + " mensajes anteriores");
+    note.hidden = !s.note;
+    note.textContent = s.note || "";
+    setBusy(!!s.busy);
+    if ("ask" in s) setAsk(s.ask);
+    if (s.keepScroll) feed.scrollTop = feed.scrollHeight - fromBottom;
+    else if (pinned) toBottom();
+  }
+  function setBusy(on) {
+    busy = on;
+    typing.hidden = !on || !ask.hidden;
+    stop.hidden = !on;
+  }
+  function setAsk(a) {
+    const pinned = nearBottom();
+    const same = JSON.stringify(a || null) === ask.dataset.sig;
+    if (same) return;
+    ask.dataset.sig = JSON.stringify(a || null);
+    ask.textContent = "";
+    ask.hidden = !a;
+    if (a) {
+      const who = document.createElement("div");
+      who.className = "who";
+      who.textContent = /proceed|permit|allow|want to|make this edit|run/i.test(a.question) ? "Pide permiso" : "Te pregunta";
+      ask.appendChild(who);
+      if (a.detail && a.detail.length) {
+        const pre = document.createElement("pre");
+        pre.textContent = a.detail.join("\n").trim();
+        ask.appendChild(pre);
+      }
+      if (a.question) { const q = document.createElement("div"); q.className = "q"; q.textContent = a.question; ask.appendChild(q); }
+      const opts = document.createElement("div");
+      opts.className = "opts";
+      for (const o of a.options || []) {
+        const b = document.createElement("button");
+        b.className = "opt" + (/^(yes|sí|si|allow|approve)\b/i.test(o.label) ? " yes" : /^(no|deny|cancel)\b/i.test(o.label) ? " no" : "");
+        b.innerHTML = "<kbd></kbd><span></span>";
+        b.firstChild.textContent = o.key;
+        b.lastChild.textContent = o.label;
+        b.onclick = () => { post({ type: "key", key: o.key }); ask.querySelectorAll("button").forEach((x) => (x.disabled = true)); };
+        opts.appendChild(b);
+      }
+      ask.appendChild(opts);
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = "Elige una opción o pulsa su número en la terminal.";
+      ask.appendChild(hint);
+    }
+    typing.hidden = !busy || !ask.hidden;
+    if (pinned) toBottom();
+  }
+
+  // Actions on answers and code: copy, edit in place, done, undo.
+  function exportOf(body) {
+    const clone = body.cloneNode(true);
+    clone.querySelectorAll(".cv-code-head").forEach((h) => h.remove());
+    return { plain: body.innerText.trim(), html: clone.innerHTML };
+  }
+  function flash(b) { b.classList.add("ok"); setTimeout(() => b.classList.remove("ok"), 1400); }
+  list.addEventListener("click", (e) => {
+    const link = e.target.closest("a[href]");
+    if (link) { e.preventDefault(); post({ type: "open", url: link.getAttribute("href") }); return; }
+    const b = e.target.closest("[data-cv-act]");
+    if (!b) return;
+    const act = b.dataset.cvAct;
+    if (act === "copy-code") {
+      const pre = b.closest(".cv-code").querySelector("pre");
+      post({ type: "copy", plain: pre.innerText.replace(/\n$/, "") });
+      flash(b);
+      return;
+    }
+    const msg = b.closest(".cv-ai,.cv-me");
+    const body = msg.querySelector(".cv-body");
+    if (act === "copy") { const x = exportOf(body); post({ type: "copy", plain: x.plain, html: x.html }); flash(b); }
+    else if (act === "edit") {
+      if (!msg.dataset.original) msg.dataset.original = body.innerHTML;
+      msg.classList.add("editing");
+      body.contentEditable = "true";
+      body.focus();
+    } else if (act === "done") { finishEdit(msg, body); }
+    else if (act === "undo") {
+      body.innerHTML = msg.dataset.original || body.innerHTML;
+      delete msg.dataset.original;
+      msg.classList.remove("edited");
+      finishEdit(msg, body);
+      msg.classList.remove("edited");
+    }
+  });
+  function finishEdit(msg, body) {
+    body.contentEditable = "false";
+    msg.classList.remove("editing");
+    if (msg.dataset.original && msg.dataset.original !== body.innerHTML) msg.classList.add("edited");
+    if (deferred && !list.querySelector(".cv-ai.editing")) { const d = deferred; deferred = null; update(d); }
+  }
+  more.onclick = () => post({ type: "more" });
+
+  // Composer
+  function fit() { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + "px"; refresh(); }
+  function refresh() { send.disabled = !ta.value.trim() && !files.length; }
+  function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+  function drawFiles() {
+    atts.textContent = "";
+    files.forEach((f, i) => {
+      const el = document.createElement("div");
+      el.className = "att";
+      el.title = f.path;
+      el.innerHTML = (f.thumb ? '<img alt="">' : '<div class="ico">📄</div>') + "<span></span><button title=\"Quitar\">✕</button>";
+      if (f.thumb) el.querySelector("img").src = f.thumb;
+      el.querySelector("span").textContent = f.name || f.path.split("/").pop();
+      el.querySelector("button").onclick = () => { files.splice(i, 1); drawFiles(); };
+      atts.appendChild(el);
+    });
+    refresh();
+  }
+  function submit() {
+    const text = ta.value.trim();
+    if (!text && !files.length) return;
+    const paths = files.map((f) => f.path);
+    const full = [text, paths.join("\n")].filter(Boolean).join("\n\n");
+    post({ type: "send", text: full });
+    const pending = document.createElement("div");
+    pending.className = "cv-me pending";
+    pending.innerHTML = '<div class="cv-body"></div>';
+    pending.firstChild.textContent = full;
+    list.appendChild(pending);
+    ta.value = ""; files = []; drawFiles(); fit();
+    setBusy(true);
+    toBottom();
+  }
+  ta.addEventListener("input", fit);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+  });
+  send.onclick = submit;
+  stop.onclick = () => post({ type: "key", key: "Escape" });
+  $("attach").onclick = () => post({ type: "attach" });
+  ta.addEventListener("paste", (e) => {
+    const items = [...(e.clipboardData && e.clipboardData.items || [])].filter((i) => i.type.startsWith("image/"));
+    if (!items.length) return;
+    e.preventDefault();
+    for (const item of items) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => post({ type: "image", data: reader.result });
+      reader.readAsDataURL(file);
+    }
+  });
+  const stopDrag = (e) => { e.preventDefault(); e.stopPropagation(); };
+  ["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => { stopDrag(e); box.classList.add("drop"); }));
+  document.addEventListener("dragleave", (e) => { if (!e.relatedTarget) box.classList.remove("drop"); });
+  document.addEventListener("drop", (e) => {
+    stopDrag(e);
+    box.classList.remove("drop");
+    const uris = (e.dataTransfer.getData("text/uri-list") || "").split(/\r?\n/).filter((u) => u.startsWith("file://"));
+    const paths = uris.map((u) => decodeURIComponent(u.replace(/^file:\/\//, "")));
+    if (paths.length) window.CV.files(paths.map((p) => ({ path: p })));
+    else if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      for (const f of e.dataTransfer.files) {
+        if (!f.type.startsWith("image/")) continue;
+        const reader = new FileReader();
+        reader.onload = () => post({ type: "image", data: reader.result });
+        reader.readAsDataURL(f);
+      }
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    // Typing anywhere goes to the message box.
+    if (document.activeElement !== ta && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1
+        && !(document.activeElement && document.activeElement.isContentEditable)) ta.focus();
+  });
+
+  window.CV = {
+    update,
+    ask: setAsk,
+    busy: setBusy,
+    theme(vars) { for (const [k, v] of Object.entries(vars)) if (v) document.documentElement.style.setProperty("--" + k, v); },
+    files(list) {
+      for (const f of list) if (f && f.path && !files.some((x) => x.path === f.path)) files.push(f);
+      drawFiles();
+      ta.focus();
+    },
+    sent() { refresh(); },
+    focus() { ta.focus(); },
+  };
+  fit();
+  post({ type: "ready" });
+})();
+</script>
+</body>
+</html>
