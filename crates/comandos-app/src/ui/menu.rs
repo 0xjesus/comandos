@@ -28,6 +28,10 @@ pub enum MenuRow {
     Separator,
     Marks,
 }
+/// Rows that close something: drawn in the error color so they stand apart.
+pub fn is_destructive(action: MenuAction) -> bool {
+    matches!(action, MenuAction::CloseSplit | MenuAction::CloseTab)
+}
 pub fn terminal_rows(
     english: bool,
     session: Option<&str>,

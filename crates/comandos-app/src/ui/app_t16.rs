@@ -833,6 +833,9 @@ impl App {
                         } => {
                             let item = gtk::MenuItem::with_label(&label);
                             item.set_sensitive(enabled);
+                            if ui::menu::is_destructive(action) {
+                                item.style_context().add_class("cc-danger");
+                            }
                             if action == MenuAction::ExistingSessions {
                                 let submenu = gtk::Menu::new();
                                 for session in &ctx.sessions {

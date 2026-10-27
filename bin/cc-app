@@ -1327,10 +1327,12 @@ def on_term_button(term, event):
     box = term.get_parent()
     menu = Gtk.Menu()
 
-    def item(label, cb, sensitive=True):
+    def item(label, cb, sensitive=True, danger=False):
         it = Gtk.MenuItem(label=label)
         it.connect("activate", lambda *_: cb())
         it.set_sensitive(sensitive)
+        if danger and hasattr(it, "get_style_context"):
+            it.get_style_context().add_class("cc-danger")
         menu.append(it)
 
     key = getattr(box, "_key", None)
@@ -1396,7 +1398,7 @@ def on_term_button(term, event):
     item("Alternar ventana 1/2     Ctrl-b l" if ES else "Toggle window 1/2        Ctrl-b l", lambda: feed(term, b"\x02l"))
     item("Cerrar ESTE split" if ES else "Close THIS split",
          lambda: close_split_guarded(cur_sess, pane_id),
-         sensitive=bool(pane_id) and npanes > 1 and bool(cur_sess))
+         sensitive=bool(pane_id) and npanes > 1 and bool(cur_sess), danger=True)
     menu.append(Gtk.SeparatorMenuItem())
     item("Iniciar sesión de IA aquí…" if ES else "Start AI session here…",
          lambda: open_ai_session_here(cur_sess or str(key or "").partition(":")[0], pane_id))
@@ -1418,7 +1420,7 @@ def on_term_button(term, event):
     append_work_mark_menu(menu, cur_sess, pane_id)
     key = getattr(box, "_key", None)
     item("Renombrar pestana..." if ES else "Rename tab...", lambda: rename_tab(key), sensitive=key is not None)
-    item("Cerrar pestana" if ES else "Close tab", lambda: close_tab(key), sensitive=key is not None)
+    item("Cerrar pestana" if ES else "Close tab", lambda: close_tab(key), sensitive=key is not None, danger=True)
     menu.show_all()
     menu.popup_at_pointer(event)
     term._menu = menu
@@ -1591,11 +1593,23 @@ def _build_hb_css():
     b" padding:8px 10px;min-height:18px;border-radius:8px;"
     b" text-shadow:none;-gtk-icon-shadow:none;"
     b"}"
+    # Al pasar: tinte de la marca con raya a la izquierda (con --panel2 casi no se veía).
+    # Las opciones que cierran algo van en rojo.
     b"menu menuitem:hover,menu menuitem:selected,"
     b".menu menuitem:hover,.context-menu menuitem:hover{"
-    b" background:" + THEME.get("panel2", THEME["line"]).encode() + b";"
+    b" background:alpha(" + THEME["brand"].encode() + b",0.24);"
     b" color:" + THEME["text"].encode() + b";"
+    b" box-shadow:inset 3px 0 0 " + THEME["brand"].encode() + b";"
     b"}"
+    b"menu menuitem:hover label,menu menuitem:selected label{color:" + THEME["text"].encode() + b";}"
+    b"menu menuitem:disabled label{color:" + THEME.get("dim", "#8a98ab").encode() + b";}"
+    b"menu menuitem.cc-danger label{color:" + THEME.get("err", "#E5484D").encode() + b";}"
+    b"menu menuitem.cc-danger:hover,menu menuitem.cc-danger:selected{"
+    b" background:alpha(" + THEME.get("err", "#E5484D").encode() + b",0.22);"
+    b" box-shadow:inset 3px 0 0 " + THEME.get("err", "#E5484D").encode() + b";"
+    b"}"
+    b"menu menuitem.cc-danger:hover label,menu menuitem.cc-danger:selected label{color:" + THEME.get("err", "#E5484D").encode() + b";}"
+    b"menu menuitem.cc-danger:disabled label{color:" + THEME.get("dim", "#8a98ab").encode() + b";}"
     b"menu menuitem.wm-item label.wm-on{font-weight:600;}"
     b"menu menuitem.wm-item label.wm-dot{color:" + THEME["brand"].encode() + b";font-size:7px;}"
     b"menu separator,.menu separator{"

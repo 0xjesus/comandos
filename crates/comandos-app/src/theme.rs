@@ -77,7 +77,7 @@ pub fn header_css(theme: &ThemeTokens) -> String {
     let mut css = include_str!("ui/foundation.css").trim_end().to_string();
     for key in [
         "bg", "line2", "line", "bar", "dim", "fg", "panel", "waiting", "text", "brand", "panel2",
-        "cursor",
+        "cursor", "err",
     ] {
         let fallback = match key {
             "line2" | "panel2" => "line",
@@ -94,6 +94,7 @@ pub fn header_css(theme: &ThemeTokens) -> String {
                 match key {
                     "waiting" => "#FFAE1A",
                     "dim" => "#8a98ab",
+                    "err" => "#E5484D",
                     _ => "#000000",
                 }
                 .into()
