@@ -340,6 +340,59 @@ pub fn read_context(
 ) -> Result<Context, String> {
     read_context_inner(tmux, tty, point, cancelled, true)
 }
+/// A link the agent printed across two lines is seen half at a time in the window grid.
+/// Completes it from the clicked pane alone; on any failure the clicked fragment is
+/// kept, so opening never gets worse.
+pub fn complete_link(
+    tmux: &impl super::clipboard::TmuxIo,
+    tty: Option<&str>,
+    point: (u16, u16),
+    url: &str,
+    cancelled: impl Fn() -> bool,
+) -> String {
+    capture_click(tmux, tty, point, &cancelled)
+        .ok()
+        .and_then(|context| context.pane)
+        .and_then(|pane| complete_in_pane(tmux, &pane, url))
+        .unwrap_or_else(|| url.to_owned())
+}
+
+/// Completes a link fragment from one pane's text (`capture-pane -J` joins tmux soft
+/// wraps): first what the pane shows, which in copy mode is scrolled back from its
+/// bottom, then its recent history in case the text moved on. Relative paths are
+/// checked against the pane's own folder.
+pub fn complete_in_pane(
+    tmux: &impl super::clipboard::TmuxIo,
+    pane: &str,
+    url: &str,
+) -> Option<String> {
+    let print = |format: &str| {
+        tmux.read(&["display-message", "-p", "-t", pane, format])
+            .ok()
+            .filter(|out| out.ok())
+            .map(|out| out.stdout.trim_end_matches(['\r', '\n']).to_owned())
+    };
+    let view = print("#{pane_in_mode}|#{scroll_position}|#{pane_height}").unwrap_or_default();
+    let cwd = print("#{pane_current_path}").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let exists = |body: &str| {
+        let path = if let Some(rest) = body.strip_prefix("~/") {
+            std::path::Path::new(&home).join(rest)
+        } else {
+            std::path::Path::new(&cwd).join(body)
+        };
+        path.exists()
+    };
+    [crate::term::links::shown_lines(&view), crate::term::links::recent_lines()]
+        .into_iter()
+        .find_map(|range| {
+            let mut args = vec!["capture-pane", "-p", "-J"];
+            args.extend(range.iter().map(String::as_str));
+            args.extend(["-t", pane]);
+            let text = tmux.read(&args).ok().filter(|out| out.ok())?.stdout;
+            crate::term::links::complete_from_pane(&text, url, exists)
+        })
+}
 pub fn capture_click(
     tmux: &impl super::clipboard::TmuxIo,
     tty: Option<&str>,

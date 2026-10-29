@@ -157,6 +157,29 @@ pub fn complete_from_pane(
     best
 }
 
+/// `capture-pane` range for what a pane shows, from
+/// `#{pane_in_mode}|#{scroll_position}|#{pane_height}`. Scrolled back in copy mode
+/// (the mouse wheel enters it) the bottom of the pane is not what was clicked
+/// (29-oct: every path read after scrolling gave «Ruta local invalida»). Three lines of
+/// margin keep a link cut by the edge of the view whole.
+pub fn shown_lines(view: &str) -> Vec<String> {
+    let mut fields = view.trim().split('|').map(|f| f.parse::<i64>().ok());
+    match (fields.next().flatten(), fields.next().flatten(), fields.next().flatten()) {
+        (Some(1), Some(scroll), Some(height)) if scroll > 0 && height > 0 => vec![
+            "-S".into(),
+            (-scroll - 3).to_string(),
+            "-E".into(),
+            (height - 1 - scroll + 3).to_string(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// `capture-pane` range for the pane's recent history, when the text moved on.
+pub fn recent_lines() -> Vec<String> {
+    vec!["-S".into(), "-2000".into()]
+}
+
 /// One primary press owns its URL and cell until the matching release.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrimaryPress {
