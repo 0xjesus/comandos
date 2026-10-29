@@ -264,3 +264,14 @@ def test_phone_strip_plus_and_terminal_switch_to_the_panel_view_first():
     assert 'activeView!=="panel"' in ns and 'showView("panel")' in ns and '!b.classList.contains("split")' in ns
     term = index.split('$("#tab-term")?.addEventListener("click", () => {', 1)[1].split("});", 1)[0]
     assert 'showView("panel")' in term and '$("#btn-terminal").click();' in term
+
+
+def test_phone_side_terminal_split_never_squeezes_the_desktop_usage_panel():
+    # The desktop app's left panel is under 600 px wide too, but its side
+    # terminal is native: the phone rule left Consumos at 120 px and a blank
+    # column below it (29-oct).
+    css = (ROOT / "dash" / "workspace.css").read_text()
+    rules = re.findall(r"[^{}]*\.cs-empty-terms\{flex:0 1 24%[^}]*\}", css)
+    assert rules, "phone split rule is missing"
+    for rule in rules:
+        assert "html:not([data-native-side-term])" in rule, rule
