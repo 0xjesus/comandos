@@ -751,6 +751,12 @@ fn switch_session(page: &Rc<RefCell<Page>>, session: &str) {
             return;
         }
         p.session = session.into();
+        // The listing still belongs to the old session: open the new one without
+        // sizing its window, like a first open.
+        if phone() {
+            p.ignore_size = true;
+        }
+        p.panes.clear();
         p.socket_id = p.socket_id.wrapping_add(1);
         p.down = false;
         p.resizing = false;
@@ -917,9 +923,10 @@ fn phone() -> bool {
     top.or(own).is_some_and(|width| width <= comandos_term::crop::PHONE_WIDTH)
 }
 /// The pane chrome's latest `/terminal-panes` listing (no extra request to tmux).
-pub fn panes_seen(panes: &[Value]) {
+/// A listing of another session (one asked for before a switch) is dropped.
+pub fn panes_seen(session: &str, panes: &[Value]) {
     let Some(page) = PAGE.with(|slot| slot.borrow().clone()) else { return };
-    if page.borrow().disposed {
+    if page.borrow().disposed || page.borrow().session != session {
         return;
     }
     page.borrow_mut().panes = panes.to_vec();
@@ -958,14 +965,17 @@ fn screen_style(t: &Term, view: Option<(String, String)>) {
 }
 /// Starts, moves or ends the one-pane view after a listing or a `select-pane`.
 fn crop_update(page: &Rc<RefCell<Page>>) {
-    let (plan, was) = {
+    let (plan, was, ignoring, ignore) = {
         let p = page.borrow();
         if p.disposed {
             return;
         }
-        (comandos_term::crop::plan(&p.panes, p.wanted_pane.as_deref(), phone()), p.crop.clone())
+        let phone = phone();
+        let plan = comandos_term::crop::plan(&p.panes, p.wanted_pane.as_deref(), phone);
+        let ignore = comandos_term::crop::ignore_size(phone, &p.panes, plan.is_some(), p.ignore_size);
+        (plan, p.crop.clone(), p.ignore_size, ignore)
     };
-    if plan == was {
+    if plan == was && ignore == ignoring {
         return;
     }
     let Some(t) = term(page) else { return };
@@ -983,11 +993,11 @@ fn crop_update(page: &Rc<RefCell<Page>>) {
             }
         }
     }
-    let reconnect = plan.is_some() != was.is_some();
+    let reconnect = ignore != ignoring;
     let base = {
         let mut p = page.borrow_mut();
         p.crop = plan.clone();
-        p.ignore_size = plan.is_some();
+        p.ignore_size = ignore;
         p.base_font
     };
     if let Some(root) = window().ok().and_then(|w| w.document()).and_then(|d| d.document_element()) {
@@ -1344,7 +1354,8 @@ fn attach_main() -> Result<(), JsValue> {
         observer_cb: None,
         ack_timers: BTreeMap::new(),
         crop: None,
-        ignore_size: false,
+        // A phone opens without sizing the window: see `crop::ignore_size`.
+        ignore_size: phone(),
         wanted_pane: None,
         panes: Vec::new(),
         base_font: 14.0,

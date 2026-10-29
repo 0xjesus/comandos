@@ -495,7 +495,7 @@ fn refresh(rc: &Shared) {
             s.busy = false;
         }
         let panes = rc.borrow().panes.clone();
-        crate::page::panes_seen(&panes);
+        crate::page::panes_seen(&session, &panes);
         draw(&rc);
     });
 }

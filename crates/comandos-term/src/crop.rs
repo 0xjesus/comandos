@@ -76,6 +76,24 @@ pub fn plan(panes: &[Value], wanted: Option<&str>, phone: bool) -> Option<Plan> 
     })
 }
 
+/// Whether a phone's tmux client attaches with `ignore-size`. A phone starts that
+/// way and keeps it until the listing shows one pane: attaching first at the
+/// phone's width shrank the desktop's split for a moment, and Claude rewrote the
+/// whole conversation at ~37 columns into the desktop's history (29-oct).
+/// `current` is what the open client uses; an empty listing changes nothing.
+pub fn ignore_size(phone: bool, panes: &[Value], cropping: bool, current: bool) -> bool {
+    if cropping {
+        return true;
+    }
+    if !phone {
+        return false;
+    }
+    if panes.len() == 1 {
+        return false;
+    }
+    current
+}
+
 /// Font size (CSS px) that fits the pane in `host` (CSS px), given the cell size one
 /// font pixel buys. Never larger than the person's own font, never below
 /// [`MIN_FONT`]; quarter pixels so tiny host changes do not re-measure.
@@ -133,6 +151,21 @@ mod tests {
         assert_eq!(plan(&split(), Some("%4"), false), None);
         let bare = vec![json!({"id":"%1"}), json!({"id":"%2"})];
         assert_eq!(plan(&bare, None, true), None);
+    }
+
+    #[test]
+    fn a_phone_never_sizes_the_window_before_it_knows_the_panes() {
+        // Opening: no listing yet, the phone keeps ignore-size from the start.
+        assert!(ignore_size(true, &[], false, true));
+        // A split: the crop keeps it.
+        assert!(ignore_size(true, &split(), true, true));
+        // Only one pane: the phone takes its own width, as before.
+        assert!(!ignore_size(true, &split()[..1], false, true));
+        // A listing that fails says nothing: keep what the client uses.
+        assert!(!ignore_size(true, &[], false, false));
+        // Wide screens size the window as before.
+        assert!(!ignore_size(false, &[], false, false));
+        assert!(!ignore_size(false, &split(), false, true));
     }
 
     #[test]
