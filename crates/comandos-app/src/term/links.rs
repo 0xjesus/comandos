@@ -217,30 +217,93 @@ pub fn link_at(
         .into_iter()
         .find(|url| url.start <= point && point <= url.end)
         .map(|url| url.url);
-    let mut text = String::new();
     let mut rendered = RowRender::default();
     let (cols, rows) = engine.size();
     let first = usize::from(row.saturating_sub(3));
+    let mut owned: Vec<Vec<String>> = Vec::new();
     for line in first..usize::from(row.saturating_add(5).min(rows)) {
         engine.render_line(line, &mut rendered);
-        let mut column = 0;
+        let mut cells = vec![String::from(" "); usize::from(cols)];
         for run in &rendered.runs {
-            while column < run.col {
-                text.push(' ');
-                column += 1;
+            let mut next = usize::from(run.col);
+            for (c, t) in run.cell_texts() {
+                if let Some(cell) = cells.get_mut(usize::from(c)) {
+                    *cell = t.to_owned();
+                }
+                next = usize::from(c) + 1;
             }
-            text.push_str(&run.text);
-            column = run.col.saturating_add(run.cells);
+            // The second cell of a wide character holds nothing.
+            for c in next..usize::from(run.col.saturating_add(run.cells)) {
+                if let Some(cell) = cells.get_mut(c) {
+                    cell.clear();
+                }
+            }
         }
-        while column < cols {
-            text.push(' ');
-            column += 1;
-        }
+        owned.push(cells);
+    }
+    let grid: Vec<Vec<&str>> = owned
+        .iter()
+        .map(|l| l.iter().map(String::as_str).collect())
+        .collect();
+    let clicked = usize::from(row) - first;
+    // The window grid holds every pane of a split side by side: keep the clicked pane's
+    // columns, between tmux's borders, so a cut link never joins the next pane's words
+    // (2-nov: «…/auditoria-redes-20261102/» + a word from the left pane).
+    let col = usize::from(col);
+    let border = |cell: &str| matches!(cell, "│" | "┃" | "║");
+    let joint = |cell: &str| {
+        border(cell)
+            || matches!(
+                cell,
+                "┼" | "┬"
+                    | "┴"
+                    | "├"
+                    | "┤"
+                    | "╋"
+                    | "┳"
+                    | "┻"
+                    | "┣"
+                    | "┫"
+                    | "╬"
+                    | "╦"
+                    | "╩"
+            )
+    };
+    let here = grid.get(clicked).cloned().unwrap_or_default();
+    let left = (0..col.min(here.len()))
+        .rev()
+        .find(|&c| here.get(c).is_some_and(|cell| border(cell)));
+    let right = (col + 1..here.len()).find(|&c| here.get(c).is_some_and(|cell| border(cell)));
+    let start = left.map_or(0, |c| c + 1);
+    let end = right.unwrap_or(usize::from(cols));
+    let same_pane = |line: &[&str]| {
+        [left, right]
+            .into_iter()
+            .flatten()
+            .all(|c| line.get(c).is_some_and(|cell| joint(cell)))
+    };
+    let mut text = String::new();
+    let mut lines_ok = Vec::new();
+    for line in &grid {
+        lines_ok.push(same_pane(line));
+        text.push_str(
+            &line
+                .get(start..end.min(line.len()))
+                .unwrap_or_default()
+                .concat(),
+        );
         text.push('\n');
     }
+    let col = grid
+        .get(clicked)
+        .and_then(|l| l.get(start..col.max(start).min(l.len())))
+        .map_or(0, |cells| cells.concat().chars().count());
     let lines: Vec<_> = text.split_inclusive('\n').collect();
     let continues = |index: usize| {
-        if engine.row_wraps(first + index) {
+        if !lines_ok.get(index + 1).copied().unwrap_or(false) {
+            return false;
+        }
+        if left.is_none() && right.is_none() && engine.row_wraps(first + index) {
             return true;
         }
         let Some((previous, next)) = lines.get(index).zip(lines.get(index + 1)) else {
@@ -262,7 +325,6 @@ pub fn link_at(
                         .trim_end()
                         .ends_with(['/', '?', '&', '=', '#', '%', '_', '-', '.'])))
     };
-    let clicked = usize::from(row) - first;
     let mut top = clicked;
     let mut bottom = clicked;
     while top > 0 && continues(top - 1) {
@@ -272,7 +334,7 @@ pub fn link_at(
         bottom += 1;
     }
     let joined = lines.get(top..=bottom).unwrap_or_default().concat();
-    let wrapped = url_from_wrapped_text(&joined, "", Some(clicked - top), Some(usize::from(col)));
+    let wrapped = url_from_wrapped_text(&joined, "", Some(clicked - top), Some(col));
     match (native, wrapped) {
         (Some(native), Some(wrapped))
             if wrapped.starts_with(&native) && !text.contains(&wrapped) =>

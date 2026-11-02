@@ -379,3 +379,35 @@ fn opening_a_path_ignores_a_trailing_period() {
     assert_eq!(plan.reveal, Some(file));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_path_cut_in_the_right_pane_of_a_split_never_takes_words_from_the_left_pane() {
+    use comandos_app::term::{
+        engine::{Palette, TermEngine},
+        links::link_at,
+    };
+    // 2-nov: Codex in the right pane cut «…/auditoria-redes-20261102/» and
+    // «Instrucciones_….doc» over two lines. The window grid holds both panes, so the
+    // join read the left pane's next line and gave «Esquema o comando no permitido».
+    let now = std::time::Instant::now();
+    let palette = Palette::xterm_default([255; 3], [0; 3], [255; 3], [0; 3], [255; 3]);
+    let mut engine = TermEngine::new(120, 5, 10, palette, false, now);
+    let row = |left: &str, right: &str| format!("{left:<45}│{right}");
+    let dir = "/home/test/Noticieros/output/auditoria-redes-20261102/";
+    let file = "Instrucciones_detalladas_San_Charbel_y_redes.doc";
+    let lines = [
+        row("  Claude escribe aquí", ""),
+        row("  revisa src/lib.rs y", &format!("  Archivo: {dir}")),
+        row("  crates/x.rs luego", &format!("  {file}")),
+        row("", ""),
+        row("  fin", "  listo"),
+    ];
+    engine.feed(lines.join("\r\n").as_bytes(), now);
+    let whole = format!("{dir}{file}");
+    for (r, c) in [(1u16, 60u16), (1, 100), (2, 50), (2, 80)] {
+        assert_eq!(link_at(&engine, (i32::from(r), c), r, c), Some(whole.clone()), "{r},{c}");
+    }
+    // The left pane keeps its own links and never reads the right one.
+    assert_eq!(link_at(&engine, (1, 12), 1, 12), Some("src/lib.rs".into()));
+    assert_eq!(link_at(&engine, (2, 6), 2, 6), Some("crates/x.rs".into()));
+}
