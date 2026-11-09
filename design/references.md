@@ -252,3 +252,124 @@ Jesús rechazó la primera versión de la ronda 2 por fea y sin referencias: exi
 Arte pixel reutilizado con sus licencias ya registradas: Shikashi (libro de hechizos para Comandos, cerebro para modelo, ciclo para conversación, llave para cuenta, mapa para contexto, grilletes para Cadenas, rayo para terminal rápida, hoguera para arranque, mano lanzando magia para Enter), karsiori (poción burbujeando en el pane seleccionado, cofre dorado al completar una cadena), Zoedoz (reloj de arena mientras corre una cadena). Los iconos en la barra son celdas de la hoja original a 32 px, sin redibujar.
 
 Direct manipulation implementada en el mockup: clic inserta el comando letra por letra sin Enter; arrastrar un comando a cualquier pane lo escribe ahí y lo selecciona; arrastrar a Cadenas lo añade como paso; los pasos se reordenan arrastrando; el separador de A cambia la altura. Mobbin no aporta pantallas de terminal integrada con tabs; las composiciones C y D son hipótesis propias. Verificado en la Mac mini a 1440×1000 y 390×844.
+
+## Ficha viva y panel de sesiones: piel de ComandOS, 2026-11-03
+
+Brief: el contenido del panel de sesiones y de la ficha por sesión ya está decidido por la investigación cognitiva (qué quiere el agente, cuánto espera, en qué ibas, cronología, etiquetas). Jesús rechazó la piel de las rondas 1–7 (fondos rojo/verde/ámbar, chips, losetas de colores) y pidió basarse en la investigación y en componentes UX/UI probados. Motor: MCP `mobbin` (app/SaaS). Mobbin respondió con imágenes reales en las tres búsquedas; se examinaron las capturas, no solo los metadatos. Maqueta: https://claude.ai/artifact/U2gGcJjQH85Xtq4PCg4afz (ronda 8, variantes P1–P5), verificada con capturas en el Chrome remoto de la Mac mini (`cc-extensions serve chrome-bg` + `cc-browser-expose`).
+
+| Fuente | Qué se revisó | Uso |
+|---|---|---|
+| [ComandOS, ventana real](../dash/index.html) | Captura de la app el 3-nov: losetas grises nombre · modelo en la cuadrícula de sesiones, tarjetas de Consumos con etiquetas mono en mayúsculas, un acento, cabecera con botones 3D. | Sí: tokens y componentes base de P1–P5 (`--panel #121722`, `--text #EAF0FB`, acento `#8B7CFF`, Ubuntu Sans / Ubuntu Sans Mono). |
+| [DESIGN.md del repo](DESIGN.md) | Tema oscuro, acento, 44 px en acciones, tarjetas para resumen de sesiones. | Sí: regla "un acento"; la ficha usa la tarjeta de Consumos. |
+| [Linear · Inbox](https://mobbin.com/screens/18c6955a-c42f-4cc1-9aa2-0276456720fb) | Bandeja: punto de no leído, título en negrita, subtítulo gris, tiempo a la derecha, sin color de fondo. | Sí: fila de P2/P3/P5 (punto rojo solo si te espera, qué quiere en gris, espera a la derecha). |
+| [Gumloop · Inbox "needs your input"](https://mobbin.com/screens/a0a76d11-fd8c-4720-9194-d6d5e43c8b0e) | Lista de agentes que piden entrada: nombre + "needs your input" + hace cuánto; pestañas Inbox / Resolved. | Sí: agrupación Te necesitan / Terminaron y texto "qué quiere" literal. |
+| [Plane · Inbox](https://mobbin.com/screens/849ec3f0-a1f0-4699-85eb-f895f7330036) | Lista con conteo en badge gris, filas planas. | Sí: badge gris del conteo en la pestaña Sesiones (no rojo). |
+| [Relevance AI · Task timeline](https://mobbin.com/screens/12228e33-2d48-435e-9027-f0c3d0f4e5f0) | Lista agrupada por Today / Last 3 days con hora a la derecha; detalle con cronología vertical sin colores. | Sí: cronología de la ficha (hora en mono gris, último paso en blanco). |
+| [Jira · Notifications](https://mobbin.com/screens/f7eb5777-1125-4f47-bdcc-39931e19cfeb) | Punto azul de no leído como única señal de color en una lista densa. | Sí: confirma "una sola señal"; el punto es rojo en ComandOS porque ya es el color de "pide permiso". |
+| [ClickUp · Inbox](https://mobbin.com/screens/f1374e47-4168-46b0-baab-445916244ac6) | Pestañas Primary / Other / Later / Cleared con conteos. | Parcial: idea de conteos por grupo; no se adoptan pestañas. |
+| [Asana · Inbox summary](https://mobbin.com/screens/ce717ee0-8445-49d2-9dda-227a396cef9a) | Resumen "requires your action" arriba de la lista. | No: el resumen duplica lo que ya dice la cabecera (N te necesitan). |
+| [Wrike](https://mobbin.com/screens/a2b51485-af81-4c80-8f06-b357e0fe5bda), [Remote](https://mobbin.com/screens/5e916e4a-4c86-4c06-a455-9a8d1785603d), [Ditto](https://mobbin.com/screens/caef87ed-4f3a-4224-83fb-3262ebcc593d) | Bandejas con tarjetas de aviso y onboarding. | No: demasiado ruido para un panel de 254 px. |
+| [Relevance AI · Agents table](https://mobbin.com/screens/1fdb02be-0b40-47d4-8bd4-ab77268c5f9f), [Lindy · My agents](https://mobbin.com/screens/f2ddc92e-973c-489d-b92c-72de8fb5adde) | Tablas de agentes con columnas y última ejecución. | Parcial: base de P4 (tabla Sesión · Qué quiere · Espera). |
+| PlayAI, Plain, Langdock, Lemni, Juicebox, Wix, Gorgias (Mobbin, misma búsqueda) | Páginas de agentes con tarjetas grandes y marketing. | No: son vistas de catálogo, no de operación. |
+| [Airtable](https://mobbin.com/screens/4e6059d4-ad78-48ec-8275-722ec190e3ac), [Wrike detalle](https://mobbin.com/screens/866c9861-876e-4cbc-9219-0dad94db8520), [ClickUp detalle](https://mobbin.com/screens/36758b9b-f6a3-4a8b-b4d2-91c373742924), [Slack lists](https://mobbin.com/screens/328deda6-5c30-4d8a-ba1a-2410ac5f11c4), [Unify](https://mobbin.com/screens/243c3a1b-efd7-44a4-8acc-dadc41f1de7c) | Paneles laterales de detalle con propiedades y comentarios. | Parcial: etiquetas en mono mayúsculas sobre el valor (IBAS EN, TE ESPERA); se descartan comentarios y propiedades vacías. |
+
+Direcciones con nombre:
+- **Robar: Bandeja Linear** (punto + negrita + gris + tiempo). Es la fila de P2/P3/P5.
+- **Evitar: semáforo** (fondos por estado, chips de etiqueta, tres colores). Es lo rechazado en las rondas 1–7.
+- **Recomendada: P5 Bandeja + cuadrícula**: filas con texto solo en Te necesitan / Terminaron; debajo, la cuadrícula actual nombre · modelo para las que trabajan o están libres; filtro de etiqueta como un renglón de texto; etiquetas editables en la ficha.
+
+Stack: todo son tokens y clases ya existentes en `dash/workspace.css` (tarjeta, pill, mono mayúsculas); no se añade librería. No pegar el CSS de la maqueta tal cual: reimplementar con los tokens del tema.
+
+Glimpses y mascota: saltados; la maqueta es la propia app con datos de ejemplo y el usuario está eligiendo entre P1–P5 en la ronda de grill.
+
+Archivos del run: maqueta `ficha-viva-grill.html` (artifact anterior), capturas en el scratchpad de la sesión (`shots7/`); DESIGN.md se actualiza cuando Jesús elija la P.
+
+### Ronda 9 (2026-11-03): sin cubetas de estado
+
+Jesús rechazó «te necesitan / terminaron / trabajando / libres»: «no creo que podamos mapearlo bien, no quiero que esté tan hardcodeado». Pidió mostrar bien solo Claude Code y Codex. Fuente de esta ronda: el propio repo, no Mobbin.
+
+| Fuente | Qué se miró | Uso |
+|---|---|---|
+| `crates/comandos-runtime/src/hooks/claude.rs` | UserPromptSubmit → working; Notification (permission_prompt / idle_prompt, pregunta leída del transcript) → waiting con `detail` y `options`; Stop → done con el último texto del turno; SessionEnd borra el estado | sí: cada fila muestra ese evento literal |
+| `crates/comandos-runtime/src/hooks/codex_hooks.rs`, `codex.rs` | Codex hooks: UserPromptSubmit, Stop, PermissionRequest; notify `agent-turn-complete` con `last-assistant-message` | sí |
+| `crates/comandos-server/src/dash/native/states/cards.rs` | la clasificación actual: `DONE_GRACE_SECS` 600, `ZOMBIE_WAITING_GRACE_SECS` 86 400, regex `Working (`, `esc to interrupt`, `Do you want / Allow` + `❯ 1.`; estado por defecto `idle` → `dead` | parcial: solo la regex del diálogo de permiso (Q4) y la última línea del pane como respaldo |
+
+Dirección: una lista por hora del último evento; punto rojo = Notification o PermissionRequest sin un prompt del usuario después («aviso sin responder»); filtro por etiqueta (gustó). Recomendada Q5: filas con el evento literal mientras quepan, el resto losetas con su hora; si una sesión no manda hooks, su fila muestra la última línea del pane.
+
+### Ronda 10 (2026-11-03): cuál es «la última línea de la terminal»
+
+Verdicto de Jesús sobre la ronda 9: «última línea de la terminal» (Q4). Antes de bajar un nivel capturé los panes reales con `tmux capture-pane -p -S -14` (solo lectura, socket por defecto, sin formatos de tiempo) de 22 panes con `claude`, `codex` o `node`.
+
+| Fuente | Qué se miró | Sirvió | Qué se tomó |
+|---|---|---|---|
+| Panes reales (capture-pane, 22 panes, 3-nov 22:50) | Últimas 8 líneas no vacías de cada uno | sí | Estructura del pie de pantalla: Claude Code termina SIEMPRE en la barra «⏵⏵ bypass permissions on (shift+tab to cycle) · ⧉ N» (a la derecha «✔ Update installed · /restart to apply» o «new task? /clear to save NNNk tokens»); encima la caja «❯» entre dos reglas; encima de la caja la cuenta del TUI «✻ Crunched for 11s · done 10:40 a.m.» o «✽ Swirling… (53s · ↓ 2.7k tokens)» y, si hay, «※ recap: …». Codex termina en «? for shortcuts · ⚠ 7 warnings · f2 to view», encima «GPT-6-Astra high · ~/ruta · título», encima «› Ask Codex to do anything», encima «Worked for 1m 6s • 3:02 PM» y «↳ Recap: …». Textos usados tal cual en la maqueta (con «⏵⏵»→«▸▸», «⎿»→«└», «⧉»→«▣» porque la fuente del Chrome remoto no los tiene). |
+| `crates/comandos-server/src/dash/native/states/cards.rs` (`claude_busy`, `codex_working`) | Cómo lee hoy ComandOS el pane | parcial | Ya usa `capture-pane -S -12/-14`; la ronda 10 propone mostrar la línea en vez de clasificarla. Regex de menú numerado («❯ 1.») como único detector del punto rojo. |
+
+Dirección: cinco definiciones de «última línea» sobre la estructura Q5/Q4 (filas con texto mientras quepan, losetas con nombre para el resto, filtro por etiqueta): R1 la barra literal (inútil, se muestra para verlo), R2 la línea encima de la caja, R3 recap del propio agente si está en pantalla y si no R2 (recomendada), R4 tres líneas en mono, R5 R2 + lo escrito en la caja sin enviar. El ajuste puntúa combinaciones (fila de dos líneas 2, de una 1.2, cuadrícula de 4 columnas −0.5). Verificado con capturas en escritorio (10/30/60/120) y celular (30). Artifact v14.
+
+### Ronda 11 (2026-11-03): la misma tarjeta para todas
+
+Verdicto sobre la ronda 10: R3 (recap si está en pantalla; si no, la línea encima de la caja), pero «no quiero que estén diferentes las cards del lado izquierdo; minimalista pero lo suficientemente informativa». Se elimina la mezcla filas-con-texto + losetas. Cinco estilos de tarjeta uniforme con el mismo contenido: U1 tarjetas iguales de dos líneas (recomendada), U2 lista sin cajas con línea fina (patrón Linear/Things), U3 cuadrícula de dos columnas con texto a dos líneas, U4 tabla densa de una línea por sesión (punto · nombre · línea · hace), U5 nombre en negrita y texto tenue sin palabra clave. Regla de densidad: se elige el primer modo (de más a menos texto) en el que caben TODAS las sesiones con la misma tarjeta; nunca dos formas a la vez. Hallazgo verificado con capturas: con 30 sesiones en el panel de 254 px solo la tabla densa (filas de ~17 px) conserva texto; las tarjetas de dos o una línea caen a solo nombre en dos columnas. Con 60, tres columnas de nombres; con 120, iniciales. Artifact v15.
+
+### Ronda 12 (2026-11-03): la tabla, cómoda de leer y operar
+
+Verdicto sobre la ronda 11: la tabla (U4), «pero más cómoda de leer y operar». Medido en el Chrome remoto: el panel izquierdo ofrece 570 px útiles; 30 filas caben solo si cada una mide ≤ 17.5 px (con 18.2 px se desborda 14 px y la tabla cae a solo nombres). Por eso la comodidad no puede venir de filas más altas sin scroll. Cinco variantes: T1 columnas con aire (cebra en vez de líneas, nombre fijo 100 px, barra azul en la activa, fondo al pasar el cursor), T2 letra proporcional para la línea de la terminal (≈30 % más caracteres en el mismo ancho), T3 tiempo compacto (14m, 2h) que cede ~25 px al texto, T4 operable (T2 + acciones en la fila al pasar el cursor o en la activa: ⏎ abrir; en diálogo 1 Sí · 2 Siempre · 3 No; y línea de teclas ↑↓ ⏎ 1 2 3 /; en celular acciones siempre visibles) recomendada, T5 filas altas (26 px, 40 px en celular) con encabezado y scroll, única que rompe «todas a la vista». Trampa encontrada: `font:` abreviado resetea line-height y subió las filas a 20 px; se fija `font:11.5px/1.1`. Artifact v16.
+
+### Ronda 13 (2026-11-04): con aire, con scroll, y la vista de hoy a un toque
+
+Verdicto sobre la ronda 12: «no me gusta ya ninguna, muy pegado el contenido; que haya scroll si será necesario; y tendremos que tener forma de también seguir viéndolo COMO está hoy». Se abandona la regla «todas a la vista sin scroll» para el panel de sesiones: filas con aire y scroll. En todas las variantes, conmutador Lista · Hoy en la cabecera del panel; «Hoy» es la cuadrícula de losetas nombre · modelo actual (misma lógica que P1 de la ronda 8) sin cambios. Variantes: S1 tabla con filas de 30 px (recomendada), S2 dos líneas por sesión separadas por línea fina, S3 tarjetas con aire (las más parecidas a las actuales con la línea de la terminal debajo), S4 cuadrícula de hoy arriba como mapa y lista con scroll debajo, S5 diálogos abiertos fijos fuera del scroll. Artifact v17.
+
+### Ronda 14 (2026-11-04): cinco conceptos nuevos
+
+Verdicto sobre la ronda 13: «ninguna me gusta». Pregunté qué fallaba: el texto de cada fila, la forma de las filas y la piel; «necesito que me propongas algo increíble», «cómodos de usar, fáciles de operar». Se empieza de cero en forma, piel y contenido.
+
+| Fuente | Qué se miró | Sirvió | Qué se tomó |
+|---|---|---|---|
+| [Devin · sesiones](https://mobbin.com/screens/92e0222c-8ba8-4abe-bc18-3ddef5b2e357) | Lista lateral de sesiones de agente | sí | Título = la tarea, subtítulo corto con el resultado, punto azul de no leído |
+| [Front · bandeja + atajos](https://mobbin.com/screens/6b6a701f-8589-415c-9c52-c91d4feade1c) | Bandeja con vista previa y panel de atajos | sí | Vista previa de una línea, operación por teclado |
+| [Superhuman · atajos](https://mobbin.com/screens/3ae6bf95-6bbd-4232-b045-3160b748393c) | Mapa de teclas | sí | E = listo, ⏎ abrir, flechas |
+| [Plain · hilos](https://mobbin.com/screens/51f96c92-d0ba-4d47-afa7-7472885a1407) | Secciones por estado, filtros arriba | parcial | Filtros arriba (Todo, Snoozed) → chips Todas · Sin leer · Permisos · Trabajando |
+| [Graphite · bandeja de PR](https://mobbin.com/screens/b4996a23-98e4-4c42-9b4e-e06d24fbad59) | Secciones plegables | no | Demasiado denso para 254 px |
+| [Notion Mail](https://mobbin.com/screens/8da56c96-c129-4f81-9aa0-6f370056afa7), [Plain](https://mobbin.com/screens/51f96c92-d0ba-4d47-afa7-7472885a1407), Tana, ElevenLabs, Lindy, Gumloop, Lemni, Intercom, Base44, Pipedrive, Wix, Gorgias | Paneles de agentes y bandejas | no | Paneles de configuración, no de operación en vivo |
+
+Contenido nuevo: se deja de mostrar la línea cruda del TUI. Cada sesión muestra lo que el agente respondió de verdad (filtrando «● Compacted…», «└ …», «✻ Crunched for…», «Worked for…», «● Task … running», «⚠ …») y lo que tú le pediste (el último prompt). Estado tomado del texto literal de la pantalla: menú numerado = permiso, «esc to interrupt» / «Working (» = trabajando, «usage limit reached» = límite. «Sin leer» lo decide la app (cambió desde la última vez que la abriste), no una heurística.
+
+Conceptos: D1 Chats (lista tipo WhatsApp: avatar con color por proyecto y ✻/◎ por agente, frase real, hora, contador de nuevos, «escribiendo…», Sí · Siempre · No en la fila) recomendada; D2 Bandeja (tipo Superhuman: lo que respondió + «Tú: …», E marca leído); D3 Cola (una tarjeta grande con lo siguiente que te toca + lista compacta); D4 Pantallas en miniatura (Mission Control); D5 Actividad (timeline Te espera · Ahora · Última hora · Hoy). Todos con scroll, chips de filtro y el conmutador a «Hoy» (losetas actuales). Verificado con capturas en escritorio y celular. Artifact v18.
+
+### Ronda 15 (2026-11-04): tus losetas arriba, tarjetas sin botones abajo
+
+Verdicto sobre la ronda 14: «ya nos vamos entendiendo mejor»; quitar los botones de acción de las tarjetas; dejar arriba las losetas como se ven ahora, pero mejoradas. Cambios: los botones Sí · Siempre · No y Responder · Listo · Saltar salen de las tarjetas (se responde en la ficha de la derecha). Arriba de todas las variantes van las losetas de hoy en 3 columnas, mejoradas: franja de color por proyecto en el borde izquierdo (en celular, avatar), punto rojo = permiso, punto azul = nuevo, aro que late = trabajando, la activa resaltada; tope del 40 % del alto con scroll propio y desvanecido abajo. El selector compara «Arriba: mejorada / tal cual». Abajo: E1 chats (recomendada), E2 bandeja, E3 solo lo pendiente, E4 pantallas en miniatura, E5 actividad. Primer intento con avatar dentro de la loseta descartado: en 254 px dejaba 2 letras del nombre. Verificado con capturas en escritorio (30 y 60) y celular. Artifact v19.
+
+### Ronda 16 (2026-11-04): la barra de sesiones de arriba, como hoy
+
+Verdicto sobre la ronda 15 (molesto): «conservar» se refería a la barra de sesiones de arriba de la app, no a losetas dentro del panel izquierdo. Captura de la ventana real de cc-app (`import -window`, sin clics): la barra superior ocupa todo el ancho sobre la terminal, 4 columnas, cada loseta «nombre · modelo» (con «+1/+2» de panes extra), la activa con borde, orden fijo. El panel izquierdo tiene Archivos · Consumos y la terminal lateral. La maqueta se rehízo con esa disposición: barra arriba sobre terminal y ficha, mismo orden fijo (las losetas no se mueven), mejorada con franja de color por proyecto y punto solo cuando hay algo (rojo permiso, azul nuevo, aro trabajando); «Arriba: tal cual» la replica sin cambios. Las tarjetas nuevas sin botones van en la pestaña Sesiones del panel izquierdo: F1 chats (recomendada), F2 bandeja, F3 lo que te toca, F4 pantallas, F5 actividad. Artifact v20.
+
+### Ronda 17 (2026-11-04): el feed de actividad a detalle
+
+Verdicto sobre la ronda 16: «barra de arriba + actividad me gusta» (F5). Se baja un nivel al feed. Constantes en las cinco: «Te espera · N» fijo arriba fuera del scroll; hover enlazado (pasar el cursor por un evento ilumina su loseta en la barra de arriba y al revés, verificado en el Chrome remoto con 2 elementos resaltados); grupos Ahora · Última hora · Hoy; filtros Todas · Sin leer · Permisos · Trabajando. Variantes: G1 lo último de cada sesión; G2 todo lo que pasó, incluidos tus mensajes («le escribiste»); G3 lo último + «▸ 1 evento antes» plegado (abierto en la sesión activa); G4 pregunta y respuesta («Tú: …» sobre la respuesta del agente) recomendada; G5 una línea por evento. Artifact v21.
+
+## Ronda 18 · color sin semáforo (4-nov-2026)
+
+Veredicto de la ronda 17: G4 (pregunta y respuesta). Jesús rechazó los colores de semáforo («no tiene sentido»): rojo = permiso, azul = nuevo, aro = trabajando, verde = listo, más un tono por proyecto. Un mismo color decía dos o tres cosas, y el rojo sonaba a error.
+
+Cinco reglas, todas sobre G4 + barra de arriba, con la leyenda en pantalla:
+
+| Opción | Regla | Te espera | Sin leer | Trabajando |
+|---|---|---|---|---|
+| K1 (recomendada) | El violeta solo cuando ComandOS te llama, lo mismo que suena | Loseta violeta tenue + punto | Punto blanco + negrita | Aro gris que gira |
+| K2 | El color es el proyecto, nunca el estado | Más clara + punto blanco | Punto blanco | Aro gris |
+| K3 | Cero color, brillo = importancia | Loseta invertida | Negrita | Aro gris |
+| K4 | Palabras, no luces | PERMISO | NUEVO | TRABAJA |
+| K5 | Un tono, más intenso = más urgente | Violeta sólida | Punto violeta | Aro violeta tenue |
+
+En todas, la sesión abierta lleva borde blanco, no violeta, para que el violeta no tenga dos significados. Los colores del contenido de la terminal no se tocan.
+
+## Ronda 19 · la loseta de arriba (4-nov-2026)
+
+Veredicto de la ronda 18: K5 (un solo violeta, más intenso = más urgente). Cinco losetas para la barra de sesiones de arriba. Todas miden 27 px como hoy (medido en el navegador remoto: barra de 260 px con 30 sesiones en las cinco), así que la terminal no pierde altura. El orden sigue fijo.
+
+- B1 Como hoy + marca K5.
+- B2 El tiempo («14 min», «2m 14s») reemplaza al modelo cuando hay algo que ver.
+- B3 Glifo ✻/◎ antes del nombre; el modelo sale de la loseta.
+- B4 (recomendada) B1 + tarjeta flotante al pasar el cursor con lo de G4; en el celular, al mantener presionado.
+- B5 «Trabajando» como línea violeta que recorre la base de la loseta.
