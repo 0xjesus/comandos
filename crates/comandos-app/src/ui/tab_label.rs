@@ -16,6 +16,10 @@ pub struct TabLabel {
     pub suggest: Option<gtk::Button>,
     pub indicator: gtk::Image,
     pub dot: gtk::EventBox,
+    /// K5 marker (dot / ring), always 9×9 so the text never shifts.
+    pub marker: gtk::DrawingArea,
+    look: Rc<Cell<crate::feed::TileLook>>,
+    ring_angle: Rc<Cell<f64>>,
     sticker: gtk::Label,
     state: Rc<RefCell<String>>,
     mark: Rc<RefCell<String>>,
@@ -61,6 +65,22 @@ impl TabLabel {
         model.set_xalign(0.);
         model.style_context().add_class("tab-model");
         row.pack_start(&model, false, false, 0);
+        let look = Rc::new(Cell::new(crate::feed::TileLook::TODAY));
+        let ring_angle = Rc::new(Cell::new(0.));
+        let marker = gtk::DrawingArea::new();
+        marker.set_size_request(crate::feed::MARKER_SIZE, crate::feed::MARKER_SIZE);
+        marker.set_valign(gtk::Align::Center);
+        marker.set_halign(gtk::Align::Center);
+        marker.style_context().add_class("k5-mark");
+        {
+            let look = look.clone();
+            let angle = ring_angle.clone();
+            marker.connect_draw(move |area, cr| {
+                draw_marker(area, cr, look.get().marker, angle.get());
+                glib::Propagation::Stop
+            });
+        }
+        row.pack_start(&marker, false, false, 0);
         let sticker = gtk::Label::new(None);
         sticker.set_valign(gtk::Align::Center);
         sticker.style_context().add_class("tab-sticker");
@@ -113,6 +133,9 @@ impl TabLabel {
             suggest,
             indicator,
             dot,
+            marker,
+            look,
+            ring_angle,
             sticker,
             state: Rc::new(RefCell::new(String::new())),
             mark: Rc::new(RefCell::new("none".into())),
@@ -165,6 +188,49 @@ impl TabLabel {
                 b.style_context().remove_class("favorite");
             }
         }
+    }
+    /// K5 state from `/session-feed`: one class on the tile and the marker.
+    pub fn set_look(&self, look: crate::feed::TileLook) {
+        if self.look.replace(look) == look && self.k5_class_matches(look.class) {
+            return;
+        }
+        let context = self.item.style_context();
+        for class in crate::feed::K5_CLASSES {
+            if Some(class) != look.class {
+                context.remove_class(class);
+            }
+        }
+        if let Some(class) = look.class {
+            context.add_class(class);
+        }
+        self.marker.queue_draw();
+    }
+    fn k5_class_matches(&self, class: Option<&str>) -> bool {
+        let context = self.item.style_context();
+        crate::feed::K5_CLASSES
+            .iter()
+            .all(|c| context.has_class(c) == (Some(*c) == class))
+    }
+    pub fn look(&self) -> crate::feed::TileLook {
+        self.look.get()
+    }
+    /// Linked hover with the web feed row (border 35 %, background +7 %).
+    pub fn set_highlight(&self, on: bool) {
+        let context = self.item.style_context();
+        if on {
+            context.add_class(crate::feed::HIGHLIGHT_CLASS);
+        } else {
+            context.remove_class(crate::feed::HIGHLIGHT_CLASS);
+        }
+    }
+    /// Advance the working ring; only redraws the 9 px slot.
+    pub fn spin(&self, angle: f64) -> bool {
+        if self.look.get().marker != crate::feed::Marker::Ring {
+            return false;
+        }
+        self.ring_angle.set(angle);
+        self.marker.queue_draw();
+        true
     }
     pub fn set_state(&self, state: &str) {
         if *self.state.borrow() == state {
@@ -300,6 +366,46 @@ impl TabLabel {
                 glib::Propagation::Proceed
             }
         });
+    }
+}
+/// Marker colour comes from CSS (`.k5-mark { color }`), so every theme applies.
+fn draw_marker(
+    area: &gtk::DrawingArea,
+    cr: &cairo::Context,
+    marker: crate::feed::Marker,
+    angle: f64,
+) {
+    use crate::feed::Marker;
+    if marker == Marker::None {
+        return;
+    }
+    let color = area.style_context().color(area.state_flags());
+    let (w, h) = (
+        f64::from(area.allocated_width()),
+        f64::from(area.allocated_height()),
+    );
+    let (cx, cy) = (w / 2., h / 2.);
+    match marker {
+        Marker::Ask | Marker::Dot => {
+            cr.set_source_rgba(color.red(), color.green(), color.blue(), color.alpha());
+            cr.arc(cx, cy, 3.5, 0., std::f64::consts::TAU);
+            let _ = cr.fill();
+        }
+        Marker::Ring => {
+            // 9 px ring, 1.5 px line, 60 % opacity, a quarter missing at the top.
+            cr.set_source_rgba(
+                color.red(),
+                color.green(),
+                color.blue(),
+                color.alpha() * 0.6,
+            );
+            cr.set_line_width(1.5);
+            let quarter = std::f64::consts::FRAC_PI_4;
+            let start = -quarter + angle;
+            cr.arc(cx, cy, 3.75, start, start + 6. * quarter);
+            let _ = cr.stroke();
+        }
+        Marker::None => {}
     }
 }
 pub fn tab_label(label: &str, favorite: bool) -> gtk::Box {

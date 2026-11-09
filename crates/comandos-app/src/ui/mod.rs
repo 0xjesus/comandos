@@ -10,6 +10,7 @@ pub mod column;
 pub mod confirm;
 pub mod drag;
 pub mod extensions;
+pub mod feed_preview;
 pub mod header;
 pub mod help;
 pub mod hourglass;

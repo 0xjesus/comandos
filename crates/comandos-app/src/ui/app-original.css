@@ -31,13 +31,13 @@ popover.acct-pop levelbar.acct-bar block.filled { background-color: @BRAND@; }
 popover.acct-pop levelbar.acct-bar.warn block.filled { background-color: #fbbf24; }
 popover.acct-pop levelbar.acct-bar.full block.filled { background-color: #f87171; }
 popover.acct-pop levelbar.acct-bar block.empty { background-color: transparent; }
-.strip-tab.cur { color: @TEXT@; background-color: mix(@BAR@, @LINE2@, 0.35); box-shadow: inset 0 -2px 0 0 @BRAND@; }
+.strip-tab.cur { color: @TEXT@; background-color: mix(@BAR@, @LINE2@, 0.35); box-shadow: inset 0 -2px 0 0 alpha(@TEXT@, 0.55); }
 /* ⊞ «varias filas» (grill 1-oct): las MISMAS pestañas como chips de 28 px con
    esquinas de 8 px, fondo del panel y 4 px entre ellas, envueltas en filas. */
 .tabstrip-rows, .tabstrip-rows viewport { background: @BAR@; border: none; }
-.tabstrip-rows .strip-tab { background-color: mix(@BAR@, @LINE2@, 0.18); min-height: 28px; border-radius: 8px; border-right: none; }
+.tabstrip-rows .strip-tab { background-color: mix(@BAR@, @LINE2@, 0.18); min-height: 28px; border-radius: 8px; border: 1px solid transparent; }
 .tabstrip-rows .strip-tab:hover { background-color: mix(@BAR@, @LINE2@, 0.35); }
-.tabstrip-rows .strip-tab.cur { background-color: mix(@BAR@, @LINE2@, 0.35); }
+.tabstrip-rows .strip-tab.cur { background-color: mix(@BAR@, @LINE2@, 0.35); border-color: alpha(@TEXT@, 0.55); box-shadow: none; }
 .strip-tab label { color: inherit; }
 .strip-tab label.tab-name { font-weight: 600; }
 .strip-tab label.tab-model, .tab-model { color: @FAINT@; font-family: 'Ubuntu Sans Mono', monospace; font-size: 10px; font-weight: 600; }
@@ -202,3 +202,45 @@ paned separator { background: @LINE@; min-width: 2px; }
 .cv-send:hover { background-color: mix(@BRAND@, #ffffff, 0.12); }
 .cv-send:disabled { opacity: 0.6; }
 .cc-key.cv-on { background-color: mix(@BAR@, @BRAND@, 0.22); }
+
+/* Ficha viva K5 (grill 3–9 nov, design/ficha-viva-spec.md): un solo violeta
+   (@BRAND@) = «ComandOS te llama»; más intenso = más urgente. Solo colores y
+   peso: el EventBox no mide su borde CSS ni su min-height (lo fijan tabstrip.rs
+   y el hueco fijo de 9 px de la marca), así que ninguna loseta cambia de tamaño. */
+.strip-tab .k5-mark { color: @BRAND@; }
+.strip-tab.k5-quiet label.tab-name { color: mix(@DIM@, @TEXT@, 0.78); }
+.tabstrip-rows .strip-tab.k5-quiet label.tab-name { font-weight: 500; }
+.strip-tab.k5-unread label.tab-name, .strip-tab.k5-work.cur label.tab-name,
+.strip-tab.k5-quiet.cur label.tab-name, .strip-tab.k5-unread.cur label.tab-name { color: @TEXT@; font-weight: 600; }
+.strip-tab.k5-ask, .strip-tab.k5-ask:hover, .strip-tab.k5-ask.cur,
+.tabstrip-rows .strip-tab.k5-ask, .tabstrip-rows .strip-tab.k5-ask:hover, .tabstrip-rows .strip-tab.k5-ask.cur {
+  background-color: @BRAND@; border-color: @BRAND@; }
+.tabstrip-rows .strip-tab.k5-ask.cur { border-color: alpha(@TEXT@, 0.55); }
+.strip-tab.k5-ask label.tab-name { color: #0A0D13; font-weight: 600; }
+.strip-tab.k5-ask label.tab-model { color: rgba(10, 13, 19, 0.62); }
+.strip-tab.k5-ask button, .strip-tab.k5-ask .k5-mark { color: #0A0D13; }
+.tabstrip-rows .strip-tab.k5-hl { border-color: alpha(@TEXT@, 0.35); background-color: mix(mix(@BAR@, @LINE2@, 0.18), @TEXT@, 0.07); }
+.tabstrip-rows .strip-tab.k5-ask.k5-hl { background-color: mix(@BRAND@, @TEXT@, 0.07); }
+.strip-tab.k5-hl { background-color: mix(@BAR@, @TEXT@, 0.07); }
+/* Vista previa al pasar el cursor (B4 + G4), 320 px bajo la loseta. */
+@define-color k5_text @TEXT@;
+@define-color k5_brand @BRAND@;
+window.k5-peek-win, window.k5-peek-win.background { background-color: transparent; border-radius: 12px; box-shadow: none; }
+.k5-peek { background-color: @BAR@; border: 1px solid @LINE2@; border-radius: 12px; padding: 8px 6px; color: @TEXT@;
+  font-family: 'Inter', sans-serif; font-size: 12.5px; }
+.k5-peek-row { padding: 4px 8px; }
+.k5-peek label.k5-av { background-color: mix(@BAR@, @TEXT@, 0.09); color: @DIM@; border-radius: 8px; font-size: 10.5px; font-weight: 700; }
+.k5-peek label.k5-av-glyph { color: @FAINT@; font-size: 8px; margin: 0 1px 0 0; }
+.k5-peek label.k5-l1 { color: @DIM@; }
+.k5-peek.k5-un label.k5-tm { color: @TEXT@; }
+.k5-peek.k5-read label.k5-qt-text { color: @DIM@; }
+.k5-peek label.k5-tm { color: @FAINT@; font-size: 11.5px; }
+.k5-peek label.k5-yo { color: @DIM@; font-size: 11.5px; }
+.k5-peek .k5-qt { border-left: 2px solid @LINE2@; padding: 1px 0 1px 9px; }
+.k5-peek .k5-qt.k5-qt-ask { border-left-color: @BRAND@; }
+.k5-peek label.k5-qt-text, .k5-peek label.k5-opt { color: @TEXT@; }
+.k5-peek label.k5-opt { color: @DIM@; }
+.k5-peek .k5-ft { border-top: 1px solid @LINE@; margin: 2px 4px 0; padding: 6px 4px 0; }
+.k5-peek label.k5-ft-text { color: @FAINT@; font-size: 11px; }
+.k5-peek label.k5-kbd { color: @DIM@; background-color: mix(@BAR@, @LINE2@, 0.5); border: 1px solid @LINE@; border-radius: 4px;
+  padding: 0 5px; font-size: 10px; font-weight: 600; }
