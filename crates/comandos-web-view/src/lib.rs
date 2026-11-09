@@ -48,6 +48,7 @@ pub mod utf16;
 pub mod news;
 
 pub mod command_sidebar;
+pub mod session_feed;
 pub mod index_page;
 
 pub mod theme_preferences;

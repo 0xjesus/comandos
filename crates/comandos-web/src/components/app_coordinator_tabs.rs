@@ -163,16 +163,9 @@ fn make_tab(
         }
         set(&mdl, "hidden", &short.is_empty().into())?;
     }
+    // No traffic light: state is the K5 mark that `session_feed` paints (ficha viva).
     let dot = query(t, ".dot");
     set(&dot, "hidden", &(!truthy(&status)).into())?;
-    let color = match text(&status).as_str() {
-        "waiting" => "var(--waiting)",
-        "working" => "var(--working)",
-        "done" => "var(--done)",
-        _ => "var(--faint)",
-    };
-    set(&get(&dot, "style"), "background", &color.into())?;
-    set(&get(&dot, "style"), "color", &color.into())?;
     let close = query(t, ".x");
     if truthy(&close) {
         set(
@@ -187,7 +180,7 @@ fn make_tab(
     }
     let favorite = query(t, ".tab-fav");
     if truthy(&favorite) {
-        run("updateFavoriteButton", &[favorite, session, label])?;
+        run("updateFavoriteButton", &[favorite, session.clone(), label])?;
     }
     let count = query(t, ".ws-count");
     let counted = source && number(&get(&entry, "count")) > 1.0;
@@ -200,6 +193,7 @@ fn make_tab(
         )?;
     }
     classes(t, "ws-unavailable", source && !truthy(&get(&entry, "live")));
+    crate::components::session_feed::decorate(t, &session);
     Ok(())
 }
 fn render_bar() -> Result<(), JsValue> {
@@ -443,6 +437,7 @@ fn show_view(key: JsValue, reveal_tab: bool) -> Result<(), JsValue> {
     if reveal_tab {
         reveal(id("tabbar"))?;
     }
+    crate::components::session_feed::viewed();
     Ok(())
 }
 fn add(sess: JsValue, label: JsValue, mirrored: bool) -> Result<(), JsValue> {

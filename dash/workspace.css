@@ -1179,3 +1179,95 @@ body.app.split:not(.inapp) #tab-left[aria-pressed="true"]{color:var(--brand)}
 #command-sidebar button[data-terms-toggle]:hover{color:var(--cs-text)!important;background:var(--cs-hover)!important}
 #btn-pomo svg{width:18px;height:18px;flex:none}
 @media(max-width:600px){#command-sidebar .sf-row{min-height:34px!important}#command-sidebar .cs-tools button[data-flat].tb{height:38px}}
+
+/* Ficha viva (design/ficha-viva-spec.md §2–3): K5 = one accent, more intense = more urgent.
+   Te espera = solid --brand tile; sin leer = 7 px dot + white 600 name; trabajando = faint
+   ring with a gap; quieta = no mark, dimmed name; abierta = faint white border, never violet.
+   Only with html[data-feed] (set once /session-feed answers): without the route nothing changes.
+   Tiles keep their size, order and columns; the mark has a fixed 9 px slot and the name
+   only changes weight in the «varias filas» grid, where the column fixes the width. */
+html[data-feed] body.app #tabbar .apptab .lbl{color:color-mix(in srgb,var(--text) 78%,var(--dim))}
+html[data-feed] body.app.tabs-rows #tabbar .apptab .lbl{font-weight:500}
+html[data-feed] body.app #tabbar .apptab:is(.fs-un,.fs-ask,.on) .lbl{color:var(--text)}
+html[data-feed] body.app.tabs-rows #tabbar .apptab:is(.fs-un,.fs-ask,.on) .lbl{font-weight:600}
+html[data-feed] body.app #tabbar .apptab .fs-mk{flex:none;width:9px;height:9px;display:grid;place-items:center;font-style:normal;margin-left:-2px}
+html[data-feed] body.app #tabbar .apptab .fs-mk::after{content:"";display:block;border-radius:50%}
+html[data-feed] body.app #tabbar .apptab.fs-un .fs-mk::after{width:7px;height:7px;background:var(--brand)}
+html[data-feed] body.app #tabbar .apptab.fs-work .fs-mk::after{width:9px;height:9px;box-sizing:border-box;border:1.5px solid color-mix(in srgb,var(--brand) 60%,transparent);border-top-color:transparent;animation:fs-spin 1.1s linear infinite}
+html[data-feed] body.app #tabbar .apptab.fs-ask,html[data-feed] body.app #tabbar .apptab.fs-ask:hover{background:var(--brand);color:var(--on-brand)}
+html[data-feed] body.app #tabbar .apptab.fs-ask .lbl{color:var(--on-brand)}
+html[data-feed] body.app #tabbar .apptab.fs-ask :is(.mdl,.x,.ws-count){color:color-mix(in srgb,var(--on-brand) 62%,transparent)}
+html[data-feed] body.app #tabbar .apptab.fs-ask .fs-mk::after{width:7px;height:7px;background:var(--on-brand)}
+html[data-feed] body.app #tabbar .apptab.on{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 55%,transparent)}
+html[data-feed] body.app #tabbar .apptab.fs-hl{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 35%,transparent);background:color-mix(in srgb,var(--text) 7%,var(--panel))}
+html[data-feed] body.app #tabbar .apptab.fs-ask.fs-hl{background:var(--brand)}
+@media (max-width:747px){
+  html[data-feed] body.app #tabbar .apptab.on{border-color:color-mix(in srgb,var(--text) 55%,transparent);box-shadow:none}
+}
+@media (pointer:coarse){html[data-feed] body.app #tabbar .apptab{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
+@keyframes fs-spin{to{transform:rotate(360deg)}}
+
+/* «Sesiones» tab of the sidebar: violet count = sessions that wait for you (hidden at 0). */
+#command-sidebar .cs-tools button[data-flat].tb[hidden]{display:none!important}
+#command-sidebar .cs-tools .tb .fs-n{flex:none;min-width:17px;height:17px;padding:0 5px;box-sizing:border-box;border-radius:999px;background:var(--brand);color:var(--on-brand);font:700 10.5px/17px var(--sans);text-align:center}
+#command-sidebar .cs-tools .tb .fs-n[hidden]{display:none}
+
+/* Feed G4: chips, «TE ESPERA · N» pinned outside the scroll, then rows grouped by time. */
+#command-sidebar .cs-feed{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:8px 8px 0;color:var(--text)}
+#command-sidebar .cs-feed[hidden]{display:none!important}
+#command-sidebar .cs-feed .fs-chips{flex:none;display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none;padding:0 0 8px}
+#command-sidebar .cs-feed .fs-chips::-webkit-scrollbar{display:none}
+#command-sidebar .cs-feed button[data-flat].fs-chip{flex:none;min-height:0;height:auto;padding:4px 9px;gap:0;border-radius:999px;border:1px solid transparent;background:var(--panel);color:var(--dim);font:500 11.5px/1.35 var(--sans);white-space:nowrap}
+#command-sidebar .cs-feed button[data-flat].fs-chip:hover{color:var(--text);background:color-mix(in srgb,var(--text) 6%,var(--panel))}
+#command-sidebar .cs-feed button[data-flat].fs-chip.on{background:color-mix(in srgb,var(--text) 10%,var(--panel2));border-color:var(--line2);color:var(--text)}
+#command-sidebar .cs-feed .fs-chip i{font-style:normal;color:var(--faint);margin-left:5px}
+#command-sidebar .cs-feed .fs-chip.on i{color:var(--dim)}
+#command-sidebar .cs-feed .fs-pin{flex:none;max-height:45%;overflow-y:auto;overscroll-behavior:contain;padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid var(--line)}
+#command-sidebar .cs-feed .fs-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:10px}
+#command-sidebar .cs-feed .fs-gh{font:600 10.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:12px 4px 6px}
+#command-sidebar .cs-feed :is(.fs-pin,.fs-scroll)>.fs-gh:first-child{padding-top:2px}
+#command-sidebar .cs-feed .fs-pin .fs-gh{color:var(--brand)}
+#command-sidebar .cs-feed .fs-empty{margin:24px 8px;color:var(--faint);font:12.5px var(--sans);text-align:center}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;align-items:start;padding:9px 8px;border-radius:10px;min-height:56px;box-sizing:border-box;cursor:pointer;outline:none}
+#command-sidebar .cs-feed .fs-row:hover,#command-sidebar .cs-feed .fs-row.on{background:color-mix(in srgb,var(--text) 5%,transparent)}
+#command-sidebar .cs-feed .fs-row.hl{background:color-mix(in srgb,var(--text) 7%,transparent)}
+#command-sidebar .cs-feed .fs-row:focus-visible{box-shadow:inset 0 0 0 2px var(--brand)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-av{position:relative;flex:none;width:28px;height:28px;border-radius:32%;display:grid;place-items:center;font:600 10px var(--sans);letter-spacing:.02em;color:var(--dim);background:color-mix(in srgb,var(--text) 9%,var(--panel2))}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-ag{position:absolute;right:-4px;bottom:-4px;width:15px;height:15px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;font:600 9px/1 var(--sans);font-style:normal;color:var(--faint);background:var(--panel);border:1.5px solid var(--panel)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-bd{min-width:0;display:grid;gap:5px}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-l1{display:flex;gap:8px;align-items:baseline;min-width:0;font:12.5px/1.35 var(--sans);color:var(--dim)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-t{flex:1;min-width:0;overflow-wrap:anywhere}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-t b{color:var(--text);font-weight:600}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row:not(.un):not(.fs-ask) .fs-t b{color:color-mix(in srgb,var(--text) 78%,var(--dim));font-weight:500}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-v{color:var(--dim)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-ask .fs-v{color:var(--brand);font-weight:600}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-tm{flex:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font:11.5px var(--sans);color:var(--faint)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.un .fs-tm{color:var(--text)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-work .fs-tm{color:var(--dim)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-tm .fs-mk{display:none;font-style:normal}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-un .fs-tm .fs-mk{display:block;width:6px;height:6px;border-radius:50%;background:var(--brand)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-work .fs-tm .fs-mk{display:block;width:8px;height:8px;box-sizing:border-box;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--brand) 60%,transparent);border-top-color:transparent;animation:fs-spin 1.1s linear infinite}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-you{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11.5px/1.35 var(--sans);color:var(--faint)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-you span:last-child{color:var(--dim)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-q{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;border-left:2px solid var(--line2);padding:1px 0 1px 9px;font:12.5px/1.4 var(--sans);color:var(--text)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-un .fs-q{border-left-color:color-mix(in srgb,var(--brand) 55%,transparent)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-ask .fs-q{border-left-color:var(--brand)}
+:is(#command-sidebar .cs-feed,.fs-peek) .fs-row:not(.un):not(.fs-ask) .fs-q{color:var(--dim)}
+
+/* B4 preview card: under the tile (320 px), never steals focus nor covers the tile.
+   On touch (long press) it is fixed under the bar, full width minus 16 px, with 44 px options. */
+.fs-peek{position:fixed;z-index:9000;box-sizing:border-box;display:grid;gap:4px;padding:8px 6px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 14px 36px color-mix(in srgb,var(--bg) 60%,transparent);color:var(--text);pointer-events:none}
+.fs-peek .fs-row{padding:4px 8px;min-height:0;cursor:default}
+.fs-peek .fs-q{-webkit-line-clamp:4}
+.fs-peek .fs-opts{display:grid;gap:2px}
+.fs-peek .fs-ol{display:flex;gap:7px;align-items:baseline;min-width:0;font:12px/1.4 var(--sans);color:var(--dim)}
+.fs-peek .fs-ol span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fs-peek kbd{font:600 10px var(--sans);color:var(--dim);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-right:3px}
+.fs-peek .fs-ft{display:flex;flex-wrap:wrap;gap:10px;margin:2px 4px 0;padding:6px 8px 0;border-top:1px solid var(--line);font:11px var(--sans);color:var(--faint)}
+.fs-peek.touch{pointer-events:auto;padding:8px 4px 10px;background:var(--panel2);border-radius:14px}
+.fs-peek.touch .fs-row{cursor:pointer}
+.fs-peek.touch button[data-flat].fs-opt{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:14px/1.3 var(--sans);text-align:left;cursor:pointer}
+.fs-peek.touch .fs-opt span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fs-peek.touch .fs-opts{gap:6px;margin-top:4px}
+@media (max-width:600px),(pointer:coarse){#command-sidebar .cs-feed .fs-row{min-height:44px;padding:10px 8px}#command-sidebar .cs-feed button[data-flat].fs-chip{min-height:32px;padding:4px 12px}}
+@media (prefers-reduced-motion:reduce){html[data-feed] body.app #tabbar .apptab.fs-work .fs-mk::after,:is(#command-sidebar .cs-feed,.fs-peek) .fs-row.fs-work .fs-tm .fs-mk{animation:none}}

@@ -178,6 +178,8 @@ mod web {
                 ""
             } else if self.state("view") == "usage" {
                 "usage"
+            } else if self.state("view") == "sessions" {
+                "sessions"
             } else {
                 "files"
             });
@@ -643,8 +645,18 @@ mod web {
                     attr(&button, "data-term-act", action);
                 }
                 let usage = self.state("view") == "usage";
+                // «Sesiones» (ficha viva): the activity feed painted by `session_feed`.
+                let sessions = self.state("view") == "sessions";
                 set(&query(&box_, ".et-lim"), "hidden", &(!usage).into())?;
-                set(&query(&box_, ".cs-explorer"), "hidden", &usage.into())?;
+                set(
+                    &query(&box_, ".cs-explorer"),
+                    "hidden",
+                    &(usage || sessions).into(),
+                )?;
+                let feed = query(&box_, ".cs-feed");
+                if !nullish(&feed) {
+                    set(&feed, "hidden", &(!sessions).into())?;
+                }
                 for button in all(&self.el, "[data-sidebar-view]") {
                     let on = get(&get(&button, "dataset"), "sidebarView") == self.state("view");
                     classes(&button, "on", on);
@@ -653,10 +665,14 @@ mod web {
                 if usage && cur.is_empty() {
                     self.quiet("renderLimits", &[query(&box_, ".cs-limits")]);
                 }
-                self.browser.sync(if cur.is_empty() {
-                    if usage { "usage" } else { "files" }
-                } else {
+                self.browser.sync(if !cur.is_empty() {
                     ""
+                } else if usage {
+                    "usage"
+                } else if sessions {
+                    "sessions"
+                } else {
+                    "files"
                 });
             }
             if cur == "srv" {
@@ -918,7 +934,7 @@ mod web {
                 match action {
                     "view" => {
                         let view = get(&data, "sidebarView");
-                        if view == "files" || view == "usage" {
+                        if view == "files" || view == "usage" || view == "sessions" {
                             self.write_state("view", view)?;
                             self.write_state("sheet", "".into())?;
                             self.render()?;
@@ -1348,7 +1364,10 @@ mod web {
         method(&exports, "createLimitsView", |a| {
             Limits::create(a.get(0), or(a.get(1), object()))
         })?;
-        set(&js_sys::global(), "ComandosCommandSidebar", &exports)
+        set(&js_sys::global(), "ComandosCommandSidebar", &exports)?;
+        // «Sesiones» feed and K5 marks (`window.ComandosFeed`); never blocks the sidebar.
+        let _ = crate::components::session_feed::install();
+        Ok(())
     }
 }
 
