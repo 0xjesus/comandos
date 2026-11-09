@@ -38,18 +38,18 @@ const HINT_TIMEOUT: Duration = Duration::from_secs(2);
 // `\b` no es idéntico: `regex` cuenta las marcas Mn como letras de palabra y no
 // los números «No» (`²`), al revés que `re`; para «Working» de Codex (texto
 // ASCII de su pie) la diferencia es teórica.
-static WORKING: LazyLock<Option<Regex>> =
+pub(crate) static WORKING: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r"\bWorking[\s\x1c-\x1f]*\(").ok());
-static INTERRUPT: LazyLock<Option<Regex>> = LazyLock::new(|| {
+pub(crate) static INTERRUPT: LazyLock<Option<Regex>> = LazyLock::new(|| {
     Regex::new(r"(?i)esc to interrupt|ctrl\+c to interrupt|esc para interrumpir").ok()
 });
-static QUESTION: LazyLock<Option<Regex>> = LazyLock::new(|| {
+pub(crate) static QUESTION: LazyLock<Option<Regex>> = LazyLock::new(|| {
     Regex::new(r"(?m)^[\s\x1c-\x1f]*(Do you want|Allow|¿Permitir|Yes, |No, )").ok()
 });
-static CONFIRM: LazyLock<Option<Regex>> =
+pub(crate) static CONFIRM: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r"(?i)❯[\s\x1c-\x1f]*1\.|\(y\)|Enter to confirm").ok());
 
-fn search(re: &LazyLock<Option<Regex>>, text: &str) -> Result<bool, StateFault> {
+pub(crate) fn search(re: &LazyLock<Option<Regex>>, text: &str) -> Result<bool, StateFault> {
     re.as_ref()
         .map(|re| re.is_match(text))
         .ok_or(StateFault::Failure)

@@ -58,6 +58,12 @@ fn strip_date(s: &str) -> String {
     }
 }
 
+/// El modelo corto que muestra la pestaña (`claude-opus-5-5` → `opus-5`):
+/// la misma limpieza que `tab_models` aplica antes de la etiqueta.
+pub(crate) fn short_model(model: &str) -> String {
+    strip_date(&strip_context(model).replace("claude-", ""))
+}
+
 /// `str.capitalize()` para ASCII; con no-ASCII (título Unicode) se declina.
 fn capitalize(s: &str) -> Result<String, StateFault> {
     if !s.is_ascii() {

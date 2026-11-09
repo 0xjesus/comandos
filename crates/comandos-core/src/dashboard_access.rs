@@ -133,6 +133,8 @@ pub const API_GET: &[&str] = &[
     "/news/saved",
     "/news/media",
     "/work-marks",
+    // Ruta nativa sin heredado (ficha viva): prompts y respuestas de los agentes.
+    "/session-feed",
 ];
 
 fn py_strip(value: &str) -> &str {
