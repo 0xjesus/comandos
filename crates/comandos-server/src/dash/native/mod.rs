@@ -10,6 +10,7 @@ pub mod catalog_cli;
 pub mod catalogs;
 pub mod census;
 pub mod events;
+pub mod feed;
 pub mod files;
 pub mod input;
 pub mod lanes;
@@ -104,6 +105,7 @@ pub enum NativeRoute {
     Retired,
     Sidebar,
     Chat,
+    Feed(feed::FeedRoute),
     // Cortes de la 2f (D2): cada variante pertenece a un `Cut` (ver `cut`).
     Tabs(tabs::TabsRoute),
     Sessions(sessions::SessionsRoute),
@@ -175,7 +177,8 @@ impl NativeRoute {
             | NativeRoute::Usage(_)
             | NativeRoute::Retired
             | NativeRoute::Sidebar
-            | NativeRoute::Chat => Cut::Base,
+            | NativeRoute::Chat
+            | NativeRoute::Feed(_) => Cut::Base,
         }
     }
 }
@@ -300,6 +303,7 @@ const TABLES: &[&[Entry]] = &[
     retired::ROUTES,
     sidebar::ROUTES,
     chat::ROUTES,
+    feed::ROUTES,
     // Cortes de la 2f. `residue` va la última: sus prefijos no deben tapar
     // ninguna entrada exacta.
     tabs::ROUTES,
@@ -318,7 +322,7 @@ const TABLES: &[&[Entry]] = &[
 /// Cuántas tablas de `TABLES` son de la base (2b–2e): las primeras, antes de
 /// las de los cortes de la 2f. Quien añada una tabla de base lo sube aquí.
 #[cfg(test)]
-const BASE_TABLES: usize = 17;
+const BASE_TABLES: usize = 18;
 
 pub fn route(method: &Method, target: &str) -> Option<NativeRoute> {
     if *method == Method::GET
@@ -717,6 +721,8 @@ pub struct Native {
     pub(crate) typing: Arc<typing::TypingState>,
     /// GET `/state`: caché de 1,2 s, vuelo único y cachés de los lectores.
     pub(crate) states: states::Engine,
+    /// GET `/session-feed`: último cálculo, vuelo único y cachés de transcripts.
+    pub(crate) feed: feed::FeedState,
     /// Censo de declinaciones (D7).
     pub(crate) census: Arc<census::DeclineCensus>,
     /// Tareas largas del frente (D12).
@@ -760,6 +766,7 @@ impl Native {
             notice_feed: notices::RevisionFeed::default(),
             typing: Arc::default(),
             states: states::Engine::default(),
+            feed: feed::FeedState::default(),
             census: Arc::default(),
             tasks: Arc::default(),
             remote: remote::RemoteCache::default(),
@@ -1023,6 +1030,7 @@ impl Native {
         match route {
             NativeRoute::Sidebar => sidebar::answer(self, request).await,
             NativeRoute::Chat => chat::answer(self, request).await,
+            NativeRoute::Feed(route) => feed::answer(self, route, request).await,
             NativeRoute::Light(route) => light::answer(self, route, request).await,
             NativeRoute::Events => events::answer(self, request).await,
             NativeRoute::Notices(route) => notices::answer(self, route, request).await,
@@ -1135,7 +1143,7 @@ mod scaffold_tests {
         // la apaga) y toda entrada de las tablas de la 2f, a su corte. La lista
         // explícita cubre las tablas de ambos carriles (2f-1 y 2f-3/2f-4); el
         // recuento debe igualar `TABLES.len()`.
-        let base: [&[Entry]; 17] = [
+        let base: [&[Entry]; 18] = [
             light::ROUTES,
             events::ROUTES,
             notices::ROUTES,
@@ -1152,7 +1160,8 @@ mod scaffold_tests {
             usage::ROUTES,
             retired::ROUTES,
             sidebar::ROUTES,
-    chat::ROUTES,
+            chat::ROUTES,
+            feed::ROUTES,
         ];
         let cuts: [&[Entry]; 11] = [
             tabs::ROUTES,
