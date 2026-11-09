@@ -1890,6 +1890,9 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         pages.set_transition_type(gtk::StackTransitionType::None);
         pages.set_hhomogeneous(false);
         pages.set_vhomogeneous(false);
+        // A stack ignores a hidden child as its visible page; the chat page is already
+        // shown, so without this the app opened on an empty chat instead of tmux.
+        term_page.show();
         pages.add_named(&term_page, "term");
         app.install_chat(&pages);
         pages.set_visible_child_name("term");
