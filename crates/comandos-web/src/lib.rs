@@ -80,6 +80,8 @@ pub mod components {
     pub mod quick_terminal;
     pub mod servers;
     pub mod session_config;
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) mod session_feed;
     pub mod theme_preferences;
     pub mod ui_sounds;
     #[cfg(target_arch = "wasm32")]

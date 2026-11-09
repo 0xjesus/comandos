@@ -4,7 +4,8 @@
   "source": "dash/command-sidebar.js",
   "sha256": "6d6d8bedc2d99a1d2e327845012441603b2904cb0618f35641fbc4bc5c4e0130",
   "exports": [
-    "ComandosCommandSidebar"
+    "ComandosCommandSidebar",
+    "ComandosFeed"
   ],
   "deps": []
 }
