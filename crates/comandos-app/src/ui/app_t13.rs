@@ -466,10 +466,16 @@ impl App {
                     }) else {
                         return;
                     };
-                    let parsed = result
-                        .js_value()
+                    let raw = result.js_value().map(|js| js.to_str().to_string());
+                    // Ficha viva: hover of a web feed row lights its tile; UI only, never queued.
+                    if let Some(session) = raw.as_deref().and_then(crate::feed::feed_hover_message)
+                    {
+                        app.feed_highlight(&session);
+                        return;
+                    }
+                    let parsed = raw
                         .ok_or_else(|| CommandError::Invalid("missing JavaScript value".into()))
-                        .and_then(|js| ui::bridge::parse_bridge(js.to_str().as_str()));
+                        .and_then(|raw| ui::bridge::parse_bridge(&raw));
                     if let Err(error) =
                         parsed.and_then(|message| app.bridge_queue.borrow_mut().push(message))
                     {

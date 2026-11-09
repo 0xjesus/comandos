@@ -8,6 +8,7 @@ pub mod agent_stop;
 pub mod clipboard_bridge;
 pub mod config;
 pub mod dash_client;
+pub mod feed;
 pub mod fixture;
 pub mod guard;
 pub mod ipc;

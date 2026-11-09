@@ -22,6 +22,8 @@ pub enum PollUpdate {
     },
     Workspace(Value),
     Marks(Value),
+    /// `GET /session-feed`; `Null` once the route stops answering (tiles as today).
+    Feed(Value),
 }
 
 /// A GTK tick keeps only the latest complete update of each kind.
@@ -37,6 +39,7 @@ impl PollBatch {
             PollUpdate::Workspace(_) => 2,
             PollUpdate::Marks(_) => 3,
             PollUpdate::Notices { .. } => 4,
+            PollUpdate::Feed(_) => 5,
         };
         self.latest.insert(key, update);
     }
@@ -56,6 +59,8 @@ pub struct PollIntervals {
     pub notices_backoff: Duration,
     pub marks: Duration,
     pub marks_timeout: Duration,
+    pub feed: Duration,
+    pub feed_timeout: Duration,
 }
 
 impl Default for PollIntervals {
@@ -70,6 +75,8 @@ impl Default for PollIntervals {
             notices_backoff: Duration::from_secs(2),
             marks: Duration::from_secs(5),
             marks_timeout: Duration::from_secs(3),
+            feed: Duration::from_millis(2500),
+            feed_timeout: Duration::from_secs(3),
         }
     }
 }
@@ -100,6 +107,7 @@ impl Poller {
         let workspace_client = client.isolated();
         let marks_client = client.isolated();
         let notices_client = client.isolated();
+        let feed_client = client.isolated();
         threads.push(spawn_state_prefs(
             state_client.clone(),
             generation,
@@ -125,6 +133,13 @@ impl Poller {
             intervals.marks_timeout,
             PollUpdate::Marks,
         ));
+        threads.push(spawn_feed(
+            feed_client.clone(),
+            tx.clone(),
+            stop.clone(),
+            intervals.feed,
+            intervals.feed_timeout,
+        ));
         threads.push(spawn_notices(
             notices_client.clone(),
             tx,
@@ -142,6 +157,7 @@ impl Poller {
                     workspace_client,
                     marks_client,
                     notices_client,
+                    feed_client,
                 ],
                 threads: Mutex::new(threads),
             },
@@ -233,6 +249,48 @@ fn spawn_simple(
     match spawn {
         Ok(thread) => thread,
         Err(error) => panic!("poll simple thread: {error}"),
+    }
+}
+
+/// Ficha viva: only changes are sent. A server without the route (404) never
+/// sends anything; after a few failures in a row a `Null` returns the tiles to
+/// today's look instead of leaving a stale «te espera» painted.
+fn spawn_feed(
+    client: DashClient,
+    tx: mpsc::Sender<PollUpdate>,
+    stop: Arc<AtomicBool>,
+    interval: Duration,
+    timeout: Duration,
+) -> JoinHandle<()> {
+    let spawn = std::thread::Builder::new()
+        .name("app-poll-feed".into())
+        .spawn(move || {
+            let mut last: Option<Value> = None;
+            let mut failures = 0u32;
+            while !stop.load(Ordering::Acquire) {
+                match client.get("/session-feed", timeout) {
+                    Ok(value) if value.get("sessions").is_some_and(Value::is_array) => {
+                        failures = 0;
+                        if last.as_ref() != Some(&value) {
+                            last = Some(value.clone());
+                            let _ = tx.send(PollUpdate::Feed(value));
+                        }
+                    }
+                    Err(DashError::Cancelled) => break,
+                    _ => {
+                        failures = failures.saturating_add(1);
+                        if failures >= crate::feed::FEED_FAILURES_TO_CLEAR && last.take().is_some()
+                        {
+                            let _ = tx.send(PollUpdate::Feed(Value::Null));
+                        }
+                    }
+                }
+                sleep_cancel(&stop, interval);
+            }
+        });
+    match spawn {
+        Ok(thread) => thread,
+        Err(error) => panic!("poll feed thread: {error}"),
     }
 }
 

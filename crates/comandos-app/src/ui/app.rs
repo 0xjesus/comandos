@@ -44,6 +44,7 @@ pub struct App {
     chat: app_chat::Owned,
     t17: app_t17::Owned,
     t18: app_t18::Owned,
+    feed: app_feed::Owned,
     modal_overlay: gtk::Overlay,
     modal: RefCell<Option<app_t15::Modal>>,
     modal_generation: Cell<u64>,
@@ -129,6 +130,7 @@ impl AppRuntime {
         self.app.shutdown_t16();
         self.app.shutdown_t18();
         self.app.shutdown_t17();
+        self.app.shutdown_feed();
         self.app.close_modal();
         for source in self.sources {
             source.remove();
@@ -457,6 +459,7 @@ impl App {
             chat: app_chat::Owned::default(),
             t17: app_t17::Owned::default(),
             t18: app_t18::Owned::default(),
+            feed: app_feed::Owned::default(),
             modal_overlay: gtk::Overlay::new(),
             modal: RefCell::new(None),
             modal_generation: Cell::new(0),
@@ -931,6 +934,7 @@ impl App {
         self.workspace.register_tab(key, &child);
         let tab = ui::tab_label::TabLabel::new(label, key == "local", key != "local");
         tab.set_language(self.english);
+        self.attach_feed_hover(key, &tab);
         self.install_drag(key, tab.name.upcast_ref());
         self.install_drag(key, tab.item.upcast_ref());
         let weak = Rc::downgrade(self);
@@ -1286,6 +1290,7 @@ impl App {
                     }
                 }
             }
+            PollUpdate::Feed(value) => self.apply_feed(&value),
             PollUpdate::Marks(value) => {
                 self.marks_received.set(true);
                 // La lectura heredada alimenta restore; la adopción visual usa GET propio con generación.
@@ -1935,6 +1940,7 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         app.modal_overlay.add(&content);
         window.add(&app.modal_overlay);
         app.install_foundation_handlers();
+        app.install_feed();
         ui::app_commands::install(&app);
         ui::header::install(&app);
         app.install_keys();
@@ -2009,6 +2015,7 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
                     if let Some(key) = app.current_session() {
                         app.paint_selected(&key);
                         app.save_device_focus(&key);
+                        app.feed_note_current(Some(&key));
                     }
                     glib::ControlFlow::Continue
                 } else {
@@ -2173,4 +2180,6 @@ mod app_t18_side;
 mod app_t18_views;
 #[path = "app_chat.rs"]
 mod app_chat;
+#[path = "app_feed.rs"]
+mod app_feed;
 pub use app_t17_panes::header_preview;
