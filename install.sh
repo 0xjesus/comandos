@@ -186,8 +186,12 @@ PLIST
     for s in cc-dash cc-notifyd cc-proxy; do
       ln -sf "$REPO/systemd/$s.service" "$HOME/.config/systemd/user/$s.service"
     done
+    # Modelos más nuevos de Claude Code y Codex cada 6 h (cc-model-sync).
+    ln -sf "$REPO/systemd/cc-model-sync.service" "$HOME/.config/systemd/user/cc-model-sync.service"
+    ln -sf "$REPO/systemd/cc-model-sync.timer" "$HOME/.config/systemd/user/cc-model-sync.timer"
     systemctl --user daemon-reload
     systemctl --user enable --now cc-dash.service cc-notifyd.service 2>/dev/null || true
+    systemctl --user enable --now cc-model-sync.timer 2>/dev/null || true
     [ "${COMANDOS_RETIRE_TELEGRAM:-0}" = "1" ] && cc_retire_telegram
     # Shortcut en el menú Inicio de Windows (native .lnk + .ico).
     "$BIN/cc-winstart" 2>&1 | sed 's/^/  /' || \
@@ -198,8 +202,12 @@ PLIST
     for s in cc-dash cc-notifyd cc-proxy; do
       ln -sf "$REPO/systemd/$s.service" "$HOME/.config/systemd/user/$s.service"
     done
+    # Modelos más nuevos de Claude Code y Codex cada 6 h (cc-model-sync).
+    ln -sf "$REPO/systemd/cc-model-sync.service" "$HOME/.config/systemd/user/cc-model-sync.service"
+    ln -sf "$REPO/systemd/cc-model-sync.timer" "$HOME/.config/systemd/user/cc-model-sync.timer"
     systemctl --user daemon-reload
     systemctl --user enable --now cc-dash.service cc-notifyd.service 2>/dev/null || true
+    systemctl --user enable --now cc-model-sync.timer 2>/dev/null || true
     # Telegram ya no forma parte de ComandOS. La migracion que detiene la
     # unidad vieja se activa solo al instalar el candidato aprobado (R3).
     [ "${COMANDOS_RETIRE_TELEGRAM:-0}" = "1" ] && cc_retire_telegram

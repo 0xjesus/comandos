@@ -1,0 +1,10 @@
+[Unit]
+Description=ComandOS — revisa modelos nuevos de Claude Code y Codex cada 6 horas
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

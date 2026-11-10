@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::config;
 
 use super::request::ServiceTier;
@@ -14,6 +12,10 @@ pub const ALLOWED_MODELS: &[&str] = &[
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
 ];
 
 pub const MODEL_ALIASES: &[(&str, &str)] = &[
@@ -29,7 +31,29 @@ pub const MODEL_ALIASES: &[(&str, &str)] = &[
     ("claude-opus-5", "gpt-5.6-sol"),
     ("fable", "gpt-5.6-sol"),
     ("claude-fable-5", "gpt-5.6-sol"),
+    ("claude-fable-5-1", "gpt-5.6-sol"),
+    ("claude-fable-5-2", "gpt-5.6-sol"),
+    ("claude-opus-5-5", "gpt-5.6-sol"),
+    ("claude-sonnet-5-5", "gpt-5.6-terra"),
+    ("claude-haiku-5-5", "gpt-5.6-luna"),
 ];
+
+/// Base models the gateway accepts: the compiled floor plus the ones
+/// `cc-model-sync` discovered later (`extra_models`).
+pub fn is_allowed_base(model: &str) -> bool {
+    ALLOWED_MODELS.contains(&model) || crate::extra_models::codex().iter().any(|m| m == model)
+}
+
+/// Every allowed base model, compiled first, for error messages.
+pub fn allowed_models() -> Vec<String> {
+    let mut out: Vec<String> = ALLOWED_MODELS.iter().map(|m| (*m).to_string()).collect();
+    for model in crate::extra_models::codex() {
+        if !out.contains(&model) {
+            out.push(model);
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedModel {
@@ -37,14 +61,14 @@ pub struct ResolvedModel {
     pub service_tier: Option<ServiceTier>,
 }
 
-fn fast_model_aliases() -> HashSet<String> {
-    ALLOWED_MODELS.iter().map(|m| format!("{m}-fast")).collect()
+fn fast_base(model: &str) -> Option<&str> {
+    model
+        .strip_suffix("-fast")
+        .filter(|base| is_allowed_base(base))
 }
 
 fn resolve_fast_model_alias(model: &str) -> ResolvedModel {
-    let fast_set = fast_model_aliases();
-    if fast_set.contains(model) {
-        let base = model.trim_end_matches("-fast");
+    if let Some(base) = fast_base(model) {
         ResolvedModel {
             model: base.to_string(),
             service_tier: Some(ServiceTier::Priority),
@@ -107,7 +131,7 @@ impl std::fmt::Display for ModelNotAllowedError {
 }
 
 pub fn assert_allowed_model(model: &str) -> Result<(), ModelNotAllowedError> {
-    if ALLOWED_MODELS.contains(&model) {
+    if is_allowed_base(model) {
         Ok(())
     } else {
         Err(ModelNotAllowedError {
@@ -133,11 +157,7 @@ pub fn full_lane_web_search_model(model: &str) -> &str {
 }
 
 pub fn is_valid_model_for_codex(model: &str) -> bool {
-    if ALLOWED_MODELS.contains(&model) {
-        return true;
-    }
-    let fast_set = fast_model_aliases();
-    if fast_set.contains(model) {
+    if is_allowed_base(model) || fast_base(model).is_some() {
         return true;
     }
     MODEL_ALIASES.iter().any(|(alias, _)| *alias == model)
@@ -208,6 +228,27 @@ mod tests {
         assert!(assert_allowed_model("gpt-5.6-sol").is_ok());
         assert!(assert_allowed_model("gpt-5.6-terra").is_ok());
         assert!(assert_allowed_model("gpt-5.6-luna").is_ok());
+    }
+
+    #[test]
+    fn gpt_6_generation_is_allowed() {
+        for model in ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-6.1-sol"] {
+            assert!(assert_allowed_model(model).is_ok(), "{model}");
+            assert!(
+                is_valid_model_for_codex(&format!("{model}-fast")),
+                "{model}-fast"
+            );
+        }
+        let r = resolve_model_request("gpt-6-luna-fast");
+        assert_eq!(r.model, "gpt-6-luna");
+        assert_eq!(r.service_tier, Some(ServiceTier::Priority));
+    }
+
+    #[test]
+    fn current_claude_ids_alias_to_codex() {
+        assert_eq!(resolve_model("claude-fable-5-2"), "gpt-5.6-sol");
+        assert_eq!(resolve_model("claude-sonnet-5-5"), "gpt-5.6-terra");
+        assert_eq!(resolve_model("claude-haiku-5-5"), "gpt-5.6-luna");
     }
 
     #[test]

@@ -1,0 +1,9 @@
+[Unit]
+Description=ComandOS — actualiza Claude Code, Codex y sus modelos más nuevos
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cc-model-sync
+TimeoutStartSec=20min
+Nice=10

@@ -22,6 +22,11 @@ pub const ANTHROPIC_STYLE_ALIASES: &[&str] = &[
     "claude-opus-5",
     "fable",
     "claude-fable-5",
+    "claude-fable-5-1",
+    "claude-fable-5-2",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
 ];
 
 pub const CURSOR_PREFIXES: &[&str] = &["cursor:", "cursor-plan:", "cursor-ask:"];
@@ -47,6 +52,10 @@ pub(crate) const CODEX_MODELS: &[&str] = &[
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
 ];
 
 pub(crate) const KIMI_MODELS: &[&str] = &["kimi-for-coding", "kimi-k2.6", "kimi-k3", "k2.6", "k3"];
@@ -56,6 +65,9 @@ pub struct Registry {
     alias_provider: AliasProvider,
     models: BTreeMap<String, Vec<String>>,
     handlers: BTreeMap<String, Arc<dyn Provider>>,
+    /// Suma los modelos de `extra_models` (solo el registro de producción;
+    /// `from_providers` queda determinista para las pruebas).
+    dynamic_extras: bool,
 }
 
 impl Registry {
@@ -98,6 +110,7 @@ impl Registry {
             alias_provider,
             models,
             handlers,
+            dynamic_extras: true,
         }
     }
 
@@ -120,6 +133,22 @@ impl Registry {
             alias_provider,
             models,
             handlers,
+            dynamic_extras: false,
+        }
+    }
+
+    /// Modelos descubiertos después de compilar, por motor.
+    fn extra_models_for(&self, provider: &str) -> Vec<String> {
+        if !self.dynamic_extras || !self.handlers.contains_key(provider) {
+            return Vec::new();
+        }
+        match provider {
+            "anthropic" => crate::extra_models::anthropic(),
+            "codex" => crate::extra_models::codex()
+                .into_iter()
+                .flat_map(|model| [format!("{model}-fast"), model])
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -135,6 +164,11 @@ impl Registry {
 
     pub fn supported_models_for(&self, provider: &str) -> Vec<String> {
         let mut models = self.models.get(provider).cloned().unwrap_or_default();
+        for model in self.extra_models_for(provider) {
+            if !models.contains(&model) {
+                models.push(model);
+            }
+        }
         if provider == self.alias_provider.as_str() {
             for alias in ANTHROPIC_STYLE_ALIASES {
                 if !models.iter().any(|value| value == alias) {
@@ -193,6 +227,13 @@ impl Registry {
             if models.iter().any(|candidate| candidate == &normalized) {
                 return self.handlers.get(name).cloned();
             }
+        }
+        if self
+            .extra_models_for("codex")
+            .iter()
+            .any(|candidate| candidate == &normalized)
+        {
+            return self.handlers.get("codex").cloned();
         }
 
         None
@@ -357,6 +398,37 @@ mod tests {
     fn normalize_model_trims_hint() {
         assert_eq!(normalize_incoming_model("gpt-5.4-fast[1m]"), "gpt-5.4-fast");
         assert_eq!(normalize_incoming_model("gpt-5.4-fast"), "gpt-5.4-fast");
+    }
+
+    #[test]
+    fn gpt_6_generation_routes_to_codex() {
+        let registry = Registry::new(AliasProvider::Anthropic);
+        for model in [
+            "gpt-6-luna",
+            "gpt-6-sol",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6.1-sol-fast",
+        ] {
+            let p = registry.provider_for_model(model, None);
+            assert_eq!(p.expect(model).name(), "codex", "{model}");
+        }
+    }
+
+    #[test]
+    fn current_claude_ids_are_listed_and_passed_through() {
+        let registry = Registry::new(AliasProvider::Anthropic);
+        let listed = registry.supported_models_for("anthropic");
+        for model in [
+            "claude-fable-5-2",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+        ] {
+            assert!(listed.iter().any(|m| m == model), "{model}");
+            let p = registry.provider_for_model(&format!("{model}[1m]"), None);
+            assert_eq!(p.expect(model).name(), "anthropic");
+        }
     }
 
     #[test]

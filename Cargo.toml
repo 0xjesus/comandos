@@ -1,5 +1,7 @@
 [workspace]
 members = ["crates/comandos-web-sound", "crates/comandos-web-content", "crates/comandos-oracle", "crates/comandos-app-mac", "crates/comandos-desktop", "crates/comandos-core", "crates/comandos-store", "crates/comandos-runtime", "crates/comandos-extensions", "crates/comandos-server", "crates/comandos-cli", "crates/comandos-acp", "crates/comandos-notifyd", "crates/comandos-browser", "crates/comandos-term", "crates/comandos-domdiff", "crates/comandos-term-web", "crates/comandos-web-view", "crates/comandos-web-dom", "crates/comandos-web", "crates/comandos-web-sw", "xtask", "crates/comandos-app"]
+# El gateway vendorizado (cc-model-proxy) tiene su propio Cargo.lock.
+exclude = ["vendor/claude-codex"]
 resolver = "3"
 
 [workspace.package]

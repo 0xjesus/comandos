@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""cc-model-sync — deja ComandOS en los modelos más nuevos de Claude Code y Codex.
+
+Actualiza los CLIs (`claude update`, `@openai/codex@latest`), agrega las
+versiones nuevas de cada familia al registro (`config/providers.json`), sube
+los modelos por defecto de la misma familia y publica la lista al gateway
+(`cc-model-proxy` la relee sin reiniciar). Lo corre `cc-model-sync.timer`.
+
+  cc-model-sync                 todo
+  cc-model-sync --dry-run       solo muestra qué cambiaría
+  cc-model-sync --no-cli-update sin tocar los CLIs
+  cc-model-sync --json          reporte completo en JSON
+
+Último reporte: ~/.claude/hooks/model-sync.json
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "lib"))
+
+import model_sync  # noqa: E402
+
+REPORT = os.path.expanduser("~/.claude/hooks/model-sync.json")
+LOCK = os.path.expanduser("~/.cache/comandos/model-sync.lock")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="cc-model-sync", description=__doc__.splitlines()[0])
+    ap.add_argument("--dry-run", action="store_true", help="no escribe ni actualiza nada")
+    ap.add_argument("--no-cli-update", action="store_true", help="no actualiza claude ni codex")
+    ap.add_argument("--json", action="store_true", help="imprime el reporte en JSON")
+    ap.add_argument("--quiet", action="store_true", help="sin notificación de escritorio")
+    args = ap.parse_args(argv)
+
+    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+    with open(LOCK, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("cc-model-sync ya está corriendo", file=sys.stderr)
+            return 0
+        report = model_sync.sync(dry_run=args.dry_run, update=not args.no_cli_update)
+
+    lines = model_sync.summary(report)
+    if not args.dry_run:
+        model_sync.write_if_changed(REPORT, json.dumps(report, indent=1, ensure_ascii=False) + "\n")
+        if model_sync.changed(report) and not args.quiet:
+            model_sync.notify(lines)
+    if args.json:
+        print(json.dumps(report, indent=1, ensure_ascii=False))
+    else:
+        print("\n".join(lines))
+    failed = [cli for cli, info in report.get("cli", {}).items() if not info.get("ok")]
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
