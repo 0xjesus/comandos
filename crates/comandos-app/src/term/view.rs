@@ -1308,6 +1308,14 @@ impl Inner {
         Self::place(m);
         true
     }
+    /// A cell of the loaded pane as a cell of the tmux window: what the app
+    /// asks tmux about (which pane was clicked, what is under a link).
+    fn window_cell(&self, (col, row): (u16, u16)) -> (u16, u16) {
+        match self.model.borrow().loaded {
+            Some(p) => (col.saturating_add(p.left), row.saturating_add(p.top)),
+            None => (col, row),
+        }
+    }
     /// The pane with the keys takes the model before a key is encoded.
     fn aim_keys(&self) {
         let mut m = self.model.borrow_mut();
@@ -2852,12 +2860,12 @@ fn connect_events(inner: &Rc<Inner>) {
         inner.aim_at(x, y, true);
         let (col, row) = inner.point(x, y);
         if let Some(callback) = inner.primary_press.borrow().clone() {
-            callback(event, (col, row));
+            callback(event, inner.window_cell((col, row)));
         }
         if event.button() == 3
             && let Some(callback) = inner.context_menu.borrow().as_ref()
         {
-            callback(event, (col, row));
+            callback(event, inner.window_cell((col, row)));
             return glib::Propagation::Stop;
         }
         let mods = modifiers(event.state());
@@ -2915,7 +2923,7 @@ fn connect_events(inner: &Rc<Inner>) {
             if let Some(link) = link.as_ref()
                 && let Some(callback) = inner.link_event.borrow().clone()
             {
-                callback(link, event, (col, row), true);
+                callback(link, event, inner.window_cell((col, row)), true);
                 return glib::Propagation::Stop;
             }
         }
@@ -3121,7 +3129,7 @@ fn connect_events(inner: &Rc<Inner>) {
         let link = press.and_then(|p| p.link);
         drop(m);
         if clicked && let Some(callback) = inner.clean_click.borrow().clone() {
-            callback(event, point);
+            callback(event, inner.window_cell(point));
         }
         if let Some(text) = inner.selection_text() {
             inner
@@ -3133,7 +3141,7 @@ fn connect_events(inner: &Rc<Inner>) {
         }
         if let Some(link) = link {
             if let Some(callback) = inner.link_event.borrow().clone() {
-                callback(&link, event, point, false);
+                callback(&link, event, inner.window_cell(point), false);
             } else if let Some(callback) = &inner.options.on_link {
                 callback(&link);
             }
