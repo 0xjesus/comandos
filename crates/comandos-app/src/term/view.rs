@@ -115,6 +115,8 @@ struct Model {
     stale: Vec<u32>,
     /// Left edge of the window's first column.
     base_x: f64,
+    /// Cells of the tmux window the panes sit in (right and bottom edges).
+    window_cells: (u16, u16),
     regions: Vec<super::noise::Region>,
     noise_maps: Vec<(super::noise::Region, Vec<Option<u16>>)>,
     output_at: Option<Instant>,
@@ -535,6 +537,7 @@ impl TermView {
                 key_pane: None,
                 stale: Vec::new(),
                 base_x: 12.,
+                window_cells: (0, 0),
                 regions: Vec::new(),
                 noise_maps: Vec::new(),
                 pane_ids: Vec::new(),
@@ -1301,8 +1304,6 @@ impl Inner {
         std::mem::swap(&mut m.selection, &mut slot.selection);
         m.loaded = Some(std::mem::replace(&mut slot.info, out));
         (m.glide, m.glide_frac, slot.glide) = (slot.glide.0, slot.glide.1, (m.glide, m.glide_frac));
-        m.pressed = None;
-        m.hovered_link = None;
         m.painted = None;
         m.painted_cursor = None;
         Self::place(m);
@@ -1343,7 +1344,13 @@ impl Inner {
             .filter(|p| holds(p))
             .or_else(|| m.slots.iter().map(|s| s.info).find(|p| holds(p)));
         let Some(pane) = under else { return };
-        Self::load_pane(&mut m, pane.id);
+        if m.loaded.is_some_and(|p| p.id != pane.id) {
+            // What the pointer had started belongs to the pane it left.
+            m.pressed = None;
+            m.hovered_link = None;
+            m.last_motion = None;
+            Self::load_pane(&mut m, pane.id);
+        }
         if click && m.key_pane != Some(pane.id) {
             m.key_pane = Some(pane.id);
             {
@@ -1482,6 +1489,10 @@ impl Inner {
             }
         }
         m.key_pane = panes.iter().find(|p| p.active).map(|p| p.id).or(m.key_pane);
+        m.window_cells = (
+            panes.iter().map(|p| p.left + p.width).max().unwrap_or(0),
+            panes.iter().map(|p| p.top + p.height).max().unwrap_or(0),
+        );
         m.painted = None;
         m.painted_cursor = None;
         m.stale.clear();
@@ -1958,6 +1969,17 @@ impl Inner {
         }
         m.selection
             .map(|s| selected_text(m.engine.engine(), &s))
+            .map(|text| {
+                // The spaces a program pads a line with are not what was read.
+                let mut out = String::with_capacity(text.len());
+                for (i, line) in text.split('\n').enumerate() {
+                    if i > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str(line.trim_end_matches([' ', '\t']));
+                }
+                out
+            })
             .filter(|text| !text.is_empty())
     }
     fn point(&self, x: f64, y: f64) -> (u16, u16) {
@@ -3411,11 +3433,14 @@ impl Inner {
                 };
                 context.rectangle(left, top, wide, tall);
                 context.clip();
+                // The strip the text leaves behind is tile, like the rest.
+                let bg = m.loaded.filter(|_| m.control.is_some()).map_or(bg, |p| Self::tile_rgb(&m, p.id));
+                let alpha = if m.control.is_some() { 1. } else { m.opacity };
                 context.set_source_rgba(
                     f64::from(bg[0]) / 255.,
                     f64::from(bg[1]) / 255.,
                     f64::from(bg[2]) / 255.,
-                    m.opacity,
+                    alpha,
                 );
                 let _ = context.paint();
                 if context.set_source_surface(image, 0., shift).is_ok() {
@@ -3467,6 +3492,27 @@ impl Inner {
             }
         }
     }
+    /// The solid tile behind the loaded pane: its header row and its text,
+    /// with the same margins a tile found on a tmux picture gets.
+    fn native_tile(m: &Model, width: f64) -> Option<((f64, f64, f64, f64), [u8; 3])> {
+        let p = m.loaded.filter(|_| m.control.is_some())?;
+        let (cell_w, cell_h, ox, oy) = (m.geom.cell_w, m.geom.cell_h, m.geom.origin_x, m.geom.origin_y);
+        let (x0, x1) = (ox, ox + f64::from(p.width) * cell_w);
+        let (y0, y1) = (oy - cell_h, oy + f64::from(p.height) * cell_h);
+        let l = if p.left == 0 { x0 - 4. } else { x0 - cell_w / 2. + 3. };
+        let r = if p.left + p.width >= m.window_cells.0 { x1 + 4. } else { x1 + cell_w / 2. - 3. };
+        let top = if p.top <= 1 { y0 - 2. } else { y0 + 3. };
+        let bot = if p.top + p.height >= m.window_cells.1 { y1 + 2. } else { y1 - 3. };
+        let (l, r, top) = (l.max(2.), r.min(width - 2.), top.max(2.));
+        let rgb = Self::tile_rgb(m, p.id);
+        Some(((l, top, (r - l).max(0.), (bot - top).max(0.)), rgb))
+    }
+    /// The pane with the keys is a shade lighter than the others.
+    fn tile_rgb(m: &Model, pane: u32) -> [u8; 3] {
+        let (fg, bg) = (m.engine.palette().fg, m.engine.palette().bg);
+        let active = m.slots.is_empty() || m.key_pane == Some(pane);
+        mix(bg, fg, if active { 0.07 } else { 0.035 })
+    }
     /// Paints a window of several panes: each one with its own engine, inside
     /// its own rectangle, and thin lines where tmux keeps a column between two.
     fn draw_panes(&self, m: &mut Model, context: &cairo::Context, all: bool, (w, h): (f64, f64)) {
@@ -3489,24 +3535,17 @@ impl Inner {
             let _ = context.paint();
             context.set_operator(cairo::Operator::Over);
         }
-        let right_edge = std::iter::once(m.loaded.map(|p| p.left + p.width))
-            .flatten()
-            .chain(m.slots.iter().map(|s| s.info.left + s.info.width))
-            .max()
-            .unwrap_or(0);
-        let mut lines = Vec::new();
+        let (right_edge, bottom_edge) = m.window_cells;
         for id in ids {
             if !Self::load_pane(m, id) {
                 continue;
             }
             let Some(p) = m.loaded else { continue };
-            let x0 = if p.left == 0 { 0. } else { base_x + f64::from(p.left) * cell_w };
-            let x1 = if p.left + p.width >= right_edge { w } else { base_x + f64::from(p.left + p.width) * cell_w };
-            let y0 = top + f64::from(p.top) * cell_h;
-            let y1 = (top + f64::from(p.top + p.height) * cell_h).min(h);
-            if p.left > 0 {
-                lines.push((base_x + (f64::from(p.left) - 0.5) * cell_w, y0 - cell_h, y1));
-            }
+            // Its tile: the header row above the text and half of each gap.
+            let x0 = if p.left == 0 { 0. } else { base_x + (f64::from(p.left) - 0.5) * cell_w };
+            let x1 = if p.left + p.width >= right_edge { w } else { base_x + (f64::from(p.left + p.width) + 0.5) * cell_w };
+            let y0 = if p.top <= 1 { 0. } else { top + f64::from(p.top - 1) * cell_h };
+            let y1 = if p.top + p.height >= bottom_edge { h } else { top + f64::from(p.top + p.height) * cell_h };
             let _ = context.save();
             context.rectangle(x0, y0, x1 - x0, y1 - y0);
             context.clip();
@@ -3519,15 +3558,6 @@ impl Inner {
         m.focused = focused;
         Self::load_pane(m, keep);
         m.stale.clear();
-        if all {
-            context.set_source_rgb(43. / 255., 53. / 255., 72. / 255.);
-            context.set_line_width(1.);
-            for (x, y0, y1) in lines {
-                context.move_to(x.round() + 0.5, y0);
-                context.line_to(x.round() + 0.5, y1);
-                let _ = context.stroke();
-            }
-        }
     }
     /// Runs at the start of a GTK frame, before it paints: reads the screen
     /// and asks GTK to repaint only the rows that changed. Typing, a spinner
@@ -3864,6 +3894,12 @@ impl Inner {
                 })
                 .collect()
         };
+        // A pane the app draws itself has no border cells to find: its
+        // tile comes from where tmux says the pane is.
+        let mut tile_rects = tile_rects;
+        if let Some((rect, rgb)) = Self::native_tile(m, width) {
+            tile_rects.push((rect, rgb));
+        }
         // Tiles are solid: letters never show the window behind, and empty
         // rows look the same as rows with text (no stripes that move with
         // the output). The window's transparency stays in the gaps.
@@ -3872,7 +3908,7 @@ impl Inner {
             color(context, *rgb);
             let _ = context.fill();
         }
-        let hide_borders = !tile_rects.is_empty();
+        let hide_borders = !look.tiles.is_empty();
         // Without tiles, rows moved by the noise filter need their own solid
         // background (see the text bands below).
         let solid_rows = m.opacity < 1. && tile_rects.is_empty();

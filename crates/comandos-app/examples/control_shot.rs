@@ -60,6 +60,22 @@ fn main() {
     let step = |ms: u64, f: Box<dyn Fn()>| {
         glib::timeout_add_local_once(Duration::from_millis(ms), move || f());
     };
+    // `CONTROL_SHOT_MOUSE=<ms,ms,…>`: no scripted typing; something outside
+    // (xdotool) moves the mouse and pictures are taken at those times.
+    if let Ok(times) = std::env::var("CONTROL_SHOT_MOUSE") {
+        let times: Vec<u64> = times.split(',').filter_map(|t| t.parse().ok()).collect();
+        let last = times.iter().copied().max().unwrap_or(1000);
+        for (i, ms) in times.into_iter().enumerate() {
+            let (t, w, o) = (term.clone(), window.clone(), out.clone());
+            step(ms, Box::new(move || {
+                shot(&w, &format!("{o}-mouse-{i}.png"));
+                println!("shot {i}: selection={:?}", t.selection_text());
+            }));
+        }
+        step(last + 300, Box::new(gtk::main_quit));
+        gtk::main();
+        return;
+    }
     let (t, w, o) = (term.clone(), window.clone(), out.clone());
     step(2500, Box::new(move || {
         println!("native={} grid={:?}", t.pane_native(), t.grid_size());

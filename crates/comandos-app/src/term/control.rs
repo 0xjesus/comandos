@@ -520,7 +520,9 @@ impl Session {
                 if !self.greeted {
                     self.greeted = true;
                     self.commands.answered();
-                    self.ask_size(wire);
+                    // The panes are read before any size is asked for: a
+                    // window that already fits is not resized, and its
+                    // programs do not redraw just because the app attached.
                     self.query(wire);
                     return;
                 }
@@ -577,13 +579,10 @@ impl Session {
         }
         // Rows tmux keeps above the panes: ask for a window that much taller,
         // and read the panes again once it has resized them.
-        let extra = states.iter().map(|s| s.at.1).min().unwrap_or(0).min(2);
-        if extra != self.extra {
-            self.extra = extra;
-            if self.ask_size(wire) {
-                self.query(wire);
-                return;
-            }
+        self.extra = states.iter().map(|s| s.at.1).min().unwrap_or(0).min(2);
+        if self.ask_size(wire) {
+            self.query(wire);
+            return;
         }
         self.panes.retain(|id, _| states.iter().any(|s| s.id == *id));
         let shown: Vec<PaneInfo> = states
@@ -805,9 +804,9 @@ mod tests {
         s.input(Some(4), b"early", &mut wire);
         assert!(wire.is_empty(), "nothing is sent before tmux greets");
         s.read(b"\x1bP1000p%begin 1 1 0\r\n%end 1 1 0\r\n", &mut wire, &mut out);
+        // Nothing is resized before the panes are known.
         let sent = text(&mut wire);
-        assert!(sent.starts_with("refresh-client -C 81,24\nlist-panes -F"), "{sent}");
-        s.read(&reply(2, ""), &mut wire, &mut out);
+        assert!(sent.starts_with(LIST), "{sent}");
         // The border line takes a row: the window is asked one row taller
         // and the panes are read again before any screen is.
         let short = pane(4, (40, 23), (0, 1), true) + &pane(5, (40, 23), (41, 1), false);
