@@ -270,9 +270,6 @@ pub enum Ask {
     Panes,
 }
 
-/// One line per pane: its size, cursor and the modes its program has set.
-pub const PANES_FORMAT: &str = "#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{alternate_on} #{keypad_cursor_flag} #{keypad_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_any_flag} #{mouse_sgr_flag} #{cursor_flag}";
-
 /// Commands in the order sent. tmux answers in that order, so each `Reply`
 /// belongs to the oldest one waiting.
 #[derive(Default)]
@@ -349,21 +346,38 @@ impl Commands {
     }
 }
 
+/// One pane of the window the session shows, in window cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneInfo {
+    pub id: u32,
+    pub left: u16,
+    pub top: u16,
+    pub width: u16,
+    pub height: u16,
+    /// The pane tmux sends typed keys to.
+    pub active: bool,
+}
+
 /// What the view does with what the session read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// Bytes for the pane's engine.
-    Feed(Vec<u8>),
-    /// This window cannot be shown pane-native yet (splits, another window):
-    /// attach the classic way.
-    Fallback(&'static str),
+    /// The panes on screen now. Comes before the first bytes of a new pane.
+    Layout(Vec<PaneInfo>),
+    /// Bytes for a pane's engine.
+    Feed { pane: u32, bytes: Vec<u8> },
+    /// Text that is not from a pane (tmux could not attach, the end notice).
+    Notice(Vec<u8>),
     /// tmux ended the client (the session closed or was detached).
     Exited,
 }
 
-/// History lines read when the pane is first shown.
+/// History lines read when a pane is first shown.
 pub const SEED_LINES: u32 = 2000;
 const MAX_PENDING_INPUT: usize = 64 << 10;
+
+/// One line per pane: its size, cursor, the modes its program has set and
+/// where it sits in the window.
+pub const PANES_FORMAT: &str = "#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{alternate_on} #{keypad_cursor_flag} #{keypad_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_any_flag} #{mouse_sgr_flag} #{cursor_flag} #{pane_left} #{pane_top} #{pane_active} #{window_zoomed_flag}";
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 struct PaneState {
@@ -372,6 +386,9 @@ struct PaneState {
     cursor: (u16, u16),
     alternate: bool,
     flags: [bool; 7],
+    at: (u16, u16),
+    active: bool,
+    zoomed: bool,
 }
 
 fn pane_state(line: &[u8]) -> Option<PaneState> {
@@ -386,54 +403,73 @@ fn pane_state(line: &[u8]) -> Option<PaneState> {
     for flag in &mut flags {
         *flag = n()? != 0;
     }
-    Some(PaneState { id, size, cursor, alternate, flags })
+    let at = (n()?, n()?);
+    let active = n()? != 0;
+    let zoomed = n()? != 0;
+    Some(PaneState { id, size, cursor, alternate, flags, at, active, zoomed })
 }
 
-/// One control client showing the single pane of a session's window: reads
-/// the stream, keeps the pane the size of the view and turns typed bytes
-/// into commands. No IO: the caller moves `wire` to tmux and applies actions.
+#[derive(Default)]
+struct Track {
+    seeded: bool,
+    capturing: bool,
+    alternate: bool,
+    history: Option<Vec<Vec<u8>>>,
+}
+
+/// One control client showing the panes of a session's current window:
+/// reads the stream, keeps the window the size of the view and turns typed
+/// bytes into commands. No IO: the caller moves `wire` to tmux and applies
+/// the actions.
 #[derive(Default)]
 pub struct Session {
     parser: Parser,
     commands: Commands,
     events: Vec<Event>,
     greeted: bool,
-    pane: Option<PaneState>,
-    history: Option<Vec<Vec<u8>>>,
-    seeded: bool,
     ended: bool,
-    /// The pane size the view wants and the window size last asked for.
+    panes: std::collections::BTreeMap<u32, Track>,
+    shown: Vec<PaneInfo>,
+    /// The cells the view has for panes and the window size last asked for.
     want: Option<(u16, u16)>,
     asked: Option<(u16, u16)>,
-    /// Window cells that are not the pane (the border line with its title).
-    extra: (u16, u16),
+    /// Window rows above the panes (the border line with their titles).
+    extra: u16,
     pending_input: Vec<u8>,
-    /// Times the pane was read again while waiting for its new size.
-    size_tries: u8,
-    /// The screen has been asked for and is on its way.
-    capturing: bool,
+    /// A pane query is already on its way.
+    querying: bool,
 }
 
 impl Session {
-    /// True once the pane's screen is in the engine and keys reach it.
-    pub fn seeded(&self) -> bool {
-        self.seeded
+    /// True once this pane's screen is in its engine and keys reach it.
+    pub fn seeded(&self, pane: u32) -> bool {
+        self.panes.get(&pane).is_some_and(|t| t.seeded)
     }
 
-    pub fn pane(&self) -> Option<u32> {
-        self.pane.map(|p| p.id)
+    /// True once any pane is on screen.
+    pub fn ready(&self) -> bool {
+        self.panes.values().any(|t| t.seeded)
     }
 
-    fn ask_size(&mut self, wire: &mut Vec<u8>) {
-        let Some((cols, rows)) = self.want else { return };
-        let window = (cols.saturating_add(self.extra.0), rows.saturating_add(self.extra.1));
-        if self.greeted && !self.ended && self.asked != Some(window) {
-            self.asked = Some(window);
-            self.commands.resize(wire, window.0, window.1);
+    fn ask_size(&mut self, wire: &mut Vec<u8>) -> bool {
+        let Some((cols, rows)) = self.want else { return false };
+        let window = (cols, rows.saturating_add(self.extra));
+        if !self.greeted || self.ended || self.asked == Some(window) {
+            return false;
+        }
+        self.asked = Some(window);
+        self.commands.resize(wire, window.0, window.1);
+        true
+    }
+
+    fn query(&mut self, wire: &mut Vec<u8>) {
+        if self.greeted && !self.ended {
+            self.querying = true;
+            self.commands.panes(wire);
         }
     }
 
-    /// The view's grid changed (or is known for the first time).
+    /// The view's grid for panes changed (or is known for the first time).
     pub fn resize(&mut self, cols: u16, rows: u16, wire: &mut Vec<u8>) {
         self.want = Some((cols, rows));
         self.ask_size(wire);
@@ -445,14 +481,21 @@ impl Session {
         self.ask_size(wire);
     }
 
-    /// Typed or pasted bytes. Before the pane is known they wait.
-    pub fn input(&mut self, bytes: &[u8], wire: &mut Vec<u8>) {
-        match self.pane.filter(|_| self.seeded && !self.ended) {
-            Some(pane) => self.commands.send_bytes(wire, pane.id, bytes),
+    /// Typed or pasted bytes for a pane. Before its screen is read they wait.
+    pub fn input(&mut self, pane: Option<u32>, bytes: &[u8], wire: &mut Vec<u8>) {
+        match pane.filter(|p| self.seeded(*p) && !self.ended) {
+            Some(pane) => self.commands.send_bytes(wire, pane, bytes),
             None if self.pending_input.len() + bytes.len() <= MAX_PENDING_INPUT => {
                 self.pending_input.extend_from_slice(bytes);
             }
             None => {}
+        }
+    }
+
+    /// Makes a pane the one tmux sends keys to.
+    pub fn focus(&mut self, pane: u32, wire: &mut Vec<u8>) {
+        if self.greeted && !self.ended {
+            self.commands.select_pane(wire, pane);
         }
     }
 
@@ -469,8 +512,8 @@ impl Session {
         match event {
             Event::Output { pane, data } => {
                 // Output from before the screen was read is already in it.
-                if self.seeded && self.pane.is_some_and(|p| p.id == pane) {
-                    out.push(Action::Feed(data));
+                if self.seeded(pane) {
+                    out.push(Action::Feed { pane, bytes: data });
                 }
             }
             Event::Reply { ok, lines, .. } => {
@@ -478,37 +521,37 @@ impl Session {
                     self.greeted = true;
                     self.commands.answered();
                     self.ask_size(wire);
-                    self.commands.panes(wire);
+                    self.query(wire);
                     return;
                 }
                 match self.commands.answered() {
-                    Some(Ask::Panes) if ok => self.panes(&lines, wire, out),
-                    Some(Ask::History { .. }) if ok => self.history = Some(lines),
-                    Some(Ask::Panes | Ask::History { .. }) => out.push(Action::Fallback("tmux refused a query")),
+                    Some(Ask::Panes) => {
+                        self.querying = false;
+                        if ok {
+                            self.listed(&lines, wire, out);
+                        }
+                    }
+                    Some(Ask::History { pane }) => {
+                        if let Some(track) = self.panes.get_mut(&pane) {
+                            track.capturing = false;
+                            track.history = ok.then_some(lines);
+                        }
+                        // The state read right after the screen seeds it.
+                        if !self.querying {
+                            self.query(wire);
+                        }
+                    }
                     _ => {}
                 }
             }
-            Event::LayoutChange { layout, .. } => {
-                let [only] = layout.panes.as_slice() else {
-                    // Another window of the session changing is not ours.
-                    if self.pane.is_some_and(|pane| layout.panes.iter().any(|p| p.id == pane.id)) {
-                        out.push(Action::Fallback("the window was split"));
-                    }
-                    return;
-                };
-                if self.pane.is_some_and(|pane| pane.id != only.id) {
-                    return;
-                }
-                // The layout counts the border line as part of the pane; its
-                // real size comes from the pane itself.
-                if self.pane.is_some() {
-                    self.commands.panes(wire);
-                }
-            }
-            Event::Other(text) if text.starts_with("%session-window-changed") => {
-                if self.pane.is_some() {
-                    out.push(Action::Fallback("the session moved to another window"));
-                }
+            // Panes moved, another window was chosen or another pane took
+            // the keys: read them again. The layout text counts the border
+            // line as pane, so sizes come from the panes themselves.
+            Event::LayoutChange { .. } => self.query(wire),
+            Event::Other(text)
+                if text.starts_with("%session-window-changed") || text.starts_with("%window-pane-changed") =>
+            {
+                self.query(wire);
             }
             Event::Exit { .. } => {
                 self.ended = true;
@@ -517,67 +560,75 @@ impl Session {
             Event::Text(text) if !self.greeted || self.ended => {
                 let mut bytes = text.into_bytes();
                 bytes.extend_from_slice(b"\r\n");
-                out.push(Action::Feed(bytes));
+                out.push(Action::Notice(bytes));
             }
             _ => {}
         }
     }
 
-    /// Asks for a taller window when the pane came out smaller than the view
-    /// by the rows tmux keeps for itself (the border line). True if it asked.
-    /// A pane cut by another client's smaller screen is left alone.
-    fn fit(&mut self, pane: (u16, u16), wire: &mut Vec<u8>) -> bool {
-        let (Some(want), Some(asked)) = (self.want, self.asked) else { return false };
-        let extra = (asked.0.saturating_sub(pane.0), asked.1.saturating_sub(pane.1));
-        if pane == want || extra.0 != 0 || extra.1 > 2 || extra == self.extra {
-            return false;
-        }
-        self.extra = extra;
-        self.ask_size(wire);
-        true
-    }
-
-    fn panes(&mut self, lines: &[Vec<u8>], wire: &mut Vec<u8>, out: &mut Vec<Action>) {
-        let [line] = lines else {
-            out.push(Action::Fallback("the window has several panes"));
-            return;
-        };
-        let Some(state) = pane_state(line) else {
-            out.push(Action::Fallback("unreadable pane state"));
-            return;
-        };
-        if self.seeded {
-            self.fit(state.size, wire);
+    fn listed(&mut self, lines: &[Vec<u8>], wire: &mut Vec<u8>, out: &mut Vec<Action>) {
+        let mut states: Vec<PaneState> = lines.iter().filter_map(|l| pane_state(l)).collect();
+        if states.is_empty() {
             return;
         }
-        match (self.pane, self.history.take()) {
-            // The state read right after the screen: both go into the engine.
-            (Some(first), Some(history)) if first.id == state.id => {
-                self.pane = Some(state);
-                self.seeded = true;
-                out.push(Action::Feed(seed(&state, &history)));
-                let waiting = std::mem::take(&mut self.pending_input);
-                if !waiting.is_empty() {
-                    self.commands.send_bytes(wire, state.id, &waiting);
-                }
+        // A zoomed pane fills the window; the others are not on screen.
+        if states.iter().any(|s| s.zoomed) {
+            states.retain(|s| s.active);
+        }
+        // Rows tmux keeps above the panes: ask for a window that much taller,
+        // and read the panes again once it has resized them.
+        let extra = states.iter().map(|s| s.at.1).min().unwrap_or(0).min(2);
+        if extra != self.extra {
+            self.extra = extra;
+            if self.ask_size(wire) {
+                self.query(wire);
+                return;
             }
-            // A pane read for another reason while the screen is on its way.
-            _ if self.capturing => {}
-            _ => {
-                self.pane = Some(state);
-                // The screen is read at the size it will be shown at: a row
-                // taken by the border line is asked for first, and the pane
-                // is read again once tmux has resized it.
-                if self.size_tries < 3 && self.fit(state.size, wire) {
-                    self.size_tries += 1;
-                    self.commands.panes(wire);
-                    return;
-                }
+        }
+        self.panes.retain(|id, _| states.iter().any(|s| s.id == *id));
+        let shown: Vec<PaneInfo> = states
+            .iter()
+            .map(|s| PaneInfo {
+                id: s.id,
+                left: s.at.0,
+                top: s.at.1,
+                width: s.size.0,
+                height: s.size.1,
+                active: s.active,
+            })
+            .collect();
+        if shown != self.shown {
+            self.shown.clone_from(&shown);
+            out.push(Action::Layout(shown));
+        }
+        let mut asked = false;
+        for state in &states {
+            let track = self.panes.entry(state.id).or_default();
+            if track.seeded {
+                continue;
+            }
+            if let Some(history) = track.history.take() {
+                track.seeded = true;
+                let mut state = *state;
+                state.alternate = track.alternate;
+                out.push(Action::Feed { pane: state.id, bytes: seed(&state, &history) });
+            } else if !track.capturing {
+                track.capturing = true;
+                track.alternate = state.alternate;
+                asked = true;
                 let lines = if state.alternate { 0 } else { SEED_LINES };
-                self.capturing = true;
                 self.commands.history(wire, state.id, lines);
-                self.commands.panes(wire);
             }
+        }
+        if asked {
+            self.query(wire);
+        }
+        // What was typed while attaching goes to the pane with the keys.
+        if !self.pending_input.is_empty()
+            && let Some(active) = states.iter().find(|s| s.active && self.seeded(s.id))
+        {
+            let waiting = std::mem::take(&mut self.pending_input);
+            self.commands.send_bytes(wire, active.id, &waiting);
         }
     }
 }
@@ -733,7 +784,9 @@ mod tests {
         assert!(wire.split(|&b| b == b'\n').all(|line| line.len() < 1024));
     }
 
-    const STATE: &str = "%4 80 24 10 2 0 1 0 0 0 0 0 1";
+    fn pane(id: u32, size: (u16, u16), at: (u16, u16), active: bool) -> String {
+        format!("%{id} {} {} 3 1 0 1 0 0 0 0 0 1 {} {} {} 0\r\n", size.0, size.1, at.0, at.1, u8::from(active))
+    }
 
     fn reply(number: u32, body: &str) -> Vec<u8> {
         format!("%begin 1 {number} 1\r\n{body}%end 1 {number} 1\r\n").into_bytes()
@@ -743,112 +796,152 @@ mod tests {
         String::from_utf8(std::mem::take(wire)).unwrap()
     }
 
-    fn seeded_session() -> (Session, Vec<u8>, Vec<Action>) {
+    const LIST: &str = "list-panes -F";
+
+    /// A session attached to a window of two panes side by side, both seeded.
+    fn split_session() -> (Session, Vec<u8>, Vec<Action>) {
         let (mut s, mut wire, mut out) = (Session::default(), Vec::new(), Vec::new());
-        s.resize(80, 24, &mut wire);
-        s.input(b"early", &mut wire);
+        s.resize(81, 24, &mut wire);
+        s.input(Some(4), b"early", &mut wire);
         assert!(wire.is_empty(), "nothing is sent before tmux greets");
         s.read(b"\x1bP1000p%begin 1 1 0\r\n%end 1 1 0\r\n", &mut wire, &mut out);
-        assert_eq!(text(&mut wire), format!("refresh-client -C 80,24\nlist-panes -F \"{PANES_FORMAT}\"\n"));
-        // The border line takes a row: the window is asked one row taller.
+        let sent = text(&mut wire);
+        assert!(sent.starts_with("refresh-client -C 81,24\nlist-panes -F"), "{sent}");
         s.read(&reply(2, ""), &mut wire, &mut out);
-        s.read(&reply(3, "%4 80 23 0 0 0 0 0 0 0 0 0 1\r\n"), &mut wire, &mut out);
-        assert_eq!(text(&mut wire), format!("refresh-client -C 80,25\nlist-panes -F \"{PANES_FORMAT}\"\n"));
-        s.read(&reply(31, ""), &mut wire, &mut out);
-        s.read(b"%layout-change @1 b65d,80x25,0,0,4 x *\r\n", &mut wire, &mut out);
-        assert_eq!(text(&mut wire), format!("list-panes -F \"{PANES_FORMAT}\"\n"));
-        s.read(&reply(32, "%4 80 24 0 0 0 0 0 0 0 0 0 1\r\n"), &mut wire, &mut out);
-        assert_eq!(
-            text(&mut wire),
-            format!("capture-pane -p -e -t %4 -J -S -2000\nlist-panes -F \"{PANES_FORMAT}\"\n")
-        );
-        s.read(b"%output %4 dropped: already in the capture\r\n", &mut wire, &mut out);
-        s.read(&reply(33, "%4 80 24 0 0 0 0 0 0 0 0 0 1\r\n"), &mut wire, &mut out);
-        assert!(text(&mut wire).is_empty(), "the answer to the layout change adds nothing");
+        // The border line takes a row: the window is asked one row taller
+        // and the panes are read again before any screen is.
+        let short = pane(4, (40, 23), (0, 1), true) + &pane(5, (40, 23), (41, 1), false);
+        s.read(&reply(3, &short), &mut wire, &mut out);
+        let sent = text(&mut wire);
+        assert!(sent.starts_with("refresh-client -C 81,25\nlist-panes -F"), "{sent}");
         assert!(out.is_empty());
-        s.read(&reply(34, "old\r\n\x1b[31mprompt$ \r\n"), &mut wire, &mut out);
-        s.read(&reply(35, &format!("{STATE}\r\n")), &mut wire, &mut out);
+        s.read(&reply(4, ""), &mut wire, &mut out);
+        let full = pane(4, (40, 24), (0, 1), true) + &pane(5, (40, 24), (41, 1), false);
+        s.read(&reply(5, &full), &mut wire, &mut out);
+        let sent = text(&mut wire);
+        assert!(
+            sent.starts_with("capture-pane -p -e -t %4 -J -S -2000\ncapture-pane -p -e -t %5 -J -S -2000\nlist-panes"),
+            "{sent}"
+        );
+        assert_eq!(
+            out,
+            vec![Action::Layout(vec![
+                PaneInfo { id: 4, left: 0, top: 1, width: 40, height: 24, active: true },
+                PaneInfo { id: 5, left: 41, top: 1, width: 40, height: 24, active: false },
+            ])]
+        );
+        out.clear();
+        s.read(b"%output %4 dropped: already in the capture\r\n", &mut wire, &mut out);
+        s.read(&reply(6, "old\r\n\x1b[31mleft$ \r\n"), &mut wire, &mut out);
+        s.read(&reply(7, "right$ \r\n"), &mut wire, &mut out);
+        assert!(out.is_empty());
+        s.read(&reply(8, &full), &mut wire, &mut out);
         (s, wire, out)
     }
 
     #[test]
-    fn a_session_seeds_the_engine_then_streams_output_and_input() {
-        let (mut s, mut wire, mut out) = seeded_session();
-        assert!(s.seeded());
-        assert_eq!(
-            out,
-            vec![Action::Feed(b"\x1bcold\r\n\x1b[31mprompt$ \x1b[0m\x1b[?1h\x1b[?2004h\x1b[3;11H".to_vec())]
-        );
-        // What was typed while attaching goes to the pane now.
-        assert_eq!(text(&mut wire), "send-keys -t %4 -H 65 61 72 6c 79\n");
-        out.clear();
-        s.read(b"%output %4 hi\\015\r\n%output %9 other pane\r\n", &mut wire, &mut out);
-        assert_eq!(out, vec![Action::Feed(b"hi\r".to_vec())]);
-        s.input(b"\r", &mut wire);
-        assert_eq!(text(&mut wire), "send-keys -t %4 -H 0d\n");
-    }
-
-    #[test]
-    fn the_window_is_asked_larger_by_what_is_not_the_pane() {
-        let (mut s, mut wire, mut out) = seeded_session();
-        out.clear();
-        text(&mut wire);
-        s.resize(100, 30, &mut wire);
-        assert_eq!(text(&mut wire), "refresh-client -C 100,31\n");
-        s.claim(&mut wire);
-        assert_eq!(text(&mut wire), "refresh-client -C 100,31\n");
-        // A phone holds the window smaller: the pane is not chased.
-        s.read(b"%layout-change @1 b65d,60x11,0,0,4 x *\r\n", &mut wire, &mut out);
-        assert_eq!(text(&mut wire), format!("list-panes -F \"{PANES_FORMAT}\"\n"));
-        s.read(&reply(40, ""), &mut wire, &mut out);
-        s.read(&reply(41, ""), &mut wire, &mut out);
-        s.read(&reply(42, "%4 60 10 0 0 0 0 0 0 0 0 0 1\r\n"), &mut wire, &mut out);
-        assert!(text(&mut wire).is_empty());
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn splits_other_windows_and_the_end_are_reported() {
-        let (mut s, mut wire, mut out) = seeded_session();
-        out.clear();
-        s.read(b"%layout-change @7 b65d,80x24,0,0{40x24,0,0,8,39x24,41,0,9} x *\r\n", &mut wire, &mut out);
-        assert!(out.is_empty(), "a window without our pane is not ours");
-        s.read(b"%layout-change @1 b65d,80x24,0,0{40x24,0,0,4,39x24,41,0,9} x *\r\n", &mut wire, &mut out);
-        assert_eq!(out, vec![Action::Fallback("the window was split")]);
-        out.clear();
-        s.read(b"%session-window-changed $1 @7\r\n%exit\r\n\x1b\\[closed]\r\n", &mut wire, &mut out);
+    fn every_pane_is_seeded_then_streams_its_own_output_and_input() {
+        let (mut s, mut wire, mut out) = split_session();
+        assert!(s.seeded(4) && s.seeded(5) && s.ready());
         assert_eq!(
             out,
             vec![
-                Action::Fallback("the session moved to another window"),
-                Action::Exited,
-                Action::Feed(b"[closed]\r\n".to_vec()),
+                Action::Feed {
+                    pane: 4,
+                    bytes: b"\x1bcold\r\n\x1b[31mleft$ \x1b[0m\x1b[?1h\x1b[?2004h\x1b[2;4H".to_vec()
+                },
+                Action::Feed { pane: 5, bytes: b"\x1bcright$ \x1b[0m\x1b[?1h\x1b[?2004h\x1b[2;4H".to_vec() },
             ]
         );
-
-        let (mut s, mut wire, mut out) = (Session::default(), Vec::new(), Vec::new());
-        s.read(b"can't find session: x\r\n", &mut wire, &mut out);
-        assert_eq!(out, vec![Action::Feed(b"can't find session: x\r\n".to_vec())]);
+        // What was typed while attaching goes to the pane with the keys.
+        assert_eq!(text(&mut wire), "send-keys -t %4 -H 65 61 72 6c 79\n");
         out.clear();
-        s.read(b"%begin 1 1 0\r\n%end 1 1 0\r\n", &mut wire, &mut out);
-        s.read(&reply(2, &format!("{STATE}\r\n%5 80 24 0 0 0 0 0 0 0 0 0 1\r\n")), &mut wire, &mut out);
-        assert_eq!(out, vec![Action::Fallback("the window has several panes")]);
+        s.read(b"%output %5 hi\\015\r\n%output %9 not shown\r\n", &mut wire, &mut out);
+        assert_eq!(out, vec![Action::Feed { pane: 5, bytes: b"hi\r".to_vec() }]);
+        s.input(Some(5), b"\r", &mut wire);
+        s.focus(5, &mut wire);
+        assert_eq!(text(&mut wire), "send-keys -t %5 -H 0d\nselect-pane -t %5\n");
+    }
+
+    #[test]
+    fn layout_changes_are_read_from_the_panes_and_new_panes_are_seeded() {
+        let (mut s, mut wire, mut out) = split_session();
+        out.clear();
+        text(&mut wire);
+        s.read(&reply(9, ""), &mut wire, &mut out);
+        s.read(b"%layout-change @1 b65d,81x25,0,0{40x25,0,0,4,40x25,41,0,5} x *\r\n", &mut wire, &mut out);
+        assert!(text(&mut wire).starts_with(LIST));
+        // The right pane was split: only the new one is captured.
+        let three = pane(4, (40, 24), (0, 1), false)
+            + &pane(5, (40, 11), (41, 1), false)
+            + &pane(6, (40, 12), (41, 13), true);
+        s.read(&reply(10, &three), &mut wire, &mut out);
+        assert!(text(&mut wire).starts_with("capture-pane -p -e -t %6 -J -S -2000\nlist-panes"));
+        assert!(matches!(&out[..], [Action::Layout(panes)] if panes.len() == 3 && panes[2].active));
+        out.clear();
+        s.read(&reply(11, "new$ \r\n"), &mut wire, &mut out);
+        s.read(&reply(12, &three), &mut wire, &mut out);
+        assert!(matches!(&out[..], [Action::Feed { pane: 6, .. }]), "{out:?}");
+        // A pane is closed: it leaves the layout and its output is ignored.
+        out.clear();
+        s.read(b"%window-pane-changed @1 %4\r\n", &mut wire, &mut out);
+        let two = pane(4, (40, 24), (0, 1), true) + &pane(6, (40, 24), (41, 1), false);
+        s.read(&reply(13, &two), &mut wire, &mut out);
+        s.read(b"%output %5 gone\r\n", &mut wire, &mut out);
+        assert!(matches!(&out[..], [Action::Layout(panes)] if panes.len() == 2), "{out:?}");
+        assert!(!s.seeded(5));
+    }
+
+    #[test]
+    fn a_zoomed_pane_is_the_only_one_shown_and_sizes_are_asked_once() {
+        let (mut s, mut wire, mut out) = split_session();
+        out.clear();
+        text(&mut wire);
+        s.read(&reply(9, ""), &mut wire, &mut out);
+        s.read(b"%layout-change @1 x x *\r\n", &mut wire, &mut out);
+        s.read(b"%layout-change @1 b65d,81x25,0,0,5 x *Z\r\n", &mut wire, &mut out);
+        let zoomed = "%4 40 24 3 1 0 1 0 0 0 0 0 1 0 1 0 1\r\n%5 81 24 3 1 0 1 0 0 0 0 0 1 0 1 1 1\r\n";
+        s.read(&reply(10, zoomed), &mut wire, &mut out);
+        assert_eq!(
+            out,
+            vec![Action::Layout(vec![PaneInfo { id: 5, left: 0, top: 1, width: 81, height: 24, active: true }])]
+        );
+        text(&mut wire);
+        s.resize(100, 30, &mut wire);
+        assert_eq!(text(&mut wire), "refresh-client -C 100,31\n");
+        s.resize(100, 30, &mut wire);
+        assert!(text(&mut wire).is_empty());
+        s.claim(&mut wire);
+        assert_eq!(text(&mut wire), "refresh-client -C 100,31\n");
+    }
+
+    #[test]
+    fn the_end_and_attach_errors_are_reported() {
+        let (mut s, mut wire, mut out) = split_session();
+        out.clear();
+        s.read(b"%exit\r\n\x1b\\[closed]\r\n", &mut wire, &mut out);
+        assert_eq!(out, vec![Action::Exited, Action::Notice(b"[closed]\r\n".to_vec())]);
+        let (mut s, mut out) = (Session::default(), Vec::new());
+        s.read(b"can't find session: x\r\n", &mut wire, &mut out);
+        assert_eq!(out, vec![Action::Notice(b"can't find session: x\r\n".to_vec())]);
     }
 
     #[test]
     fn a_full_screen_program_is_seeded_row_by_row_on_the_alternate_screen() {
         let (mut s, mut wire, mut out) = (Session::default(), Vec::new(), Vec::new());
         s.read(b"%begin 1 1 0\r\n%end 1 1 0\r\n", &mut wire, &mut out);
-        let alt = "%4 80 2 3 1 1 0 0 1 0 0 1 0";
-        s.read(&reply(2, &format!("{alt}\r\n")), &mut wire, &mut out);
+        let alt = "%4 80 2 3 1 1 0 0 1 0 0 1 0 0 0 1 0\r\n";
+        s.read(&reply(2, alt), &mut wire, &mut out);
         assert!(text(&mut wire).contains("capture-pane -p -e -t %4\n"));
         s.read(&reply(3, "top\r\nbottom\r\n"), &mut wire, &mut out);
-        s.read(&reply(4, &format!("{alt}\r\n")), &mut wire, &mut out);
+        s.read(&reply(4, alt), &mut wire, &mut out);
         assert_eq!(
-            out,
-            vec![Action::Feed(
-                b"\x1bc\x1b[?1049h\x1b[1;1Htop\x1b[2;1Hbottom\x1b[0m\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?25l\x1b[2;4H".to_vec()
-            )]
+            out[1],
+            Action::Feed {
+                pane: 4,
+                bytes: b"\x1bc\x1b[?1049h\x1b[1;1Htop\x1b[2;1Hbottom\x1b[0m\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[?25l\x1b[2;4H"
+                    .to_vec()
+            }
         );
     }
 }

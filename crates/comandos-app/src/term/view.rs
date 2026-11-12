@@ -104,6 +104,17 @@ struct Model {
     hide_noise: bool,
     /// The tmux control client behind this view, when it is pane-native.
     control: Option<super::control::Session>,
+    /// The pane whose engine, picture and selection sit in the fields of
+    /// this model right now: the one under the pointer, or the one with the
+    /// keys while typing. The other panes of the window wait in `slots`.
+    loaded: Option<super::control::PaneInfo>,
+    slots: Vec<PaneSlot>,
+    /// The pane tmux sends typed keys to.
+    key_pane: Option<u32>,
+    /// Panes whose picture changed since they were painted.
+    stale: Vec<u32>,
+    /// Left edge of the window's first column.
+    base_x: f64,
     regions: Vec<super::noise::Region>,
     noise_maps: Vec<(super::noise::Region, Vec<Option<u16>>)>,
     output_at: Option<Instant>,
@@ -167,6 +178,15 @@ impl Hold {
         };
         quiet.min(self.cap_at)
     }
+}
+/// A pane that is not loaded in the model: everything that is its own.
+struct PaneSlot {
+    info: super::control::PaneInfo,
+    engine: TermEngine,
+    frame: FrameCache,
+    selection: Option<Selection>,
+    /// Its own wheel glide (see `Model::glide`).
+    glide: (f64, f64),
 }
 /// A history fill as one frame paints it.
 #[derive(Clone, PartialEq)]
@@ -510,6 +530,11 @@ impl TermView {
                 output_at: None,
                 hide_noise: true,
                 control: None,
+                loaded: None,
+                slots: Vec::new(),
+                key_pane: None,
+                stale: Vec::new(),
+                base_x: 12.,
                 regions: Vec::new(),
                 noise_maps: Vec::new(),
                 pane_ids: Vec::new(),
@@ -608,9 +633,10 @@ impl TermView {
     /// is drawn over. A pane-native view keeps that row free above its text,
     /// so overlays placed by tmux coordinates land where they always did.
     pub fn cell_geometry(&self) -> CellGeom {
-        let mut geom = self.inner.model.borrow().geom;
+        let m = self.inner.model.borrow();
+        let mut geom = m.geom;
         if self.inner.pane_native_wanted() {
-            geom.origin_y -= geom.cell_h;
+            (geom.origin_x, geom.origin_y) = (m.base_x, m.padding + 14.);
         }
         geom
     }
@@ -780,9 +806,11 @@ impl TermView {
         (m.geom.cell_w, m.geom.origin_x + (m.padding - 4.).max(0.))
     }
     pub fn feed(&self, bytes: &[u8]) -> Result<(), PtyError> {
+        self.inner.aim_keys();
         self.inner.send(bytes)
     }
     pub fn paste(&self, text: &str) -> Result<(), PtyError> {
+        self.inner.aim_keys();
         let bytes = encode_paste(text, &self.inner.model.borrow().engine.modes());
         self.feed(&bytes)
     }
@@ -796,7 +824,7 @@ impl TermView {
     }
     /// True while a tmux control client feeds this view (pane-native).
     pub fn pane_native(&self) -> bool {
-        self.inner.model.borrow().control.as_ref().is_some_and(super::control::Session::seeded)
+        self.inner.model.borrow().control.as_ref().is_some_and(super::control::Session::ready)
     }
     pub fn session(&self) -> Option<&str> {
         self.inner.options.session.as_deref()
@@ -901,11 +929,15 @@ impl Inner {
             .and_then(Value::as_f64)
             .unwrap_or(8.)
             .clamp(0., 40.);
-        m.geom.origin_x = m.padding + 2.;
+        m.base_x = m.padding + 2.;
+        m.geom.origin_x = m.base_x;
         // A classic attach starts with tmux's border line, and the pane's
         // header is drawn over it. A pane-native view has no such line:
         // leave that row free so the header does not cover text.
-        m.geom.origin_y = m.padding + 14. + if self.pane_native_wanted() { m.geom.cell_h } else { 0. };
+        m.geom.origin_y = m.padding + 14.;
+        if self.pane_native_wanted() {
+            Self::place(&mut m);
+        }
         m.opacity = m
             .preferences
             .get("terminal_opacity")
@@ -926,10 +958,12 @@ impl Inner {
             (self.area.allocated_width(), self.area.allocated_height()),
             m.geom.cell_w,
             m.geom.cell_h,
-            (
-                m.geom.origin_x + (m.padding - 4.).max(0.),
-                m.geom.origin_y + (m.padding - 2.).max(0.),
-            ),
+            if self.pane_native_wanted() {
+                // The cells for panes: everything under the header row.
+                (m.base_x + (m.padding - 4.).max(0.), m.padding + 14. + m.geom.cell_h + (m.padding - 2.).max(0.))
+            } else {
+                (m.geom.origin_x + (m.padding - 4.).max(0.), m.geom.origin_y + (m.padding - 2.).max(0.))
+            },
             self.options.tmux_size,
         )
     }
@@ -1118,6 +1152,8 @@ impl Inner {
         let mut m = self.model.borrow_mut();
         let m = &mut *m;
         let wire = Self::native_resize(m, cols, rows);
+        // Pane-native engines take their sizes from tmux's layout.
+        let native = wire.is_some();
         match (&mut m.pty, wire) {
             (Some(p), Some(wire)) => p.write(&wire)?,
             (Some(p), None) => p.resize(cols, rows)?,
@@ -1127,8 +1163,10 @@ impl Inner {
             m.geom.cell_w.round().clamp(1., f64::from(u16::MAX)) as u16,
             m.geom.cell_h.round().clamp(1., f64::from(u16::MAX)) as u16,
         );
-        self.hold_picture(m, (cols, rows));
-        m.engine.resize(cols, rows, px);
+        if !native {
+            self.hold_picture(m, (cols, rows));
+            m.engine.resize(cols, rows, px);
+        }
         self.redraw();
         Ok(())
     }
@@ -1194,14 +1232,28 @@ impl Inner {
     fn control_argv(&self) -> Option<&Vec<String>> {
         self.options.control_argv.as_ref().filter(|_| !self.classic.get())
     }
-    /// After a fallback the header row belongs to tmux's border again.
     fn fit_header(&self) {
         let mut m = self.model.borrow_mut();
-        m.geom.origin_y = m.padding + 14. + if self.pane_native_wanted() { m.geom.cell_h } else { 0. };
+        m.geom.origin_y = m.padding + 14.;
+        if self.pane_native_wanted() {
+            Self::place(&mut m);
+        }
+    }
+    /// Puts the cell grid where the loaded pane sits in the window. Row 0 of
+    /// the window is the border line the pane header is drawn over, so a
+    /// pane starts one row down (and that row stays free above its text).
+    fn place(m: &mut Model) {
+        let (left, top) = m.loaded.map_or((0, 1), |p| (p.left, p.top));
+        m.geom.origin_x = m.base_x + f64::from(left) * m.geom.cell_w;
+        m.geom.origin_y = m.padding + 14. + f64::from(top) * m.geom.cell_h;
     }
     /// Starts (or clears) the control session of a freshly spawned client.
     fn begin_native(model: &mut Model, on: bool) {
         model.control = on.then(super::control::Session::default);
+        model.slots.clear();
+        model.loaded = None;
+        model.key_pane = None;
+        model.stale.clear();
         if on {
             model.hide_noise = false;
             model.tmux_regions.clear();
@@ -1213,9 +1265,10 @@ impl Inner {
     }
     /// Typed bytes as control commands (`None`: a classic client takes them raw).
     fn native_input(m: &mut Model, bytes: &[u8]) -> Option<Vec<u8>> {
+        let pane = m.loaded.map(|p| p.id);
         let control = m.control.as_mut()?;
         let mut wire = Vec::new();
-        control.input(bytes, &mut wire);
+        control.input(pane, bytes, &mut wire);
         // Typing goes to the live screen, like in any terminal. Focus and
         // mouse reports are not typing: the view stays where it was read.
         let report = [&b"\x1b[I"[..], b"\x1b[O", b"\x1b[<", b"\x1b[M"].iter().any(|p| bytes.starts_with(p));
@@ -1232,6 +1285,201 @@ impl Inner {
         let mut wire = Vec::new();
         control.resize(cols, rows, &mut wire);
         Some(wire)
+    }
+    /// Makes `id` the pane the model's own fields belong to.
+    fn load_pane(m: &mut Model, id: u32) -> bool {
+        if m.loaded.is_some_and(|p| p.id == id) {
+            return true;
+        }
+        let Some(i) = m.slots.iter().position(|s| s.info.id == id) else {
+            return false;
+        };
+        let Some(out) = m.loaded else { return false };
+        let slot = &mut m.slots[i];
+        std::mem::swap(&mut m.engine, &mut slot.engine);
+        std::mem::swap(&mut m.frame, &mut slot.frame);
+        std::mem::swap(&mut m.selection, &mut slot.selection);
+        m.loaded = Some(std::mem::replace(&mut slot.info, out));
+        (m.glide, m.glide_frac, slot.glide) = (slot.glide.0, slot.glide.1, (m.glide, m.glide_frac));
+        m.pressed = None;
+        m.hovered_link = None;
+        m.painted = None;
+        m.painted_cursor = None;
+        Self::place(m);
+        true
+    }
+    /// The pane with the keys takes the model before a key is encoded.
+    fn aim_keys(&self) {
+        let mut m = self.model.borrow_mut();
+        if let Some(id) = m.key_pane.filter(|_| !m.slots.is_empty()) {
+            Self::load_pane(&mut m, id);
+        }
+    }
+    /// The pane under the pointer takes the model; a click also gives it the keys.
+    fn aim_at(self: &Rc<Self>, x: f64, y: f64, click: bool) {
+        let mut m = self.model.borrow_mut();
+        if m.control.is_none() || m.loaded.is_none() {
+            return;
+        }
+        let col = ((x - m.base_x) / m.geom.cell_w).floor();
+        let row = ((y - (m.padding + 14.)) / m.geom.cell_h).floor();
+        // The row above a pane is its header: it belongs to that pane too.
+        let holds = |p: &super::control::PaneInfo| {
+            col >= f64::from(p.left) - 1.
+                && col <= f64::from(p.left) + f64::from(p.width)
+                && row >= f64::from(p.top) - 1.
+                && row < f64::from(p.top) + f64::from(p.height)
+        };
+        let under = m
+            .loaded
+            .filter(|p| holds(p))
+            .or_else(|| m.slots.iter().map(|s| s.info).find(|p| holds(p)));
+        let Some(pane) = under else { return };
+        Self::load_pane(&mut m, pane.id);
+        if click && m.key_pane != Some(pane.id) {
+            m.key_pane = Some(pane.id);
+            {
+                let m = &mut *m;
+                if let (Some(control), Some(pty)) = (&mut m.control, &mut m.pty) {
+                    let mut wire = Vec::new();
+                    control.focus(pane.id, &mut wire);
+                    let _ = pty.write(&wire);
+                }
+            }
+            drop(m);
+            self.watch_write();
+            self.redraw();
+        }
+    }
+    /// Reads the control stream and applies what it says to the panes.
+    fn native_read(&self, m: &mut Model) -> DrainOutcome {
+        let (mut wire, mut actions) = (Vec::new(), Vec::new());
+        let outcome = {
+            let Model { pty, drain, control, .. } = &mut *m;
+            match (pty.as_mut(), control.as_mut()) {
+                (Some(pty), Some(control)) => {
+                    let outcome = drain.read_into(pty, |bytes| control.read(bytes, &mut wire, &mut actions));
+                    if !wire.is_empty() {
+                        let _ = pty.write(&wire);
+                    }
+                    outcome
+                }
+                _ => DrainOutcome::Closed,
+            }
+        };
+        let now = Instant::now();
+        for action in actions {
+            match action {
+                super::control::Action::Layout(panes) => self.layout_panes(m, &panes),
+                super::control::Action::Feed { pane, bytes } => {
+                    if m.loaded.is_some_and(|p| p.id == pane) {
+                        m.engine.feed(&bytes, now);
+                    } else if let Some(slot) = m.slots.iter_mut().find(|s| s.info.id == pane) {
+                        slot.engine.feed(&bytes, now);
+                    }
+                }
+                super::control::Action::Notice(bytes) => m.engine.feed(&bytes, now),
+                super::control::Action::Exited => m.engine.feed(b"\x1b[0m\r\n", now),
+            }
+        }
+        outcome
+    }
+    /// A pane that held its picture (synchronized output) shows it now.
+    fn tick_panes(&self, m: &mut Model) {
+        for slot in &mut m.slots {
+            if slot.engine.tick(Instant::now()) {
+                self.full.set(true);
+            }
+        }
+    }
+    /// Notes which panes changed, so only those are painted again.
+    fn native_damage(&self, m: &mut Model, lines: &mut Vec<usize>) {
+        if m.slots.is_empty() {
+            return;
+        }
+        if !lines.is_empty()
+            && let Some(id) = m.loaded.map(|p| p.id)
+            && !m.stale.contains(&id)
+        {
+            m.stale.push(id);
+        }
+        let mut scratch = Vec::new();
+        let Model { slots, stale, .. } = &mut *m;
+        for slot in slots.iter_mut() {
+            let _ = slot.engine.drain();
+            scratch.clear();
+            if slot.engine.take_dirty(&mut scratch) || !scratch.is_empty() {
+                if !stale.contains(&slot.info.id) {
+                    stale.push(slot.info.id);
+                }
+                if lines.is_empty() {
+                    lines.push(0);
+                }
+            }
+        }
+    }
+    /// The window's panes changed: one engine each, at the size tmux gave it.
+    fn layout_panes(&self, m: &mut Model, panes: &[super::control::PaneInfo]) {
+        let px = (
+            m.geom.cell_w.round().clamp(1., f64::from(u16::MAX)) as u16,
+            m.geom.cell_h.round().clamp(1., f64::from(u16::MAX)) as u16,
+        );
+        m.slots.retain(|s| panes.iter().any(|p| p.id == s.info.id));
+        if m.loaded.is_some_and(|l| !panes.iter().any(|p| p.id == l.id)) {
+            // Its pane is gone: another one takes the model's engine.
+            match m.slots.pop() {
+                Some(slot) => {
+                    m.engine = slot.engine;
+                    m.frame = slot.frame;
+                    m.selection = slot.selection;
+                    m.loaded = Some(slot.info);
+                }
+                None => {
+                    m.loaded = None;
+                    m.selection = None;
+                    m.engine.feed(b"\x1bc", Instant::now());
+                }
+            }
+        }
+        for pane in panes {
+            let size = (pane.width, pane.height);
+            if m.loaded.is_some_and(|l| l.id == pane.id) {
+                m.loaded = Some(*pane);
+                if m.engine.size() != size {
+                    m.engine.resize(size.0, size.1, px);
+                }
+            } else if let Some(slot) = m.slots.iter_mut().find(|s| s.info.id == pane.id) {
+                slot.info = *pane;
+                if slot.engine.size() != size {
+                    slot.engine.resize(size.0, size.1, px);
+                }
+            } else if m.loaded.is_none() {
+                m.loaded = Some(*pane);
+                m.engine.resize(size.0, size.1, px);
+            } else {
+                m.slots.push(PaneSlot {
+                    info: *pane,
+                    engine: TermEngine::new(
+                        size.0,
+                        size.1,
+                        self.options.scrollback,
+                        m.engine.palette().clone(),
+                        true,
+                        self.epoch,
+                    ),
+                    frame: FrameCache::default(),
+                    selection: None,
+                    glide: (0., 0.),
+                });
+            }
+        }
+        m.key_pane = panes.iter().find(|p| p.active).map(|p| p.id).or(m.key_pane);
+        m.painted = None;
+        m.painted_cursor = None;
+        m.stale.clear();
+        Self::place(m);
+        self.full.set(true);
+        self.area.queue_draw();
     }
     fn spawn(self: &Rc<Self>) -> Result<(), PtyError> {
         if self.options.mode == RunMode::Shadow {
@@ -1382,53 +1630,15 @@ impl Inner {
     }
     fn read(self: &Rc<Self>, condition: IOCondition) -> bool {
         let mut m = self.model.borrow_mut();
-        let mut fallback = None;
-        let outcome = {
-            let Model {
-                pty, engine, drain, control, ..
-            } = &mut *m;
-            pty.as_mut().map_or(DrainOutcome::Closed, |pty| match control {
-                None => drain.read_into(pty, |bytes| engine.feed(bytes, Instant::now())),
-                Some(control) => {
-                    let (mut wire, mut actions) = (Vec::new(), Vec::new());
-                    let outcome = drain.read_into(pty, |bytes| control.read(bytes, &mut wire, &mut actions));
-                    for action in actions {
-                        match action {
-                            super::control::Action::Feed(bytes) => engine.feed(&bytes, Instant::now()),
-                            super::control::Action::Fallback(why) => fallback = fallback.or(Some(why)),
-                            super::control::Action::Exited => {
-                                engine.feed(b"\x1b[0m\r\n", Instant::now());
-                            }
-                        }
-                    }
-                    if !wire.is_empty() {
-                        let _ = pty.write(&wire);
-                    }
-                    outcome
-                }
+        let native = m.control.is_some();
+        let outcome = if native {
+            self.native_read(&mut m)
+        } else {
+            let Model { pty, engine, drain, .. } = &mut *m;
+            pty.as_mut().map_or(DrainOutcome::Closed, |pty| {
+                drain.read_into(pty, |bytes| engine.feed(bytes, Instant::now()))
             })
         };
-        let native = m.control.is_some();
-        if let Some(why) = fallback {
-            // Splits and extra windows still need tmux to draw them: drop the
-            // control client and attach the classic way, now.
-            super::lag::note(&format!(
-                "control {} falls back: {why}",
-                self.options.session.as_deref().unwrap_or("-")
-            ));
-            self.classic.set(true);
-            m.engine.feed(b"\x1bc", Instant::now());
-            m.control = None;
-            m.pty.take();
-            m.drain = PtyDrain::default();
-            m.respawn_at = Some(self.ms());
-            drop(m);
-            if let Some(source) = self.write_source.borrow_mut().take() {
-                source.remove();
-            }
-            self.arm();
-            return false;
-        }
         let closed = outcome == DrainOutcome::Closed
             || (outcome == DrainOutcome::WouldBlock
                 && condition.intersects(IOCondition::HUP | IOCondition::ERR));
@@ -1439,6 +1649,9 @@ impl Inner {
         let mut lines = Vec::new();
         if m.engine.take_dirty(&mut lines) {
             lines.extend(0..usize::from(m.engine.size().1));
+        }
+        if native {
+            self.native_damage(&mut m, &mut lines);
         }
         m.schedule.damage(self.ms(), &lines);
         if !lines.is_empty() {
@@ -1615,6 +1828,7 @@ impl Inner {
         self.poll_shadow(&mut m, now);
         // Damage queries always include Alacritty's cursor row. Only consume
         // timer damage when DEC2026 actually flushes; PTY bytes use read().
+        self.tick_panes(&mut m);
         if m.engine.tick(Instant::now()) {
             let mut lines = Vec::new();
             if m.engine.take_dirty(&mut lines) {
@@ -1702,6 +1916,7 @@ impl Inner {
         }
     }
     fn forward_key(self: &Rc<Self>, event: &gdk::EventKey) -> glib::Propagation {
+        self.aim_keys();
         if self.im.filter_keypress(event) {
             return glib::Propagation::Stop;
         }
@@ -2551,6 +2766,7 @@ fn connect_events(inner: &Rc<Inner>) {
     let weak = Rc::downgrade(inner);
     inner.im.connect_commit(move |_, text| {
         if let Some(inner) = weak.upgrade() {
+            inner.aim_keys();
             let bytes = {
                 let mut m = inner.model.borrow_mut();
                 m.preedit.clear();
@@ -2633,6 +2849,7 @@ fn connect_events(inner: &Rc<Inner>) {
         };
         area.grab_focus();
         let (x, y) = event.position();
+        inner.aim_at(x, y, true);
         let (col, row) = inner.point(x, y);
         if let Some(callback) = inner.primary_press.borrow().clone() {
             callback(event, (col, row));
@@ -2739,6 +2956,7 @@ fn connect_events(inner: &Rc<Inner>) {
         };
         let (x, y) = event.position();
         if !event.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+            inner.aim_at(x, y, false);
             // The release went elsewhere (a menu, another window): end the drag.
             let mut m = inner.model.borrow_mut();
             if let Some(pick) = m.pick.as_mut().filter(|p| p.held) {
@@ -2929,6 +3147,10 @@ fn connect_events(inner: &Rc<Inner>) {
             return glib::Propagation::Proceed;
         };
         let dragging = event.state().contains(gdk::ModifierType::BUTTON1_MASK);
+        if !dragging {
+            let (x, y) = event.position();
+            inner.aim_at(x, y, false);
+        }
         {
             let mut m = inner.model.borrow_mut();
             // Mid-drag the wheel scrolls and the selection keeps growing; a
@@ -3120,9 +3342,23 @@ impl Inner {
             context.set_operator(cairo::Operator::Over);
             return;
         }
-        let paint = !fits || self.full.get() || plan.is_some() || m.painted.is_none();
+        let split = !m.slots.is_empty();
+        let paint = !fits || self.full.get() || plan.is_some() || m.painted.is_none() || !m.stale.is_empty();
         let mut direct = false;
-        if paint {
+        if paint && split {
+            if !fits {
+                *canvas = cairo::ImageSurface::create(cairo::Format::ARgb32, w * scale, h * scale)
+                    .ok()
+                    .inspect(|c| c.set_device_scale(f64::from(scale), f64::from(scale)));
+            }
+            let image = canvas.as_ref().and_then(|c| cairo::Context::new(c).ok());
+            direct = image.is_none();
+            let all = !fits || self.full.get();
+            self.draw_panes(&mut m, image.as_ref().unwrap_or(context), all, (f64::from(w), f64::from(h)));
+            let now = self.ms();
+            m.schedule.painted(now);
+            self.full.set(false);
+        } else if paint {
             if !fits {
                 *canvas = cairo::ImageSurface::create(cairo::Format::ARgb32, w * scale, h * scale)
                     .ok()
@@ -3156,7 +3392,16 @@ impl Inner {
             if shift > 0. {
                 let (top, bg) = (m.geom.origin_y, m.engine.palette().bg);
                 let _ = context.save();
-                context.rectangle(0., top, f64::from(w), f64::from(h) - top);
+                // Among several panes only the one gliding moves.
+                let (left, wide, tall) = match m.loaded.filter(|_| !m.slots.is_empty()) {
+                    Some(p) => (
+                        if p.left == 0 { 0. } else { m.geom.origin_x },
+                        (f64::from(p.width) + if p.left == 0 { 1. } else { 0. }) * m.geom.cell_w + m.base_x,
+                        f64::from(p.height) * m.geom.cell_h,
+                    ),
+                    None => (0., f64::from(w), f64::from(h) - top),
+                };
+                context.rectangle(left, top, wide, tall);
                 context.clip();
                 context.set_source_rgba(
                     f64::from(bg[0]) / 255.,
@@ -3214,6 +3459,68 @@ impl Inner {
             }
         }
     }
+    /// Paints a window of several panes: each one with its own engine, inside
+    /// its own rectangle, and thin lines where tmux keeps a column between two.
+    fn draw_panes(&self, m: &mut Model, context: &cairo::Context, all: bool, (w, h): (f64, f64)) {
+        let Some(keep) = m.loaded.map(|p| p.id) else { return };
+        let mut ids: Vec<u32> = std::iter::once(keep).chain(m.slots.iter().map(|s| s.info.id)).collect();
+        if !all {
+            ids.retain(|id| m.stale.contains(id));
+        }
+        let (cell_w, cell_h, top) = (m.geom.cell_w, m.geom.cell_h, m.padding + 14.);
+        let (base_x, focused, key) = (m.base_x, m.focused, m.key_pane);
+        if all {
+            let bg = m.engine.palette().bg;
+            context.set_source_rgba(
+                f64::from(bg[0]) / 255.,
+                f64::from(bg[1]) / 255.,
+                f64::from(bg[2]) / 255.,
+                m.opacity,
+            );
+            context.set_operator(cairo::Operator::Source);
+            let _ = context.paint();
+            context.set_operator(cairo::Operator::Over);
+        }
+        let right_edge = std::iter::once(m.loaded.map(|p| p.left + p.width))
+            .flatten()
+            .chain(m.slots.iter().map(|s| s.info.left + s.info.width))
+            .max()
+            .unwrap_or(0);
+        let mut lines = Vec::new();
+        for id in ids {
+            if !Self::load_pane(m, id) {
+                continue;
+            }
+            let Some(p) = m.loaded else { continue };
+            let x0 = if p.left == 0 { 0. } else { base_x + f64::from(p.left) * cell_w };
+            let x1 = if p.left + p.width >= right_edge { w } else { base_x + f64::from(p.left + p.width) * cell_w };
+            let y0 = top + f64::from(p.top) * cell_h;
+            let y1 = (top + f64::from(p.top + p.height) * cell_h).min(h);
+            if p.left > 0 {
+                lines.push((base_x + (f64::from(p.left) - 0.5) * cell_w, y0 - cell_h, y1));
+            }
+            let _ = context.save();
+            context.rectangle(x0, y0, x1 - x0, y1 - y0);
+            context.clip();
+            // Only the pane with the keys shows a solid cursor.
+            m.focused = focused && key == Some(id);
+            let look = self.prepare(m, None);
+            self.draw_frame(m, context, look, None);
+            let _ = context.restore();
+        }
+        m.focused = focused;
+        Self::load_pane(m, keep);
+        m.stale.clear();
+        if all {
+            context.set_source_rgb(43. / 255., 53. / 255., 72. / 255.);
+            context.set_line_width(1.);
+            for (x, y0, y1) in lines {
+                context.move_to(x.round() + 0.5, y0);
+                context.line_to(x.round() + 0.5, y1);
+                let _ = context.stroke();
+            }
+        }
+    }
     /// Runs at the start of a GTK frame, before it paints: reads the screen
     /// and asks GTK to repaint only the rows that changed. Typing, a spinner
     /// or the cursor blink then cost a few rows instead of the whole terminal.
@@ -3228,6 +3535,14 @@ impl Inner {
         }
         if m.hold.is_some() {
             // The held picture is replaced in one go by `release_hold`.
+            return;
+        }
+        if !m.slots.is_empty() {
+            // Several panes: `draw` paints the ones that changed.
+            let now = self.ms();
+            m.schedule.painted(now);
+            drop(m);
+            self.area.queue_draw();
             return;
         }
         let scale = self.area.scale_factor().max(1);
