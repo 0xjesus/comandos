@@ -236,45 +236,14 @@ pub fn mount_identity() -> Result<(), JsValue> {
     })
 }
 pub fn mount_sidebar() -> Result<(), JsValue> {
-    put("sbTermFrames", new("Map", &[])?)?;
-    for (key, value) in [
-        ("sbNativeMsg", "".into()),
-        (
-            "SBT",
-            item(&[("term", "".into()), ("activeSeen", "".into())])?,
-        ),
-        (
-            "CS",
-            item(&[
-                ("targetKey", JsValue::NULL),
-                ("agentSeen", JsValue::NULL),
-                ("termsSig", JsValue::NULL),
-                ("busy", JsValue::NULL),
-                ("again", false.into()),
-            ])?,
-        ),
-        (
-            "SB_LIMITS",
-            item(&[
-                ("accounts", JsValue::NULL),
-                ("at", 0.into()),
-                ("job", JsValue::NULL),
-            ])?,
-        ),
-        (
-            "CS_CLIS",
-            new(
-                "Set",
-                &[["claude", "codex", "grok", "opencode", "agy"]
-                    .into_iter()
-                    .map(JsValue::from)
-                    .collect::<Array>()
-                    .into()],
-            )?,
-        ),
-    ] {
-        put(key, value)?;
-    }
+    put(
+        "SB_LIMITS",
+        item(&[
+            ("accounts", JsValue::NULL),
+            ("at", 0.into()),
+            ("job", JsValue::NULL),
+        ])?,
+    )?;
     sidebar::mount()
 }
 pub fn mount_render() -> Result<(), JsValue> {

@@ -16,10 +16,6 @@ pub enum PollUpdate {
         value: Value,
         favorite_generation: u64,
     },
-    Notices {
-        revision: String,
-        badge: u64,
-    },
     Workspace(Value),
     Marks(Value),
     /// `GET /session-feed`; `Null` once the route stops answering (tiles as today).
@@ -38,8 +34,7 @@ impl PollBatch {
             PollUpdate::Prefs { .. } => 1,
             PollUpdate::Workspace(_) => 2,
             PollUpdate::Marks(_) => 3,
-            PollUpdate::Notices { .. } => 4,
-            PollUpdate::Feed(_) => 5,
+            PollUpdate::Feed(_) => 4,
         };
         self.latest.insert(key, update);
     }
@@ -54,9 +49,6 @@ pub struct PollIntervals {
     pub state_timeout: Duration,
     pub workspace: Duration,
     pub workspace_timeout: Duration,
-    pub notices_wait_secs: u64,
-    pub notices_timeout: Duration,
-    pub notices_backoff: Duration,
     pub marks: Duration,
     pub marks_timeout: Duration,
     pub feed: Duration,
@@ -70,9 +62,6 @@ impl Default for PollIntervals {
             state_timeout: Duration::from_secs(3),
             workspace: Duration::from_secs(2),
             workspace_timeout: Duration::from_secs(3),
-            notices_wait_secs: 25,
-            notices_timeout: Duration::from_secs(35),
-            notices_backoff: Duration::from_secs(2),
             marks: Duration::from_secs(5),
             marks_timeout: Duration::from_secs(3),
             feed: Duration::from_millis(2500),
@@ -106,7 +95,6 @@ impl Poller {
         let state_client = client.isolated();
         let workspace_client = client.isolated();
         let marks_client = client.isolated();
-        let notices_client = client.isolated();
         let feed_client = client.isolated();
         threads.push(spawn_state_prefs(
             state_client.clone(),
@@ -135,18 +123,10 @@ impl Poller {
         ));
         threads.push(spawn_feed(
             feed_client.clone(),
-            tx.clone(),
+            tx,
             stop.clone(),
             intervals.feed,
             intervals.feed_timeout,
-        ));
-        threads.push(spawn_notices(
-            notices_client.clone(),
-            tx,
-            stop.clone(),
-            intervals.notices_wait_secs,
-            intervals.notices_timeout,
-            intervals.notices_backoff,
         ));
         (
             Poller {
@@ -156,7 +136,6 @@ impl Poller {
                     state_client,
                     workspace_client,
                     marks_client,
-                    notices_client,
                     feed_client,
                 ],
                 threads: Mutex::new(threads),
@@ -294,44 +273,6 @@ fn spawn_feed(
     }
 }
 
-fn spawn_notices(
-    client: DashClient,
-    tx: mpsc::Sender<PollUpdate>,
-    stop: Arc<AtomicBool>,
-    wait_secs: u64,
-    timeout: Duration,
-    backoff: Duration,
-) -> JoinHandle<()> {
-    let spawn = std::thread::Builder::new()
-        .name("app-poll-notices".into())
-        .spawn(move || {
-            let mut rev = String::new();
-            while !stop.load(Ordering::Acquire) {
-                let path = format!("/notices/watch?rev={}&wait={wait_secs}", encode_query(&rev));
-                match client.get(&path, timeout) {
-                    Ok(value) => {
-                        rev = value
-                            .get("rev")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string();
-                        let badge = value.get("badge").and_then(Value::as_u64).unwrap_or(0);
-                        let _ = tx.send(PollUpdate::Notices {
-                            revision: rev.clone(),
-                            badge,
-                        });
-                    }
-                    Err(DashError::Cancelled) => break,
-                    Err(_) => sleep_cancel(&stop, backoff),
-                }
-            }
-        });
-    match spawn {
-        Ok(thread) => thread,
-        Err(error) => panic!("poll notices thread: {error}"),
-    }
-}
-
 pub fn live_pref_snapshot(value: &Value) -> Value {
     const KEYS: &[&str] = &[
         "font_family",
@@ -364,16 +305,4 @@ fn sleep_cancel(stop: &AtomicBool, duration: Duration) {
         // spurious wake without waking idle threads one hundred times a second.
         std::thread::park_timeout(remaining);
     }
-}
-
-fn encode_query(raw: &str) -> String {
-    let mut out = String::new();
-    for byte in raw.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }

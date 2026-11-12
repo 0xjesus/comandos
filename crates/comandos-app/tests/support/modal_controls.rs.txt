@@ -1,6 +1,5 @@
 #![allow(dead_code, unused_variables, unused_mut)]
 use std::{cell::{Cell, RefCell}, collections::BTreeMap, rc::Rc};
-#[derive(Clone, Copy, PartialEq)] enum ModalKind { Url, Chains, Analytics }
 mod glib { pub enum Propagation { Stop, Proceed } pub fn markup_escape_text(s:&str)->String{s.into()} }
 mod pango { pub enum EllipsizeMode { End } }
 mod gdk { pub mod keys { pub mod constants { #[allow(non_upper_case_globals)] pub const Escape:u32=27; } } }
@@ -30,7 +29,7 @@ struct App { t18:T18, english:bool, closed:RefCell<Vec<String>> }
 impl App {
  fn close_window(&self,name:&str){self.closed.borrow_mut().push(name.into());}
  fn zoom_out(&self){self.close_window("zoom");}
- fn header(self:&Rc<Self>,kind:ModalKind,name:&'static str,window:&Window){
+ fn header(self:&Rc<Self>,name:&'static str,window:&Window){
   let label="";let uri="http://localhost/";
   // HEADER
   // BIND
@@ -39,9 +38,9 @@ impl App {
 }
 fn main(){
  let mut counts=Vec::new();let mut button_closes=Vec::new();let mut focus_closes=0;let mut escape_closes=0;
- for (kind,name) in [(ModalKind::Url,"link"),(ModalKind::Chains,"chains"),(ModalKind::Analytics,"analytics")] {
+ for name in ["link"] {
   let window=Window::default();let app=Rc::new(App{t18:T18{windows:RefCell::new(BTreeMap::from([(name.into(),Owner{closing:Cell::new(false),signals:vec![]})]))},english:false,closed:RefCell::new(vec![])});
-  BUTTONS.with_borrow_mut(Vec::clear);app.header(kind,name,&window);let buttons=BUTTONS.with_borrow(|v|v.clone());counts.push(buttons.len());
+  BUTTONS.with_borrow_mut(Vec::clear);app.header(name,&window);let buttons=BUTTONS.with_borrow(|v|v.clone());counts.push(buttons.len());
   for f in window.focus.borrow().iter(){f(&window,&Event);}focus_closes+=app.closed.borrow().len();app.closed.borrow_mut().clear();
   for button in buttons{button.click();}button_closes.extend(app.closed.borrow_mut().drain(..));
   for f in window.keys.borrow().iter(){f(&window,&Event);}escape_closes+=app.closed.borrow().len();

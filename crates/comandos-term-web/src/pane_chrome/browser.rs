@@ -702,7 +702,7 @@ fn open_accounts(rc: &Shared, btn: &Element) {
                     }
                     output += "</button>";
                 }
-                output += "<button type=\"button\" class=\"acc\" data-add-account>+ Añadir cuenta</button><p class=\"foot\">Sigue la misma conversación. Si está respondiendo, se interrumpe y cambia al instante.</p>";
+                output += "<button type=\"button\" class=\"acc\" data-add-account>+ Añadir, editar o eliminar cuentas</button><p class=\"foot\">Sigue la misma conversación. Si está respondiendo, se interrumpe y cambia al instante.</p>";
                 box_.set_inner_html(&output);
                 let state = rc.clone();
                 let parent_box = box_.clone();
@@ -716,7 +716,7 @@ fn open_accounts(rc: &Shared, btn: &Element) {
                         return;
                     }
                     if b.has_attribute("data-add-account") {
-                        add_account(&state, &parent_box, &harness, "");
+                        manage_accounts(&state, &parent_box, &harness, &pane_);
                         return;
                     }
                     let alias = dataset(&b, "alias");
@@ -726,7 +726,7 @@ fn open_accounts(rc: &Shared, btn: &Element) {
                     if comandos_web_dom::api::js_truthy(&a["selectable"]) {
                         switch_account(&state, &parent_box, &pane_, &alias)
                     } else {
-                        add_account(&state, &parent_box, &harness, &alias)
+                        add_account(&state, &parent_box, &harness, &alias, false)
                     }
                 });
             }
@@ -741,7 +741,7 @@ fn open_accounts(rc: &Shared, btn: &Element) {
         }
     });
 }
-fn add_account(rc: &Shared, box_: &Element, harness: &str, alias: &str) {
+fn add_account(rc: &Shared, box_: &Element, harness: &str, alias: &str, relogin: bool) {
     buttons(box_, "button", true);
     let Some(note) = query(box_, ".foot, .msg") else {
         return;
@@ -757,7 +757,7 @@ fn add_account(rc: &Shared, box_: &Element, harness: &str, alias: &str) {
         let result = fetch(
             token(&rc),
             "/account/add",
-            Some(json!({"provider":harness,"alias":alias,"deviceAuth":true})),
+            Some(json!({"provider":harness,"alias":alias,"deviceAuth":true,"relogin":relogin})),
             Some("No se pudo abrir el login"),
             None,
         )
@@ -778,6 +778,184 @@ fn add_account(rc: &Shared, box_: &Element, harness: &str, alias: &str) {
             Err(error) => note.set_text_content(Some(&error)),
         }
         buttons(&box_, "button", false);
+    });
+}
+/// Vista «Administrar cuentas» del chip Cuenta: añadir con nombre, renombrar,
+/// volver a iniciar sesión y eliminar (con confirmación en dos toques).
+fn manage_accounts(rc: &Shared, box_: &Element, harness: &str, pane: &str) {
+    box_.set_inner_html(&format!(
+        "<h4>CUENTAS DE {}</h4><p class=\"msg\">Consultando cuentas…</p>",
+        escape(&harness.to_uppercase())
+    ));
+    if !box_.has_attribute("data-managed") {
+        let _ = box_.set_attribute("data-managed", "");
+        let (state, parent, harness_, pane_) =
+            (rc.clone(), box_.clone(), harness.to_string(), pane.to_string());
+        listen(rc, box_.as_ref(), "click", false, false, move |event| {
+            let Some(b) = target(&event).and_then(|t| t.closest("[data-tool]").ok().flatten())
+            else {
+                return;
+            };
+            if get(b.as_ref(), "disabled").is_truthy() {
+                return;
+            }
+            let tool = dataset(&b, "tool");
+            let row = b.closest("[data-alias]").ok().flatten();
+            let alias = row.as_ref().map(|r| dataset(r, "alias")).unwrap_or_default();
+            let typed = |scope: &Element| {
+                query(scope, "input")
+                    .map(|i| get(i.as_ref(), "value").as_string().unwrap_or_default())
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            };
+            match tool.as_str() {
+                "back" => close_accounts(&state),
+                "add" => {
+                    let name = query(&parent, ".acm-add").map(|r| typed(&r)).unwrap_or_default();
+                    add_account(&state, &parent, &harness_, &name, false);
+                }
+                "relogin" => add_account(&state, &parent, &harness_, &alias, true),
+                "rename" => {
+                    let to = row.as_ref().map(|r| typed(r)).unwrap_or_default();
+                    if to.is_empty() || to == alias {
+                        say(&state, &parent, &pane_, "Escribe el nombre nuevo y toca Renombrar", true);
+                        return;
+                    }
+                    account_admin(
+                        &state,
+                        &parent,
+                        &harness_,
+                        &pane_,
+                        "/account/rename",
+                        json!({"provider":harness_,"alias":alias,"to":to}),
+                        format!("Cuenta {alias} renombrada a {to}"),
+                    );
+                }
+                "remove" => {
+                    if !b.has_attribute("data-armed") {
+                        let _ = b.set_attribute("data-armed", "");
+                        b.set_text_content(Some("¿Seguro? Toca otra vez"));
+                        return;
+                    }
+                    account_admin(
+                        &state,
+                        &parent,
+                        &harness_,
+                        &pane_,
+                        "/account/remove",
+                        json!({"provider":harness_,"alias":alias}),
+                        format!("Cuenta {alias} eliminada (se guardó una copia oculta)"),
+                    );
+                }
+                _ => {}
+            }
+        });
+    }
+    let (rc, box_, harness, pane) = (
+        rc.clone(),
+        box_.clone(),
+        harness.to_string(),
+        pane.to_string(),
+    );
+    spawn_local(async move {
+        let result = fetch(
+            token(&rc),
+            &format!(
+                "/accounts?harness={}&usage=0",
+                js_sys::encode_uri_component(&harness)
+            ),
+            None,
+            Some("No se pudieron leer las cuentas"),
+            None,
+        )
+        .await;
+        if rc.borrow().acct.as_deref() != Some(&pane) || rc.borrow().disposed {
+            return;
+        }
+        let mut out = format!(
+            "<h4>CUENTAS DE {}</h4><div class=\"acm acm-add\"><b>Nueva cuenta</b><div class=\"acm-row\"><input maxlength=\"64\" placeholder=\"nombre, ej. trabajo\" autocomplete=\"off\" spellcheck=\"false\"><button type=\"button\" data-tool=\"add\">Añadir y abrir login</button></div></div>",
+            escape(&harness.to_uppercase())
+        );
+        match result {
+            Ok(data) => {
+                for a in data["accounts"].as_array().into_iter().flatten() {
+                    let alias = text(a, "alias");
+                    let identity = text(a, "identity");
+                    let logged = comandos_web_dom::api::js_truthy(&a["selectable"]);
+                    let main = alias == "main";
+                    out += &format!(
+                        "<div class=\"acm\" data-alias=\"{a}\"><b>{a}</b><span>{who}</span>",
+                        a = escape(&alias),
+                        who = escape(if identity.is_empty() {
+                            if logged { "sesión iniciada" } else { "sin sesión" }
+                        } else {
+                            &identity
+                        })
+                    );
+                    if !main {
+                        out += &format!(
+                            "<div class=\"acm-row\"><input maxlength=\"64\" value=\"{}\" autocomplete=\"off\" spellcheck=\"false\"><button type=\"button\" data-tool=\"rename\">Renombrar</button></div>",
+                            escape(&alias)
+                        );
+                    }
+                    out += &format!(
+                        "<div class=\"acm-row\"><button type=\"button\" data-tool=\"relogin\">{}</button>{}</div></div>",
+                        if logged { "Iniciar sesión otra vez" } else { "Iniciar sesión" },
+                        if main {
+                            ""
+                        } else {
+                            "<button type=\"button\" class=\"danger\" data-tool=\"remove\">Eliminar</button>"
+                        }
+                    );
+                }
+                out += "<p class=\"foot\">Renombrar o eliminar solo funciona si ningún pane usa esa cuenta. Eliminar guarda una copia oculta.</p>";
+            }
+            Err(error) => out += &format!("<p class=\"msg err\">{}</p>", escape(&error)),
+        }
+        out += "<button type=\"button\" class=\"acm-back\" data-tool=\"back\">Cerrar</button>";
+        box_.set_inner_html(&out);
+    });
+}
+/// Renombrar o eliminar; al terminar vuelve a pintar la lista con el resultado.
+fn account_admin(
+    rc: &Shared,
+    box_: &Element,
+    harness: &str,
+    pane: &str,
+    path: &'static str,
+    body: Value,
+    done: String,
+) {
+    buttons(box_, "button", true);
+    say(rc, box_, pane, "Guardando…", false);
+    let (rc, box_, harness, pane) = (
+        rc.clone(),
+        box_.clone(),
+        harness.to_string(),
+        pane.to_string(),
+    );
+    spawn_local(async move {
+        let result = fetch(
+            token(&rc),
+            path,
+            Some(body),
+            Some("No se pudo cambiar la cuenta"),
+            None,
+        )
+        .await;
+        match result {
+            Ok(_) => {
+                manage_accounts(&rc, &box_, &harness, &pane);
+                // La lista nueva tarda un instante; el aviso va después.
+                pause(400).await;
+                say(&rc, &box_, &pane, &done, false);
+            }
+            Err(error) => {
+                buttons(&box_, "button", false);
+                say(&rc, &box_, &pane, &error, true);
+            }
+        }
     });
 }
 async fn pause(ms: i32) {

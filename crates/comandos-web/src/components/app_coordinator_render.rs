@@ -31,11 +31,7 @@ fn render(list: JsValue) -> Result<(), JsValue> {
         }
         call(&get(&state(), "prev"), "set", &[sess, status])?;
     }
-    run("syncCommandSidebar", &[])?;
     set(&id("n-waiting"), "textContent", &waiting.into())?;
-    if global("notifBadge").is_function() {
-        run("notifBadge", &[])?;
-    }
     set(&id("n-done"), "textContent", &done.into())?;
     set(&id("n-working"), "textContent", &working.into())?;
     set(

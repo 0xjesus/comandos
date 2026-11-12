@@ -12,7 +12,7 @@ impl App {
         {
             self.status.set_text(&format!("Shelf theme: {error}"));
         }
-        for name in ["T17.notices", "T17.extensions", "T17.start_ai_here"] {
+        for name in ["T17.extensions", "T17.start_ai_here"] {
             let weak = Rc::downgrade(self);
             self.install_handler(
                 name,
@@ -22,7 +22,6 @@ impl App {
                         .filter(|a| !a.closed.load(Ordering::Acquire))
                         .ok_or_else(|| CommandError::Refused("application closed".into()))?;
                     match name {
-                        "T17.notices" => app.toggle_notices(),
                         "T17.extensions" => {
                             let session = commands::session_arg(args, "")?;
                             let pane = commands::string_arg(args, "pane", "")?;
@@ -93,76 +92,6 @@ impl App {
                 }
             },
         );
-    }
-    pub(super) fn toggle_notices(self: &Rc<Self>) -> Result<(), CommandError> {
-        let shelf = &self.t17.shelf;
-        if shelf.notices.borrow().is_some() {
-            shelf.close_notices();
-            return Ok(());
-        }
-        let base = self
-            .cfg
-            .dash_url()
-            .ok_or_else(|| CommandError::Failed("dashboard disconnected".into()))?;
-        let uri = format!(
-            "{}/?panel=notices&app=1&v={}",
-            base.trim_end_matches('/'),
-            ui::webview::encode_query(env!("CARGO_PKG_VERSION"))
-        );
-        shelf.close_extension();
-        let page = ui::webview::create_page(&self.cfg, &self.webview, "centro", &uri)
-            .map_err(|e| CommandError::Failed(format!("{e:?}")))?;
-        page.view.set_no_show_all(true);
-        page.view.set_size_request(-1, extensions::SHELF_MIN);
-        let generation = shelf.next_generation();
-        let mut signals = vec![];
-        if let Some(manager) = page.view.user_content_manager() {
-            let weak = Rc::downgrade(self);
-            let view = page.view.downgrade();
-            let owned_uri = uri.clone();
-            let id = manager.connect_script_message_received(Some("centro"), move |_, result| {
-                let (Some(app), Some(view)) = (weak.upgrade(), view.upgrade()) else {
-                    return;
-                };
-                let current = app.t17.shelf.notices.borrow();
-                if !app.writable()
-                    || current.as_ref().is_none_or(|owner| {
-                        owner.generation != generation
-                            || owner.page.view != view
-                            || view.uri().as_deref() != Some(owned_uri.as_str())
-                    })
-                {
-                    return;
-                }
-                drop(current);
-                let Some(raw) = result.js_value().map(|value| value.to_str().to_string()) else {
-                    return;
-                };
-                if let Err(error) =
-                    ui::bridge::parse_bridge(&raw).and_then(|message| app.dispatch_bridge(message))
-                {
-                    app.status.set_text(&error.to_string());
-                }
-            });
-            signals.push((manager.upcast(), id));
-        }
-        shelf.host.pack_start(&page.view, true, true, 0);
-        page.view.show();
-        *shelf.notices.borrow_mut() = Some(ShelfView {
-            page,
-            scope: ui::snippets::Scope::default(),
-            generation,
-            uri,
-            target: None,
-            instance: None,
-            signals,
-            close: None,
-            client: None,
-        });
-        shelf.sync();
-        self.shelf_height_position();
-        self.shelf_read_height();
-        Ok(())
     }
     pub(super) fn open_extension(self: &Rc<Self>, session: &str, pane: &str, harness: &str) {
         let Some(base) = self.cfg.dash_url() else {
@@ -283,7 +212,6 @@ impl App {
         let shelf = &self.t17.shelf;
         let was_open = shelf.extension.borrow().is_some();
         shelf.close_extension();
-        shelf.close_notices();
         let page = match ui::webview::create_page(&self.cfg, &self.webview, "extensions", uri) {
             Ok(page) => page,
             Err(error) => {

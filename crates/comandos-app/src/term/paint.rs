@@ -197,12 +197,23 @@ pub fn plan_row(
 /// update. Native tests exercise the same cache that GTK paints.
 pub struct FrameCache {
     ops: Vec<PaintOp>,
+    /// `ops[a..b]` belong to grid row `i`.
+    row_ops: Vec<(usize, usize)>,
+    /// What each grid row shows, for the noise filter.
+    inks: Vec<crate::term::noise::RowInk>,
+    /// tmux border cells, row-major, for the pane tiles.
+    borders: Vec<crate::term::tiles::Cell>,
+    cols: u16,
     cursor: crate::term::engine::CursorView,
 }
 impl Default for FrameCache {
     fn default() -> Self {
         Self {
             ops: Vec::new(),
+            row_ops: Vec::new(),
+            inks: Vec::new(),
+            borders: Vec::new(),
+            cols: 0,
             cursor: crate::term::engine::CursorView {
                 line: 0,
                 col: 0,
@@ -213,15 +224,44 @@ impl Default for FrameCache {
         }
     }
 }
+/// Notes the tmux border cells of one rendered row.
+fn mark_borders(borders: &mut [crate::term::tiles::Cell], row: &RowRender, line: usize, cols: u16) {
+    for run in &row.runs {
+        if !crate::term::tiles::is_border(run.style.fg) {
+            continue;
+        }
+        let chars: Vec<char> = run.text.chars().collect();
+        for i in 0..run.cells {
+            let ch = chars.get(usize::from(i)).or(chars.last()).copied().unwrap_or(' ');
+            let col = usize::from(run.col.saturating_add(i));
+            if col < usize::from(cols)
+                && let Some(cell) = borders.get_mut(line * usize::from(cols) + col)
+            {
+                *cell = crate::term::tiles::classify(ch, run.style.fg);
+            }
+        }
+    }
+}
 impl FrameCache {
     pub fn refresh(&mut self, term: &crate::term::engine::TermEngine, geom: &CellGeom) -> bool {
         if term.next_deadline().is_some() {
             return false;
         }
         self.ops.clear();
+        self.row_ops.clear();
+        self.inks.clear();
+        let (cols, rows) = term.size();
+        self.cols = cols;
+        self.borders.clear();
+        self.borders
+            .resize(usize::from(cols) * usize::from(rows), crate::term::tiles::Cell::Other);
+        let normal = term.palette().fg;
         let mut row = RowRender::default();
         for line in 0..usize::from(term.size().1) {
             term.render_line(line, &mut row);
+            self.inks.push(crate::term::noise::row_ink(&row, normal));
+            mark_borders(&mut self.borders, &row, line, cols);
+            let first = self.ops.len();
             plan_row(
                 &row,
                 line,
@@ -229,12 +269,88 @@ impl FrameCache {
                 &|col| term.fg_is_rgb(line, col),
                 &mut self.ops,
             );
+            self.row_ops.push((first, self.ops.len()));
+        }
+        self.cursor = term.cursor();
+        true
+    }
+    /// Same result as `refresh` when only `lines` changed since the last one:
+    /// the other rows keep what was planned for them. Typing a letter or a
+    /// spinner tick then costs one row, not the whole screen.
+    pub fn refresh_lines(&mut self, term: &crate::term::engine::TermEngine, geom: &CellGeom, lines: &[usize]) -> bool {
+        let (cols, rows) = term.size();
+        let count = usize::from(rows);
+        let mut lines: Vec<usize> = lines.iter().copied().filter(|l| *l < count).collect();
+        lines.sort_unstable();
+        lines.dedup();
+        if self.cols != cols || self.row_ops.len() != count || self.inks.len() != count || lines.len() * 2 > count {
+            return self.refresh(term, geom);
+        }
+        if term.next_deadline().is_some() {
+            return false;
+        }
+        let normal = term.palette().fg;
+        let width = usize::from(cols);
+        let mut row = RowRender::default();
+        let mut ops = Vec::new();
+        for line in lines {
+            term.render_line(line, &mut row);
+            self.inks[line] = crate::term::noise::row_ink(&row, normal);
+            if let Some(cells) = self.borders.get_mut(line * width..(line + 1) * width) {
+                cells.fill(crate::term::tiles::Cell::Other);
+            }
+            mark_borders(&mut self.borders, &row, line, cols);
+            plan_row(&row, line, geom, &|col| term.fg_is_rgb(line, col), &mut ops);
+            let (a, b) = self.row_ops[line];
+            let end = a + ops.len();
+            self.ops.splice(a..b, ops.drain(..));
+            self.row_ops[line] = (a, end);
+            for later in &mut self.row_ops[line + 1..] {
+                *later = (later.0 + end - b, later.1 + end - b);
+            }
         }
         self.cursor = term.cursor();
         true
     }
     pub fn ops(&self) -> &[PaintOp] {
         &self.ops
+    }
+    pub fn row_ops(&self, line: usize) -> &[PaintOp] {
+        self.row_ops
+            .get(line)
+            .and_then(|&(a, b)| self.ops.get(a..b))
+            .unwrap_or(&[])
+    }
+    /// Temporary: what the border scan saw, for the lag log.
+    pub fn border_debug(&self) -> String {
+        let cols = usize::from(self.cols.max(1));
+        let mut out = String::new();
+        for (row, cells) in self.borders.chunks(cols).enumerate() {
+            if cells.iter().all(|c| *c == crate::term::tiles::Cell::Other) {
+                continue;
+            }
+            let line: String = cells
+                .iter()
+                .map(|c| match c {
+                    crate::term::tiles::Cell::Other => '.',
+                    crate::term::tiles::Cell::Post => '|',
+                    crate::term::tiles::Cell::Rule { active: true } => '=',
+                    crate::term::tiles::Cell::Rule { active: false } => '-',
+                })
+                .collect();
+            out.push_str(&format!(" r{row}:{line}"));
+            if out.len() > 900 {
+                break;
+            }
+        }
+        out
+    }
+    /// Panes drawn as tiles, from tmux's border cells on this frame.
+    pub fn tiles(&self, bottom: u16) -> Vec<crate::term::tiles::Tile> {
+        crate::term::tiles::detect(&self.borders, self.cols, bottom)
+    }
+    pub fn inks(&self) -> &[crate::term::noise::RowInk] {
+        &self.inks
     }
     pub fn cursor(&self) -> crate::term::engine::CursorView {
         self.cursor

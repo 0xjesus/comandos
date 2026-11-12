@@ -25,12 +25,26 @@ popover.acct-pop .acct-tag { color: @BRAND@; font-family: 'Ubuntu Sans Mono', mo
 popover.acct-pop .acct-dim { color: @DIM@; font-family: 'Ubuntu Sans Mono', monospace; font-size: 11px; }
 popover.acct-pop .acct-note { color: @DIM@; font-size: 12px; margin: 4px 6px 2px; }
 popover.acct-pop .acct-note.acct-err { color: #f87171; }
+popover.acct-pop .acct-manage { padding: 8px 10px; border-radius: 9px; border: 1px solid @LINE@; margin-bottom: 4px; }
+popover.acct-pop .acct-danger { color: #f87171; }
 popover.acct-pop levelbar.acct-bar trough { min-height: 5px; padding: 0; border: none; border-radius: 3px; background-color: @LINE@; }
 popover.acct-pop levelbar.acct-bar block { min-height: 5px; border: none; border-radius: 3px; }
 popover.acct-pop levelbar.acct-bar block.filled { background-color: @BRAND@; }
 popover.acct-pop levelbar.acct-bar.warn block.filled { background-color: #fbbf24; }
 popover.acct-pop levelbar.acct-bar.full block.filled { background-color: #f87171; }
 popover.acct-pop levelbar.acct-bar block.empty { background-color: transparent; }
+/* Chip de la cabecera y su lista (grill 7) */
+popover.chip-pop stackswitcher button { background: none; border: 0; box-shadow: none; color: @DIM@; padding: 7px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+popover.chip-pop stackswitcher button:hover { color: @TEXT@; background-color: mix(@BAR@, @LINE2@, 0.3); }
+popover.chip-pop stackswitcher button:checked { background-color: mix(@BAR@, @LINE2@, 0.5); color: @TEXT@; }
+popover.chip-pop .chip-row { padding: 5px 10px; }
+popover.chip-pop .acct-title { margin: 8px 10px 4px; }
+popover.chip-pop scrolledwindow { border: 0; background: none; }
+popover.chip-pop .chip-name { color: @TEXT@; font-family: 'Ubuntu Sans Mono', monospace; font-size: 12px; }
+popover.chip-pop .chip-bad { color: #f87171; font-size: 11px; }
+.pane-card-keys button.pill-btn.pane-chip { min-height: 18px; padding: 0 8px; border-width: 0; background-color: transparent; }
+.pane-card-keys button.pill-btn.pane-chip:hover { background-color: alpha(@LINE2@, 0.55); }
+.pane-card-keys .pane-chip .chip-av { background-color: #2A2350; border-radius: 8px; min-width: 14px; min-height: 14px; padding: 0 3px; font-size: 10px; }
 .strip-tab.cur { color: @TEXT@; background-color: mix(@BAR@, @LINE2@, 0.35); box-shadow: inset 0 -2px 0 0 alpha(@TEXT@, 0.55); }
 /* ⊞ «varias filas» (grill 1-oct): las MISMAS pestañas como chips de 28 px con
    esquinas de 8 px, fondo del panel y 4 px entre ellas, envueltas en filas. */
@@ -86,35 +100,6 @@ notebook > header > tabs > arrow {
 paned.ws-paned > separator { background: @BG@; min-width: 8px; min-height: 8px; }
 notebook stack { background: @BG@; }
 .termwrap { background: @BG@; }
-/* Terminales de la barra (columna izquierda): UNA cabecera = agarre + pestañas +
-   «+ Terminal» + ▾, la misma que pinta la web en el remoto; arrastrarla fuera de
-   los botones cambia la altura (el separador del Paned queda invisible). */
-.side-head { background-color: @BAR@; border-top: 1px solid @LINE@; border-bottom: 1px solid @LINE@; }
-.side-head.dragging { border-top-color: @BRAND@; }
-/* Píldoras con flechas (grill ronda 2, 1-oct): píldoras redondas en una pista que se
-   desplaza con ‹ › redondas (solo si no caben) y con la rueda; «+» redondo punteado. */
-.side-tab { background-color: mix(@BAR@, @TEXT@, 0.06); border: 1px solid @LINE@; border-radius: 999px; }
-.side-tab:hover { border-color: mix(@BAR@, @TEXT@, 0.17); }
-.side-tab.cur { background-color: mix(mix(@BAR@, @TEXT@, 0.06), @BRAND@, 0.16); border-color: mix(@BAR@, @BRAND@, 0.6); }
-.side-btn { background-color: transparent; background-image: none; color: @DIM@; padding: 0 9px; min-height: 26px;
-  border: 0; border-radius: 999px; box-shadow: none; outline: none; font-family: 'Inter', sans-serif; font-size: 12px; }
-.side-btn:hover, .side-tab.cur .side-btn { color: @TEXT@; }
-.side-tab.sel .side-name label { font-weight: 600; }
-.side-name { padding: 0 2px 0 10px; }
-.side-dot { color: @FAINT@; font-size: 8px; margin-right: 6px; }
-.side-tab.cur .side-dot { color: @BRAND@; }
-.side-x { padding: 0; min-width: 20px; min-height: 20px; margin: 3px 4px 3px 0; color: @FAINT@; font-size: 10px; }
-.side-x:hover { color: @TEXT@; background-color: mix(@BAR@, @TEXT@, 0.17); }
-.side-x.armed { color: #ff9e9e; background-color: mix(@BAR@, #ef6b6b, 0.24); font-size: 11px; font-weight: 600; padding: 0 8px; }
-.side-btn.side-arr { min-width: 24px; min-height: 24px; padding: 0; margin: 0 3px; color: @TEXT@; font-size: 14px;
-  background-color: mix(@BAR@, @TEXT@, 0.06); border: 1px solid mix(@BAR@, @TEXT@, 0.17); }
-.side-btn.side-arr:hover { color: @BRAND@; border-color: @BRAND@; }
-.side-btn.side-arr:disabled { opacity: 0.25; }
-.side-btn.side-plus { min-width: 26px; min-height: 26px; padding: 0; margin: 0 6px 0 3px; color: @BRAND@; font-size: 15px; font-weight: 700;
-  border: 1px dashed mix(@BAR@, @BRAND@, 0.45); }
-.side-btn.side-plus:hover { background-color: mix(@BAR@, @BRAND@, 0.12); }
-.side-btn.side-tog { border-left: 1px solid @LINE@; border-radius: 0; min-width: 40px; padding: 0; }
-.side-btn.side-tog:hover { background-color: mix(@BAR@, @LINE2@, 0.5); }
 .tabplus { color: @DIM@; padding: 4px 8px; margin: 0 1px; border: none; background: none;
   border-radius: 8px; min-width: 28px; min-height: 28px; font-family: 'Ubuntu Sans Mono', monospace; font-size: 14px;
   -gtk-icon-effect: none; }
@@ -244,3 +229,38 @@ window.k5-peek-win, window.k5-peek-win.background { background-color: transparen
 .k5-peek label.k5-ft-text { color: @FAINT@; font-size: 11px; }
 .k5-peek label.k5-kbd { color: @DIM@; background-color: mix(@BAR@, @LINE2@, 0.5); border: 1px solid @LINE@; border-radius: 4px;
   padding: 0 5px; font-size: 10px; font-weight: 600; }
+
+/* Foco + repisa (ui/focus.rs): text cards beside the one live terminal. */
+scrolledwindow.fs-scroll { background-color: @BG@; border-left: 1px solid @LINE@; }
+scrolledwindow.fs-scroll undershoot, scrolledwindow.fs-scroll overshoot { background: none; }
+.fs-shelf { padding: 14px 14px 18px 14px; }
+.fs-shelf label { font-family: 'Inter', sans-serif; }
+.fs-head { margin: 2px 2px 0 2px; min-height: 22px; }
+.fs-head label.fs-head-title { color: @FAINT@; font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em; }
+.fs-head label.fs-head-count { color: @FAINT@; font-size: 10.5px; }
+button.fs-all { padding: 0 9px; min-height: 20px; border-radius: 6px; background: none; background-image: none; border: 1px solid @LINE2@;
+  box-shadow: none; text-shadow: none; }
+button.fs-all label { color: @DIM@; font-size: 10.5px; font-weight: 600; }
+button.fs-all:hover { border-color: @BRAND@; }
+button.fs-all:hover label { color: @TEXT@; }
+.fs-card { background-color: @PANEL@; border: 1px solid @LINE@; border-radius: 12px; padding: 12px 14px; }
+.fs-card:hover { background-color: @PANEL2@; border-color: @LINE2@; }
+.fs-card.fs-ask, .fs-card.fs-limit { border-color: alpha(@WAITING@, 0.45); }
+.fs-card label.fs-dot { font-size: 8px; color: @FAINT@; }
+.fs-card label.fs-title { color: @TEXT@; font-size: 13px; font-weight: 600; }
+.fs-card label.fs-state { font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 1px 9px; color: @DIM@;
+  background-color: alpha(@DIM@, 0.12); }
+.fs-card.fs-ask label.fs-dot, .fs-card.fs-ask label.fs-state, .fs-card.fs-limit label.fs-dot, .fs-card.fs-limit label.fs-state { color: @WAITING@; }
+.fs-card.fs-ask label.fs-state, .fs-card.fs-limit label.fs-state { background-color: alpha(@WAITING@, 0.13); }
+.fs-card.fs-work label.fs-dot, .fs-card.fs-work label.fs-state { color: @WORKING@; }
+.fs-card.fs-work label.fs-state { background-color: alpha(@WORKING@, 0.13); }
+.fs-card.fs-idle label.fs-dot, .fs-card.fs-idle label.fs-state { color: @DONE@; }
+.fs-card.fs-idle label.fs-state { background-color: alpha(@DONE@, 0.13); }
+.fs-card label.fs-text { color: mix(@TEXT@, @DIM@, 0.3); font-size: 12.5px; }
+.fs-card label.fs-meta { color: @FAINT@; font-size: 10.5px; font-family: 'JetBrainsMono Nerd Font Mono', monospace; }
+.fs-shelf label.fs-empty { color: @FAINT@; font-size: 12px; margin: 0 4px 6px 4px; }
+button.fs-rail { margin: 10px 8px; padding: 2px 10px; min-height: 22px; border-radius: 7px; background: none; background-image: none;
+  border: 1px solid @LINE2@; box-shadow: none; text-shadow: none; }
+button.fs-rail label { color: @DIM@; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; }
+button.fs-rail:hover { border-color: @BRAND@; }
+button.fs-rail:hover label { color: @TEXT@; }

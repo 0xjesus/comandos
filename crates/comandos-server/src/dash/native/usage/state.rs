@@ -41,7 +41,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type Row = Map<String, Value>;
@@ -50,6 +50,11 @@ type Row = Map<String, Value>;
 const GIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Cuántos `git rev-parse` corren a la vez (el Python los hace uno a uno).
 const GIT_CONCURRENCY: usize = 8;
+/// Cuánto se reutiliza la raíz git de una carpeta: sólo cambia con un
+/// `git init` o al mover el repositorio, y el tablero la pide varias veces
+/// por segundo.
+const GIT_ROOT_TTL: Duration = Duration::from_secs(60);
+static GIT_ROOTS: Mutex<BTreeMap<String, (Instant, String)>> = Mutex::new(BTreeMap::new());
 /// `USAGE_STATE_DAYS * 86400` (cc_usage.py:181).
 const STATE_WINDOW_S: i64 = 14 * 86_400;
 /// `list_alerts(db_path, limit=12)` (cc_usage.py:992).
@@ -512,6 +517,24 @@ pub async fn git_root_for_path(path: &Path) -> String {
     }
 }
 
+/// `git_root_for_path` con memoria de `GIT_ROOT_TTL` por carpeta.
+async fn recent_git_root(cwd: &str) -> String {
+    let fresh = |at: &Instant| at.elapsed() < GIT_ROOT_TTL;
+    let known = GIT_ROOTS
+        .lock()
+        .ok()
+        .and_then(|roots| roots.get(cwd).filter(|(at, _)| fresh(at)).map(|(_, root)| root.clone()));
+    if let Some(root) = known {
+        return root;
+    }
+    let root = git_root_for_path(Path::new(cwd)).await;
+    if let Ok(mut roots) = GIT_ROOTS.lock() {
+        roots.retain(|_, (at, _)| fresh(at));
+        roots.insert(cwd.to_owned(), (Instant::now(), root.clone()));
+    }
+    root
+}
+
 /// Lo que el salto de bloqueo devuelve.
 struct Scanned {
     conf: ConfFile,
@@ -609,7 +632,7 @@ async fn live_panes(native: &Native, now: i64) -> Result<Live, Fault> {
     let cwds: HashSet<String> = infos.iter().map(|i| i.cwd.clone()).collect();
     let roots: HashMap<String, String> = stream::iter(cwds)
         .map(|cwd| async move {
-            let root = git_root_for_path(Path::new(&cwd)).await;
+            let root = recent_git_root(&cwd).await;
             (cwd, root)
         })
         .buffer_unordered(GIT_CONCURRENCY)

@@ -43,7 +43,7 @@ fn native_bundle_contains_existing_css_dependencies_and_pwa_without_legacy_scrip
 }
 
 #[test]
-fn native_bundle_contains_every_switchable_pomodoro_sprite() {
+fn native_bundle_ships_no_retired_analytics_or_pomodoro_assets() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap();
@@ -52,23 +52,24 @@ fn native_bundle_contains_every_switchable_pomodoro_sprite() {
         .into_iter()
         .collect::<std::collections::BTreeMap<_, _>>();
     let page: NativePage = serde_json::from_slice(&files[NATIVE_PAGE_FILE]).unwrap();
-    let catalog = comandos_web_view::pomodoro::catalog();
-    let mut count = 0;
-    for style in catalog["STYLES"].as_object().unwrap().values() {
-        for asset in style["assets"].as_object().unwrap().values() {
-            let url = format!("/assets/pomodoro/{}", asset["file"].as_str().unwrap());
-            let logical = page
-                .assets
-                .get(&url)
-                .unwrap_or_else(|| panic!("missing switchable sprite {url}"));
-            assert!(
-                files.contains_key(logical),
-                "missing sprite bytes {logical}"
-            );
-            count += 1;
-        }
+    for url in page.assets.keys() {
+        assert!(
+            url != "/analytics.css" && !url.starts_with("/assets/pomodoro/"),
+            "retired asset still packaged: {url}"
+        );
     }
-    assert_eq!(count, 36);
+    for id in [
+        "analytics",
+        "analytics-render",
+        "chain-builder",
+        "notifications",
+        "pomodoro",
+    ] {
+        assert!(
+            !page.components.iter().any(|c| c == id),
+            "retired component still on the page: {id}"
+        );
+    }
 }
 
 #[test]

@@ -16,7 +16,6 @@
     "app-nativa",
     "app-combinada",
     "notificaciones-del-sistema",
-    "helpers",
-    "notifications"
+    "helpers"
   ]
 }

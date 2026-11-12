@@ -459,6 +459,244 @@ async fn state(native: &Arc<Native>, env: Env, data: Value) -> Result<Value> {
     }
     Ok(body)
 }
+/// What a pane header chip shows: counts, the MCPs that did not connect and what the
+/// conversation used. Fast path: one tmux query, the inventory and Claude's own
+/// `sessions/*.json`; no process scan (the full `target()` walks every process).
+async fn summary(native: &Arc<Native>, env: Env, data: Value) -> Result<Value> {
+    let opts = native.options().clone();
+    blocking(move || {
+        let (sess, pane) = valid_target(&data)?;
+        let harness = text(&data["harness"]).to_owned();
+        if !["claude", "codex", "grok", "opencode", "agy"].contains(&harness.as_str()) {
+            return Err(err("elige un CLI compatible para este panel"));
+        }
+        let account = match text(&data["account"]) {
+            "" | "unknown" => "main".to_owned(),
+            a => a.to_owned(),
+        };
+        let identity = sc::pane_identity(&env, &sess, &pane)?;
+        let cwd = identity
+            .get("pane_current_path")
+            .and_then(Value::as_str)
+            .ok_or(Error::Other)?
+            .to_owned();
+        let inventory = cached_inventory(&env, &harness, &account, &cwd)?;
+        let selected = if live_gate(&opts, &harness) {
+            comandos_store::extension_gate::selection(&env.home, &sc::identity_key(&identity))
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        let desired = json!({"mcps": selected.unwrap_or_else(|| json!({})), "skills": {}});
+        let session = (harness == "claude")
+            .then(|| claude_session(&env, &account, &pane))
+            .flatten();
+        let (conversation, src) = session.unzip();
+        let usage = extension_observations::conversation_usage(
+            &harness,
+            conversation.as_deref().unwrap_or(""),
+            src.as_deref(),
+            &inventory,
+            600_000,
+        );
+        let failed = src.as_deref().map(failed_mcps).unwrap_or_default();
+        Ok(summary_body(&account, &inventory, &desired, &usage, &failed))
+    })
+    .await
+}
+/// `launch::inventory` reads every MCP and skill definition (seconds of work on this
+/// machine) and rarely changes: the chip reuses it for a few minutes per CLI, account
+/// and folder.
+fn cached_inventory(env: &Env, harness: &str, account: &str, cwd: &str) -> Result<Value> {
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+        time::{Duration, Instant},
+    };
+    type Cache = HashMap<(String, String, String), (Instant, Value)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    const FRESH: Duration = Duration::from_secs(300);
+    let key = (harness.to_owned(), account.to_owned(), cwd.to_owned());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((at, value)) = cache.lock().map_err(|_| Error::Other)?.get(&key)
+        && at.elapsed() < FRESH
+    {
+        return Ok(value.clone());
+    }
+    let value = launch::inventory(&env.registry, harness, account, Path::new(cwd), &paths(env))?;
+    let mut cache = cache.lock().map_err(|_| Error::Other)?;
+    cache.retain(|_, (at, _)| at.elapsed() < FRESH);
+    cache.insert(key, (Instant::now(), value.clone()));
+    Ok(value)
+}
+/// The Claude conversation running in tmux pane `pane` (`%N`) for `account`: Claude
+/// records `"tmux": "session:@window.%N"` in `<config>/sessions/<pid>.json`. Returns
+/// its id and transcript.
+fn claude_session(env: &Env, account: &str, pane: &str) -> Option<(String, PathBuf)> {
+    let config = if account == "main" {
+        env.home.join(".claude")
+    } else {
+        let root = env.registry["harnesses"]["claude"]["accountsRoot"]
+            .as_str()
+            .filter(|r| !r.is_empty())
+            .unwrap_or("~/.claude-accounts");
+        let root = match root.strip_prefix("~/") {
+            Some(rest) => env.home.join(rest),
+            None => PathBuf::from(root),
+        };
+        root.join(account)
+    };
+    let suffix = format!(".{pane}");
+    let mut best: Option<(u64, String, String)> = None;
+    for entry in std::fs::read_dir(config.join("sessions")).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(&path) else { continue };
+        let Ok(row) = serde_json::from_slice::<Value>(&raw) else { continue };
+        let alive = row["pid"].as_u64().is_some_and(|pid| env.proc_root.join(pid.to_string()).exists());
+        if !alive || !text(&row["tmux"]).ends_with(&suffix) {
+            continue;
+        }
+        let updated = row["updatedAt"].as_u64().unwrap_or(0);
+        if best.as_ref().is_none_or(|(at, _, _)| updated > *at) {
+            best = Some((updated, text(&row["sessionId"]).to_owned(), text(&row["cwd"]).to_owned()));
+        }
+    }
+    let (_, id, cwd) = best?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let slug: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let file = format!("{id}.jsonl");
+    let direct = config.join("projects").join(slug).join(&file);
+    if direct.is_file() {
+        return Some((id, direct));
+    }
+    std::fs::read_dir(config.join("projects"))
+        .ok()?
+        .flatten()
+        .map(|d| d.path().join(&file))
+        .find(|p| p.is_file())
+        .map(|p| (id, p))
+}
+/// Counts for the chip from the inventory, the pane's selection and the usage scan.
+pub fn summary_body(
+    account: &str,
+    inventory: &Value,
+    desired: &Value,
+    usage: &Value,
+    failed: &[(String, String)],
+) -> Value {
+    let rows = |kind: &str| inventory[kind].as_array().cloned().unwrap_or_default();
+    let selected = |kind: &str, row: &Value| {
+        desired[kind][text(&row["id"])]
+            .as_bool()
+            .unwrap_or_else(|| row["enabled"].as_bool().unwrap_or(false))
+    };
+    let calls = |kind: &str, row: &Value| {
+        let counts = &usage["counts"][kind];
+        counts[text(&row["id"])]
+            .as_u64()
+            .or_else(|| counts[text(&row["name"])].as_u64())
+            .unwrap_or(0)
+    };
+    let used = |kind: &str| {
+        let mut list: Vec<(String, u64)> = rows(kind)
+            .iter()
+            .filter(|r| selected(kind, r))
+            .map(|r| (text(&r["name"]).to_owned(), calls(kind, r)))
+            .collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        list
+    };
+    let mcps = used("mcps");
+    let down: Vec<&(String, String)> = failed
+        .iter()
+        .filter(|(name, _)| mcps.iter().any(|(n, _)| n == name))
+        .collect();
+    let up: Vec<Value> = mcps
+        .iter()
+        .filter(|(n, _)| !down.iter().any(|(d, _)| d == n))
+        .map(|(n, c)| json!({"name": n, "calls": c}))
+        .collect();
+    let skills = used("skills");
+    let tokens: u64 = rows("skills")
+        .iter()
+        .filter(|r| selected("skills", r))
+        .filter_map(|r| r["size"]["tokens"].as_u64())
+        .sum();
+    // Every active skill with its size, heaviest first: the list's full breakdown.
+    let mut by_size: Vec<(String, u64)> = rows("skills")
+        .iter()
+        .filter(|r| selected("skills", r))
+        .map(|r| (text(&r["name"]).to_owned(), r["size"]["tokens"].as_u64().unwrap_or(0)))
+        .collect();
+    by_size.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let sizes: Vec<Value> = by_size.iter().map(|(n, t)| json!({"name": n, "tokens": t})).collect();
+    json!({
+        "ok": true,
+        "account": account,
+        "mcps": {
+            "on": up.len(),
+            "total": mcps.len(),
+            "up": up,
+            "down": down.iter().map(|(n, why)| json!({"name": n, "why": why})).collect::<Vec<_>>(),
+        },
+        "skills": {
+            "on": skills.len(),
+            "tokens": tokens,
+            "used": skills.iter().filter(|(_, c)| *c > 0).map(|(n, c)| json!({"name": n, "calls": c})).collect::<Vec<_>>(),
+            "list": sizes,
+        },
+        "complete": usage["complete"],
+    })
+}
+/// The MCPs Claude Code last reported as not connected, from the transcript's tail.
+fn failed_mcps(path: &Path) -> Vec<(String, String)> {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 4 << 20;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let len = file.metadata().map_or(0, |m| m.len());
+    let mut buf = Vec::new();
+    if file.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err()
+        || file.take(TAIL).read_to_end(&mut buf).is_err()
+    {
+        return Vec::new();
+    }
+    parse_failed_mcps(&String::from_utf8_lossy(&buf))
+}
+/// Reads the last "configured but failed to connect" notice: one server per line,
+/// `name` or `name (CODE): detail`. In the transcript the lines are JSON-escaped.
+pub fn parse_failed_mcps(text: &str) -> Vec<(String, String)> {
+    const MARK: &str = "configured but failed to connect";
+    let Some(at) = text.rfind(MARK) else {
+        return Vec::new();
+    };
+    let rest = text[at..].replace("\\n", "\n");
+    let block = rest.split("\n\n").next().unwrap_or("");
+    block
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let name = line.split(" (").next()?.trim().trim_end_matches(':');
+            let plain = |c: char| c.is_ascii_alphanumeric() || "-_.@:".contains(c);
+            if name.is_empty() || name.len() > 120 || !name.chars().all(plain) {
+                return None;
+            }
+            let why = if line.contains("TIMEOUT") || line.contains("timed out") {
+                "sin respuesta"
+            } else {
+                "no conectó"
+            };
+            Some((name.to_owned(), why.to_owned()))
+        })
+        .collect()
+}
 fn guards(data: &Value, target: &Target) -> Result<()> {
     if data["expectedIdentity"] != sc::identity_key(&target.identity)
         || data.get("expectedConversationId").is_none()
@@ -681,12 +919,16 @@ pub async fn answer(native: &Arc<Native>, route: OpsRoute, request: &Request) ->
     let (action, data) = match route {
         OpsRoute::ExtensionsGet => {
             let q = Query::parse(&request.target)?;
-            let data = Value::Object(
+            let mut data = Value::Object(
                 ["session", "pane", "harness"]
                     .into_iter()
                     .filter_map(|k| q.all(k).last().map(|v| (k.into(), json!(v))))
                     .collect(),
             );
+            if q.all("summary").last().is_some_and(|v| *v == "1") {
+                data["summary"] = true.into();
+                data["account"] = json!(q.all("account").last().copied().unwrap_or_default());
+            }
             (None, data)
         }
         OpsRoute::ExtensionsWrite(action) => {
@@ -753,6 +995,10 @@ pub async fn answer(native: &Arc<Native>, route: OpsRoute, request: &Request) ->
                 Err(fault) => return Err(fault),
             };
             match action {
+                None if truthy(&data["summary"]) => match summary(&native, env, data).await {
+                    Ok(body) => reply(StatusCode::OK, &body),
+                    Err(e) => respond_error(e, true),
+                },
                 None => match state(&native, env, data).await {
                     Ok(body) => reply(StatusCode::OK, &body),
                     Err(e) => respond_error(e, true),
@@ -765,4 +1011,35 @@ pub async fn answer(native: &Arc<Native>, route: OpsRoute, request: &Request) ->
         })
         .map_err(|_| failure())?;
     job.await.map_err(|_| failure())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn chip_summary_counts_and_failures() {
+        let text = r#"x","text":"The following MCP servers are configured but failed to connect — their tools are unavailable for this session:\nchrome-bg\nglitchtip (CONNECT_TIMEOUT): \"timed out after 30000ms\"\n\nTreat this as a connection failure"#;
+        let failed = parse_failed_mcps(text);
+        assert_eq!(
+            failed,
+            vec![
+                ("chrome-bg".into(), "no conectó".into()),
+                ("glitchtip".into(), "sin respuesta".into())
+            ]
+        );
+        let row = |id: &str, tokens: Value| json!({"id": id, "name": id, "enabled": true, "size": {"tokens": tokens}});
+        let inventory = json!({
+            "mcps": [row("clickup", Value::Null), row("glitchtip", Value::Null), row("odoo", Value::Null)],
+            "skills": [row("tdd", json!(1200)), row("grill", json!(800))],
+        });
+        let desired = json!({"mcps": {"odoo": false}, "skills": {}});
+        let usage = json!({"counts": {"mcps": {"clickup": 11}, "skills": {"tdd": 2}}, "complete": false});
+        let body = summary_body("main", &inventory, &desired, &usage, &failed);
+        assert_eq!(body["mcps"]["on"], 1);
+        assert_eq!(body["mcps"]["total"], 2);
+        assert_eq!(body["mcps"]["up"][0], json!({"name": "clickup", "calls": 11}));
+        assert_eq!(body["mcps"]["down"], json!([{"name": "glitchtip", "why": "sin respuesta"}]));
+        assert_eq!(body["skills"]["tokens"], 2000);
+        assert_eq!(body["skills"]["used"], json!([{"name": "tdd", "calls": 2}]));
+    }
 }

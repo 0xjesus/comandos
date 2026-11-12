@@ -18,7 +18,7 @@
        la app (browser mobile) puede hacer falta — si algún día se necesita,
        reponer este div. -->
   <!-- Cabecera «Ordenada» (H1, grill 29-sep): fila 1 = ☰, contadores, Terminal,
-       Nueva sesión | búsqueda … Servidores, Resúmenes, campana, Pomodoro, Ajustes,
+       Nueva sesión | búsqueda … Servidores, Resúmenes, Ajustes,
        reloj. La fila 2 son las pestañas (#app-navigation). -->
   <button class="hdr-btn" id="btn-menu" aria-label="Más" title="Más" aria-haspopup="dialog" aria-expanded="false" aria-controls="menu-panel"><span data-icon="menu" data-size="17"></span><span class="hdr-lbl">Más</span></button>
   <div class="counts">
@@ -31,16 +31,10 @@
   <div class="hdr-right">
 	    <button class="hdr-btn" id="btn-switch" aria-label="switch" title="Saltar a cualquier sesión (Ctrl+K)"><span data-icon="search" data-size="16"></span><span class="hdr-lbl">Buscar</span></button>
 	    <button class="hdr-btn" id="btn-snippets" aria-label="snippets" title="Snippets (Ctrl+Shift+K)"><span data-icon="snippet" data-size="16"></span><span class="hdr-lbl">Snippets</span></button>
-	    <button class="hdr-btn" id="btn-usage" aria-label="Analytics" title="Analytics de harnesses, motores y foco"><span data-icon="database" data-size="17"></span><span class="hdr-lbl">Analytics</span></button>
 	    <button class="hdr-btn" id="btn-remote" aria-label="Remoto" title="Remoto — continuar desde celular/tablet"><span data-icon="smartphone" data-size="17"></span><span class="hdr-lbl">Remoto</span></button>
 	    <button class="hdr-btn" id="btn-servers" aria-label="Servidores" title="Servidores" aria-expanded="false" aria-controls="servers-panel"><span data-icon="server" data-size="17"></span><span class="hdr-lbl">Servidores</span></button>
     <div class="hdr-primary">
 	    <button class="hdr-btn" id="btn-news" aria-label="Resúmenes" title="Resúmenes — tres al día, con fuentes y la IA que los escribió"><span data-icon="sparkles" data-size="16"></span></button>
-	    <button class="hdr-btn" id="btn-notif" aria-label="Notificaciones" title="Notificaciones — todo local: avisos, pomodoros y cola de foco"><span data-icon="bell" data-size="16"></span><b class="nbadge hidden" id="notif-badge">0</b></button>
-	    <div id="notif-panel" class="hidden" role="dialog" aria-label="Notificaciones"></div>
-	    <button class="hdr-btn" id="btn-pomo" role="timer" aria-label="Pomodoro"
-	      title="Pomodoro compartido entre dispositivos"><span data-icon="timer" data-size="16"></span><span class="pomo-mini"></span></button>
-	    <div id="pomo-panel" class="hidden" role="dialog" aria-label="Pomodoro"></div>
 	    <button class="hdr-btn" id="btn-settings" aria-label="Ajustes" title="Ajustes"><span data-icon="settings" data-size="17"></span><span class="hdr-lbl">Ajustes</span></button>
     </div>
     <span id="clock">--:--</span>
@@ -48,7 +42,7 @@
 </header>
 
 <!-- ☰ Más: controles que salieron de la cabecera, con sus ids y handlers de
-     siempre. Vive en <body> (initHeaderPopovers) como #notif-panel. -->
+     siempre. Vive en <body> (initHeaderPopovers). -->
 <div id="menu-panel" class="hidden" role="dialog" aria-label="Más">
   <div class="mp-row"><button class="hdr-btn" id="btn-theme" aria-label="Apariencia" title="Elegir apariencia"></button><label for="btn-theme">Apariencia</label></div>
   <div class="mp-row"><button class="hdr-btn" id="btn-sov" aria-label="Soberanía" title="Soberanía — qué se guarda en tu máquina y qué sale de ella"><span data-icon="lock" data-size="16"></span></button><label for="btn-sov">Soberanía</label></div>
@@ -178,7 +172,6 @@
     <div class="set"><div class="desc">UN solo volumen para todo ComandOS. Estos botones suenan
       EXACTAMENTE igual que las notificaciones reales (mismo reproductor y volumen) — si algo
       suena distinto a esto, NO viene de ComandOS.</div></div>
-    <div class="set" id="notice-settings"><label>Avisos de proyectos</label><div class="desc">Cargando preferencias…</div></div>
     <div class="set" id="push-settings"><label>Avisos en este dispositivo (push)</label>
       <div class="desc" id="push-status" aria-live="polite">Comprobando…</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -296,8 +289,6 @@
  </div>
 </div>
 
-<div id="usage" class="modal" aria-label="Analytics" role="dialog" aria-modal="true">
- <div class="an" id="an-root"></div>
 </div>
 
 <div id="tabclose" class="modal" role="dialog" aria-modal="true" aria-label="Cerrar pestaña">

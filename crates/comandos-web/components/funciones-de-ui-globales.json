@@ -10,10 +10,6 @@
     "opFavorite",
     "setPollSeconds",
     "setBrowserNotifications",
-    "nfDismiss",
-    "nfPin",
-    "nfUnpin",
-    "nfSnooze",
     "closeAllPanels",
     "swOpenWith",
     "nsOpenPrefilled"

@@ -191,8 +191,12 @@ impl GtkWorkspace {
             *focus.borrow_mut() = Some(focus_key.clone());
             glib::Propagation::Proceed
         });
-        self.pages.borrow_mut().insert(key, widget.clone());
-        self.nodes.borrow_mut().clear();
+        let replaced = self.pages.borrow_mut().insert(key, widget.clone());
+        // A new key changes its group's signature by itself; only a replaced
+        // widget can still sit inside a cached node.
+        if replaced.is_some_and(|old| &old != widget) {
+            self.nodes.borrow_mut().clear();
+        }
     }
     /// Child terminals inside an overlay report focus to this existing workspace owner.
     pub fn note_focus(&self, key: &str) {
@@ -208,13 +212,14 @@ impl GtkWorkspace {
     }
     pub fn remove_tab(&self, key: &str) {
         self.applying.set(true);
-        if let Some(widget) = self.pages.borrow_mut().remove(key) {
-            detach(&widget);
-        }
-        self.nodes.borrow_mut().clear();
+        let removed = self.pages.borrow_mut().remove(key);
+        // The other groups keep their cached nodes, so only this tab's page changes.
         let doc = self.document.borrow().clone();
         *self.document.borrow_mut() = Value::Null;
         self.apply(&doc);
+        if let Some(widget) = removed {
+            detach(&widget);
+        }
         self.applying.set(false);
     }
     pub fn apply(&self, doc: &Value) {
@@ -256,12 +261,14 @@ impl GtkWorkspace {
             })
         };
         let same_shapes = group_shapes(doc) == group_shapes(&self.document.borrow());
-        if !same_shapes {
-            for child in self.root.children() {
-                self.root.remove(&child);
-            }
-        }
+        let root: gtk::Widget = self.root.clone().upcast();
+        let shown = self
+            .root
+            .current_page()
+            .and_then(|index| self.root.nth_page(Some(index)))
+            .and_then(|page| self.group_of_page(&page));
         self.group_pages.borrow_mut().clear();
+        let mut wanted: Vec<(gtk::Widget, String)> = Vec::new();
         if let Some(groups) = doc["groups"].as_array() {
             for group in groups {
                 let group_id = group["id"].as_str().unwrap_or("group");
@@ -274,11 +281,7 @@ impl GtkWorkspace {
                 self.group_pages
                     .borrow_mut()
                     .push((group_id.into(), node.clone()));
-                if !same_shapes || self.root.page_num(&node).is_none() {
-                    detach(&node);
-                    self.root
-                        .append_page(&node, Some(&gtk::Label::new(Some(group_id))));
-                }
+                wanted.push((node, group_id.into()));
             }
         }
         let documented = doc
@@ -288,17 +291,59 @@ impl GtkWorkspace {
             .flatten()
             .flat_map(|g| comandos_core::workspace::tab_ids(&g["tree"]).unwrap_or_default())
             .collect::<std::collections::BTreeSet<_>>();
-        for (key, widget) in self.pages.borrow().iter() {
-            if !documented.contains(key) && self.root.page_num(widget).is_none() {
+        let mut loose = self
+            .pages
+            .borrow()
+            .iter()
+            .filter(|(key, _)| !documented.contains(*key))
+            .map(|(key, widget)| (self.root.page_num(widget), key.clone(), widget.clone()))
+            .collect::<Vec<_>>();
+        loose.sort_by_key(|(index, key, _)| (index.is_none(), *index, key.clone()));
+        wanted.extend(loose.into_iter().map(|(_, key, widget)| (widget, key)));
+        // Pages change one by one. Emptying the notebook made each following
+        // page the current one in turn: every terminal was mapped and reread.
+        for (widget, label) in &wanted {
+            if widget.parent().as_ref() != Some(&root) {
                 detach(widget);
                 self.root
-                    .append_page(widget, Some(&gtk::Label::new(Some(key))));
+                    .append_page(widget, Some(&gtk::Label::new(Some(label))));
+            }
+        }
+        self.root.show_all();
+        if let Some(index) = shown
+            .and_then(|id| {
+                self.group_pages
+                    .borrow()
+                    .iter()
+                    .find(|(group, _)| *group == id)
+                    .map(|(_, node)| node.clone())
+            })
+            .and_then(|node| self.root.page_num(&node))
+            && self.root.current_page() != Some(index)
+        {
+            self.root.set_current_page(Some(index));
+        }
+        for child in self.root.children() {
+            if !wanted.iter().any(|(widget, _)| *widget == child) {
+                self.root.remove(&child);
+            }
+        }
+        for (index, (widget, _)) in wanted.iter().enumerate() {
+            if self.root.page_num(widget) != Some(index as u32) {
+                self.root.reorder_child(widget, Some(index as u32));
             }
         }
         *self.document.borrow_mut() = doc.clone();
-        self.root.show_all();
         self.applying.set(false);
         self.restore_focus_after_apply(doc, same_shapes);
+    }
+    fn shown_index(&self) -> Option<u32> {
+        self.root.current_page()
+    }
+    /// A terminal of the page on screen.
+    fn shown_key(&self) -> Option<String> {
+        let page = self.root.nth_page(Some(self.shown_index()?))?;
+        self.page_key(&page)
     }
     fn restore_focus_after_apply(&self, doc: &Value, same_shapes: bool) {
         let previous = self.focused();
@@ -311,20 +356,25 @@ impl GtkWorkspace {
         {
             return;
         }
-        if previous.as_deref().is_none_or(|key| !self.select(key)) {
-            *self.focus.borrow_mut() = None;
-            let first = doc
-                .get("groups")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .flat_map(|group| {
-                    comandos_core::workspace::tab_ids(&group["tree"]).unwrap_or_default()
-                })
-                .find(|key| self.pages.borrow().contains_key(key));
-            if let Some(first) = first {
-                self.select(&first);
-            }
+        // The page on screen wins: focus remembered on another page must not
+        // move the view when some other tab was the one that changed.
+        let current = self.shown_index();
+        let target = previous
+            .filter(|key| current.is_some() && self.page_index(key) == current)
+            .or_else(|| self.shown_key())
+            .or_else(|| {
+                doc.get("groups")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|group| {
+                        comandos_core::workspace::tab_ids(&group["tree"]).unwrap_or_default()
+                    })
+                    .find(|key| self.pages.borrow().contains_key(key))
+            });
+        *self.focus.borrow_mut() = None;
+        if let Some(target) = target {
+            self.select(&target);
         }
     }
     pub fn select(&self, key: &str) -> bool {
@@ -374,7 +424,8 @@ impl GtkWorkspace {
     }
     fn build_node(&self, group: &str, node: &Value, path: Vec<usize>) -> gtk::Widget {
         let cache_key = format!("{group}:{path:?}:{}", signature(node));
-        if let Some(widget) = self.nodes.borrow().get(&cache_key).cloned() {
+        let cached = self.nodes.borrow().get(&cache_key).cloned();
+        if let Some(widget) = cached {
             if let Some(paned) = widget.downcast_ref::<gtk::Paned>() {
                 if let Some(state) = self.ratios.borrow().get(&cache_key) {
                     state
@@ -415,10 +466,14 @@ impl GtkWorkspace {
                     .get(key)
                     .cloned()
                     .unwrap_or_else(|| gtk::Label::new(Some(key)).upcast());
-                detach(&widget);
                 if path.is_empty() {
+                    // Already a page of the notebook: taking it out would show its neighbour.
+                    if widget.parent().as_ref() != Some(self.root.upcast_ref::<gtk::Widget>()) {
+                        detach(&widget);
+                    }
                     widget
                 } else {
+                    detach(&widget);
                     let leaf = gtk::Box::new(gtk::Orientation::Vertical, 0);
                     leaf.style_context().add_class("ws-leaf");
                     if let Some(header) = self.header.borrow().as_ref() {

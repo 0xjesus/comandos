@@ -4,6 +4,7 @@ use glib::{IOCondition,SourceId};
 use serde_json::{json,Value};
 use comandos_app::config::RunMode;
 use comandos_app::term::shadow::ShadowFrame;
+use comandos_app::term::control;
 thread_local! {static EPOCH:std::time::Instant=std::time::Instant::now();static NOW:Cell<u64>=const{Cell::new(0)};static EFFECTS:Cell<usize>=const{Cell::new(0)};}
 fn effect(){EFFECTS.with(|n|n.set(n.get()+1));}
 mod shadow {
@@ -22,6 +23,7 @@ fn clock(ms:u64) {NOW.with(|now|now.set(ms));}
 struct Area {mapped:Cell<bool>,draws:Cell<usize>}
 impl Area {fn is_mapped(&self)->bool {self.mapped.get()}fn queue_draw(&self){self.draws.set(self.draws.get()+1)}fn set_tooltip_text(&self,_:Option<&str>){}}
 struct Pty {bytes:Option<Vec<u8>>}
+impl Pty {fn write(&mut self,_:&[u8])->Result<(),PtyError>{Ok(())}}
 #[derive(Default)]
 struct Drain;
 impl Drain {
@@ -35,11 +37,12 @@ mod ui {pub mod clipboard {pub enum Target {Primary,Clipboard}}}
 use comandos_app::term::engine::ClipboardTarget;
 struct Options {mode:RunMode,on_title:Option<fn(&str)>,on_bell:Option<fn()>,on_exit:Option<fn(i32)>,on_ssh_scroll:Option<fn(&str,i32,u16,u16)>,session:Option<String>}
 struct Geom {cell_w:f64,cell_h:f64}
-struct Model {engine:TermEngine,pty:Option<Pty>,shadow:Option<shadow::ShadowReader>,shadow_frame:Option<ShadowFrame>,shadow_at:u64,selection:Option<()>,hovered_link:Option<()>,last_motion:Option<()>,geom:Geom,drain:Drain,respawn:RespawnPolicy,respawn_at:Option<u64>,settle:Settle,schedule:PaintSchedule,preferences:Value,blink_visible:bool,ssh_at:Option<u64>,ssh_delta:f64,ssh_point:(u16,u16)}
-struct Inner {model:RefCell<Model>,area:Area,read_source:RefCell<Option<SourceId>>,write_source:RefCell<Option<SourceId>>,options:Options,clipboard:Clipboard}
+struct Model {engine:TermEngine,pty:Option<Pty>,shadow:Option<shadow::ShadowReader>,shadow_frame:Option<ShadowFrame>,shadow_at:u64,selection:Option<()>,hovered_link:Option<()>,last_motion:Option<()>,geom:Geom,drain:Drain,respawn:RespawnPolicy,respawn_at:Option<u64>,settle:Settle,schedule:PaintSchedule,preferences:Value,blink_visible:bool,ssh_at:Option<u64>,ssh_delta:f64,ssh_point:(u16,u16),key_at:Option<std::time::Instant>,output_at:Option<std::time::Instant>,output_ms:u64,control:Option<control::Session>}
+struct Inner {model:RefCell<Model>,area:Area,read_source:RefCell<Option<SourceId>>,write_source:RefCell<Option<SourceId>>,options:Options,clipboard:Clipboard,classic:Cell<bool>}
 impl Inner {
- fn ms(&self)->u64 {NOW.with(Cell::get)}fn arm(&self){}fn resize_when_quiet(&self,_now:u64){}fn send_event(&self,_bytes:&[u8]){effect();}fn spawn(&self)->Result<(),PtyError>{panic!("fixture must never spawn")}
+ fn ms(&self)->u64 {NOW.with(Cell::get)}fn arm(&self){}fn redraw(&self){self.area.queue_draw()}fn request_frame(&self){self.area.queue_draw()}fn release_hold(&self,_now:u64){}fn fill_arrived(&self){}fn resize_when_quiet(&self,_now:u64){}fn fetch_history(&self,_now:u64){}fn send_event(&self,_bytes:&[u8]){effect();}fn watch_write(&self){}fn spawn(&self)->Result<(),PtyError>{panic!("fixture must never spawn")}
 }
+mod lag {pub const SLOW_ECHO_MS:f64=60.;pub fn ms(_:std::time::Instant)->f64{0.}pub fn note(_:&str){}}
 mod actual {use super::*;impl Inner {
  // ACTUAL_METHODS
 }
@@ -51,7 +54,7 @@ fn make_mode(blink:bool,focused:bool,clear:bool,mode:RunMode)->Rc<Inner> {
  clock(0);let epoch=Instant::now();let palette=Palette::xterm_default([240;3],[0;3],[200;3],[0;3],[240;3]);let mut engine=TermEngine::new(40,12,10,palette,false,epoch);
  if clear {let mut lines=Vec::new();engine.take_dirty(&mut lines);}
  let mut schedule=PaintSchedule::default();schedule.set_focused(focused,0);schedule.painted(0);
- Rc::new(Inner{model:RefCell::new(Model{engine,pty:if mode==RunMode::Shadow{None}else{Some(Pty{bytes:None})},shadow:if mode==RunMode::Shadow{Some(shadow::ShadowReader::default())}else{None},shadow_frame:None,shadow_at:0,selection:None,hovered_link:None,last_motion:None,geom:Geom{cell_w:8.,cell_h:16.},drain:Drain,respawn:RespawnPolicy::default(),respawn_at:None,settle:Settle::new(100,1000,0),schedule,preferences:json!({"cursor_blink":blink}),blink_visible:true,ssh_at:None,ssh_delta:0.,ssh_point:(0,0)}),area:Area{mapped:Cell::new(true),draws:Cell::new(0)},read_source:RefCell::new(None),write_source:RefCell::new(None),options:Options{mode,on_title:Some(|_|effect()),on_bell:Some(effect),on_exit:Some(|_|effect()),on_ssh_scroll:Some(|_,_,_,_|effect()),session:None},clipboard:Clipboard})
+ Rc::new(Inner{model:RefCell::new(Model{engine,pty:if mode==RunMode::Shadow{None}else{Some(Pty{bytes:None})},shadow:if mode==RunMode::Shadow{Some(shadow::ShadowReader::default())}else{None},shadow_frame:None,shadow_at:0,selection:None,hovered_link:None,last_motion:None,geom:Geom{cell_w:8.,cell_h:16.},drain:Drain,respawn:RespawnPolicy::default(),respawn_at:None,settle:Settle::new(100,1000,0),schedule,preferences:json!({"cursor_blink":blink}),blink_visible:true,ssh_at:None,ssh_delta:0.,ssh_point:(0,0),key_at:None,output_at:None,output_ms:0,control:None}),area:Area{mapped:Cell::new(true),draws:Cell::new(0)},read_source:RefCell::new(None),write_source:RefCell::new(None),options:Options{mode,on_title:Some(|_|effect()),on_bell:Some(effect),on_exit:Some(|_|effect()),on_ssh_scroll:Some(|_,_,_,_|effect()),session:None},clipboard:Clipboard,classic:Cell::new(false)})
 }
 fn captured()->ShadowFrame {ShadowFrame{cols:40,rows:12,bytes:b"\x1b[2J\x1b[Hsnapshot\x1b[6n\x1b]2;ignored title\x07\x07\x1b]52;c;c2VjcmV0\x07".to_vec()}}
 fn deliver(inner:&Rc<Inner>,frame:ShadowFrame){inner.model.borrow_mut().shadow.as_mut().unwrap().frames.push_back(Ok(frame));}

@@ -41,16 +41,21 @@ impl App {
                         "tab-cycle-next" => "chevron-right",
                         "tabs-layout-rows" => "rows",
                         "left-panel-toggle" => "panel-left",
+                        "noise-toggle" if self.focus.noise_hidden.get() => "eye-off",
+                        "noise-toggle" => "eye",
                         other => other,
                     };
                     let pixels = if name.starts_with("chevron-") {
                         20
-                    } else if matches!(name, "rows" | "panel-left") {
+                    } else if matches!(name, "rows" | "panel-left" | "columns" | "eye" | "eye-off") {
                         18
                     } else {
                         16
                     };
-                    let color = if name == "rows" && self.tab_layout.rows() {
+                    let color = if (name == "rows" && self.tab_layout.rows())
+                        || (name == "columns" && self.focus.enabled.get())
+                        || name == "eye-off"
+                    {
                         theme
                             .values
                             .get("brand")
@@ -239,13 +244,39 @@ impl App {
                 a.writable()
                     && a.pane_initialized.get()
                     && !a.t18.state.borrow().left_hidden
-                    && a.t18.side.is_visible()
+                    && a.t18.left.is_visible()
                     && !a.t18.mosaic.borrow().on
             }) {
                 app.pane_saved.set(Some(paned.position()));
                 app.queue_ui_save("app-pane-position.json", 250);
             }
         });
+        let weak = Rc::downgrade(self);
+        self.window.connect_window_state_event(move |_, event| {
+            if event.changed_mask().contains(gdk::WindowState::MAXIMIZED)
+                && let Some(app) = weak.upgrade().filter(|a| a.pane_initialized.get())
+            {
+                app.queue_ui_save("app-pane-position.json", 250);
+            }
+            glib::Propagation::Proceed
+        });
+    }
+    /// The pane document as it should be saved now: the left panel width and
+    /// whether the window is maximized, over whatever else `old` holds.
+    pub(super) fn pane_document(&self, old: &Value) -> Value {
+        let mut doc = if old.is_object() {
+            old.clone()
+        } else {
+            json!({})
+        };
+        if let Some(map) = doc.as_object_mut() {
+            map.insert(
+                "position".into(),
+                json!(self.pane_saved.get().unwrap_or(self.paned.position())),
+            );
+            map.insert("maximized".into(), json!(self.window.is_maximized()));
+        }
+        doc
     }
     fn initialize_pane(&self, width: i32) {
         if self.pane_initialized.get() || self.pane_saved.get().is_none() {

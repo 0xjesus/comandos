@@ -1006,7 +1006,6 @@ pub fn native_page_files(workspace: &Path) -> Result<Vec<NamedFile>, String> {
     let roots = [
         "/workspace.css",
         "/buttons.css",
-        "/analytics.css",
         "/manifest.webmanifest",
         "/icon-192.png",
         "/icon-512.png",
@@ -1018,23 +1017,6 @@ pub fn native_page_files(workspace: &Path) -> Result<Vec<NamedFile>, String> {
         .into_iter()
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-    // These images are chosen at runtime rather than referenced by a CSS URL.
-    // A standalone page must ship every original style, not just its default.
-    let catalog = comandos_web_view::pomodoro::catalog();
-    let styles = catalog["STYLES"]
-        .as_object()
-        .ok_or("pomodoro styles missing")?;
-    for style in styles.values() {
-        let sprites = style["assets"]
-            .as_object()
-            .ok_or("pomodoro assets missing")?;
-        for sprite in sprites.values() {
-            let file = sprite["file"]
-                .as_str()
-                .ok_or("pomodoro sprite path missing")?;
-            pending.insert(format!("/assets/pomodoro/{file}"));
-        }
-    }
     while let Some(url) = pending.pop_first() {
         if source.contains_key(&url) {
             continue;

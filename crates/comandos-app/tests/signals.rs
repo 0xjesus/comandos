@@ -40,11 +40,7 @@ fn private_signal_helper() {
     let baseline = count();
     for _ in 0..20 {
         let mut relay = SignalRelay::new().unwrap();
-        for action in [
-            Action::Mosaic,
-            Action::NoticesDebug,
-            Action::JavascriptDebug,
-        ] {
+        for action in [Action::Mosaic, Action::JavascriptDebug] {
             assert_ne!(action.signal(), nix::libc::SIGUSR1);
             signal_hook::low_level::raise(action.signal()).unwrap();
             let mut received = vec![];

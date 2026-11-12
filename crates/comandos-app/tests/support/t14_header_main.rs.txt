@@ -4,7 +4,6 @@ pub fn verify()->Vec<serde_json::Value>{
  assert_eq!(header.controls.iter().map(|(_,n)|*n).collect::<Vec<_>>(),vec!["close","maximize","minimize"]);
  header.controls[1].0.click();header.controls[1].0.click();header.controls[2].0.click();header.controls[0].0.click();assert_eq!(*window.0.events.borrow(),vec!["maximize","unmaximize","iconify","close"]);assert!(other.0.events.borrow().is_empty());
  for (button,name) in &header.controls {let classes=button.0.2.context.0.borrow();assert!(classes.iter().any(|c|c=="cc-winctl"));assert_eq!(classes.iter().any(|c|c=="cc-close-btn"),*name=="close");}
- for count in [1,0,123,0]{header.set_badge(count);assert_eq!(header.badge.0.1.get(),count>0);if count>0{assert_eq!(header.badge.0.0.borrow().as_str(),count.to_string());}}
  let themes=comandos_app::theme::themes_from_file(None);
  for name in ["noche","dia","calido","termius","bruno","superglass","neon","contraste","ubuntu"]{let theme=comandos_app::theme::desktop_theme(name,&themes).unwrap();header.paint(&theme);let brand=theme.values.get("brand").unwrap().as_str().unwrap();assert!(header.brand.0.0.borrow().contains(brand));for (b,_) in &header.controls{assert_eq!(b.0.2.image.borrow().as_ref().unwrap().pb.as_ref().unwrap().width(),16);}}
  for name in ["noche","dia","calido","termius","bruno","superglass","neon","contraste","ubuntu"]{

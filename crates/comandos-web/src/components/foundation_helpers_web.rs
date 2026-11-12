@@ -110,12 +110,6 @@ pub async fn api(path: &str, body: Option<Value>) -> Result<JsValue, JsValue> {
     }
     wait(invoke(&global("api"), &args)).await
 }
-pub fn fire_api(path: &str, body: Value) {
-    let path = path.to_string();
-    wasm_bindgen_futures::spawn_local(async move {
-        let _ = api(&path, Some(body)).await;
-    });
-}
 pub fn err(e: JsValue) -> String {
     let m = get(&e, "message");
     if truthy(&m) {
@@ -497,16 +491,6 @@ fn limits(state: &Value) {
     }
     html(&strip, pills.join(""));
     classes(&strip, "hidden", pills.is_empty());
-    for p in all(&strip, ".pill") {
-        listen(
-            &p,
-            "click",
-            event(|_| {
-                call(&id("btn-usage"), "click", &[])?;
-                Ok(())
-            }),
-        );
-    }
 }
 fn limit_class(n: f64) -> &'static str {
     if n >= 90.0 {
@@ -712,7 +696,6 @@ pub fn mount() -> Result<(), JsValue> {
         ("PROVIDERS", Value::Null),
         ("MODEL_NEWS", Value::Null),
         ("ACTIVE_TAB", json!({"session":"","ts":0})),
-        ("NF_CACHE", json!({"evs":[],"queue":[]})),
         (
             "MODEL_CHOICES",
             serde_json::from_str(include_str!("foundation_helpers_models.json"))

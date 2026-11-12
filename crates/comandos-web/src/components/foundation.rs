@@ -141,7 +141,7 @@ mod web {
         }
         for el in all(
             &doc(),
-            "#settings label, #settings h3, #settings .desc, #settings .test, #servers label, #servers h3, #servers .desc, #servers .test, #srv-cancel, #remote label, #remote h3, #remote .desc, #remote .test, #remote-no-qr, .sec-label, #ssh-bar .lbl, #ssh-manage, #btn-usage, #btn-remote, #btn-settings, .pill span",
+            "#settings label, #settings h3, #settings .desc, #settings .test, #servers label, #servers h3, #servers .desc, #servers .test, #srv-cancel, #remote label, #remote h3, #remote .desc, #remote .test, #remote-no-qr, .sec-label, #ssh-bar .lbl, #ssh-manage, #btn-remote, #btn-settings, .pill span",
         ) {
             let key = string(&get(&el, "textContent"));
             let val = get(&global("T_EN"), key.trim());
@@ -242,7 +242,7 @@ mod web {
     }
     // Starts fetch synchronously, matching async JS's execution before its first await.
     fn api(path: JsValue, body: JsValue) -> Result<JsValue, JsValue> {
-        let state_poll = path.as_string().as_deref() == Some("/state");
+        let state_poll = path.as_string().is_some_and(|p| p == "/state" || p.starts_with("/state?"));
         let token = auth_token();
         let headers = object();
         if truthy(&token) {

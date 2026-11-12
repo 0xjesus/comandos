@@ -1,5 +1,5 @@
-use comandos_web::components::{pomodoro as p, work_marks as m};
-use comandos_web_view::{pomodoro as art, work_marks as view};
+use comandos_web::components::work_marks as m;
+use comandos_web_view::work_marks as view;
 use serde_json::json;
 #[test]
 fn human_mark_wins_and_finished_turns_stay_neutral() {
@@ -59,32 +59,4 @@ fn menu_scope_favorite_is_independent_and_keyboard_wraps() {
     assert_eq!(dom.matches("menuitemradio").count(), 4);
     assert!(dom.contains("menuitemcheckbox"));
     assert!(dom.contains("Congelado"));
-}
-#[test]
-fn server_clock_math_excludes_pauses_and_clamps_due() {
-    let b = json!({"status":"running","targetMs":1500000,"activeMs":0,"resumedAtMs":0});
-    assert_eq!(p::remaining(&b, 300000.), 1200000.);
-    assert_eq!(p::delta(&b, 300000., 30.), 600000.);
-    assert_eq!(p::remaining(&b, 9999999.), 0.);
-    let paused = json!({"status":"paused","targetMs":1500000,"activeMs":300000,"resumedAtMs":0});
-    assert_eq!(p::remaining(&paused, 9999999.), 1200000.);
-    assert_eq!(p::fmt(1200000.), "20:00");
-}
-#[test]
-fn hourglass_uses_original_fill_flip_and_loop() {
-    assert_eq!(p::hourglass(3500., None), 10.);
-    assert_eq!(p::hourglass(7350., None), 21.);
-    assert_eq!(p::hourglass(8010., None), 0.);
-    assert_eq!(p::hourglass(1550., Some(1000.)), 26.);
-}
-#[test]
-fn six_styles_share_original_hourglass_and_vendored_catalog() {
-    assert_eq!(art::STYLE_ORDER.len(), 6);
-    assert_eq!(art::style("nope"), "alchemy");
-    for style in art::STYLE_ORDER {
-        let clock = art::asset("clock", style, "");
-        assert!(clock.contains("comandos/hourglass.png"));
-        assert!(clock.contains("--frames:27"));
-    }
-    assert!(art::asset("hundred", "arcade", "").contains("--strip-duration:3.000s"));
 }

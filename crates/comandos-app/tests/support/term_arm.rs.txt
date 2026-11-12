@@ -23,7 +23,7 @@ struct Model{drain:Drain,schedule:PaintSchedule,pty:Option<()>,respawn_at:Option
 struct Options{mode:RunMode}
 struct Inner{closed:Cell<bool>,timer:RefCell<Option<SourceId>>,epoch:Instant,now:Cell<u64>,model:RefCell<Model>,area:Area,options:Options}
 impl Inner{
- fn ms(&self)->u64{self.now.get()}
+ fn ms(&self)->u64{self.now.get()}fn request_frame(&self){self.area.queue_draw()}fn hold_delay(&self,_m:&Model,_now:u64)->Option<u64>{None}
  fn tick(&self){panic!("paint must not wait for a cancellable timer")}
  // ACTUAL_ARM
 }

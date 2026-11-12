@@ -244,7 +244,7 @@ mod web {
             Ok(open_session(a.get(0), a.get(1)).unwrap_or_else(|e| Promise::reject(&e).into()))
         })?;
         let panels = from_json(
-            &json!({"settings":"#settings","remote":"#remote","servers":"#servers","sovereignty":"#sovereignty","usage":"#usage","pomo":"#pomo-panel"}),
+            &json!({"settings":"#settings","remote":"#remote","servers":"#servers","sovereignty":"#sovereignty"}),
         )?;
         let request = if query_arg("panel")?.as_string().as_deref() == Some("chains") {
             (|| -> Result<JsValue, JsValue> {
@@ -315,17 +315,6 @@ mod web {
                         exported("renderButtonStyleGallery", &[])?;
                     } else if truthy(&global("CENTER_REQ")) {
                         exported("openCenterPanel", &[global("CENTER_REQ")])?;
-                    } else if only == "usage" {
-                        exported("openAnalytics", &[query_arg("tab")?])?;
-                    } else if !["news", "chains", "notices"].contains(&only.as_str()) {
-                        let button = id(if only == "pomo" {
-                            "btn-pomo"
-                        } else {
-                            "btn-notif"
-                        });
-                        if truthy(&button) {
-                            call(&button, "click", &[])?;
-                        }
                     }
                     Ok(JsValue::UNDEFINED)
                 }),
@@ -581,8 +570,6 @@ mod web {
                     } else {
                         let mut selected = "tablero";
                         for (selector, label) in [
-                            ("#notif-panel", "campana"),
-                            ("#pomo-panel", "pomodoro"),
                             ("#command-sidebar", "comandos"),
                             ("header", "header"),
                         ] {
@@ -615,12 +602,6 @@ mod web {
                             screen_start(name.into())?;
                         } else {
                             screen_end(name.into())?;
-                        }
-                    } else if id == "notif-panel" || id == "pomo-panel" {
-                        if truthy(&call(&cls, "contains", &["hidden".into()])?) {
-                            screen_end(id.into())?;
-                        } else {
-                            screen_start(id.into())?;
                         }
                     }
                 }
@@ -678,10 +659,10 @@ mod web {
                 listen(
                     &more,
                     "click",
+                    // No notification drawer: the button reveals the queued alerts.
                     function(|_| {
-                        let b = id("btn-notif");
-                        if truthy(&b) {
-                            call(&b, "click", &[])?;
+                        for c in all(&id("toasts"), ".alert") {
+                            classes(&c, "hidden", false);
                         }
                         Ok(JsValue::UNDEFINED)
                     }),
@@ -715,16 +696,7 @@ mod web {
     pub fn mount_notices() -> Result<(), JsValue> {
         set(&js_sys::global(), "ALERTS", &new("Map", &[])?)?;
         set(&js_sys::global(), "ATTENDED", &new("Map", &[])?)?;
-        publish("alertPush", |_| {
-            let notices = global("ComandosNotices");
-            if !notices.is_null() && !notices.is_undefined() {
-                let instance = get(&notices, "instance");
-                if !instance.is_null() && !instance.is_undefined() {
-                    call(&get(&instance, "controller"), "poll", &[])?;
-                }
-            }
-            Ok(JsValue::UNDEFINED)
-        })?;
+        publish("alertPush", |_| Ok(JsValue::UNDEFINED))?;
         publish("alertLayout", |_| {
             alert_layout()?;
             Ok(JsValue::UNDEFINED)
@@ -737,7 +709,6 @@ mod web {
             let s = a.get(0);
             alert_clear(s.clone())?;
             call(&global("ATTENDED"), "set", &[s, now().into()])?;
-            exported("notifBadge", &[])?;
             Ok(JsValue::UNDEFINED)
         })?;
         publish("toast", |a| {
@@ -764,13 +735,15 @@ mod web {
             Ok(JsValue::UNDEFINED)
         })
     }
+    /// Only the sessions the page draws (see the server's `live_items`).
+    const LIVE_STATE: &str = "/state?live=1";
     fn tick() -> Result<JsValue, JsValue> {
         if truthy(&global("statePollInFlight")) {
             return Ok(Promise::resolve(&JsValue::UNDEFINED).into());
         }
         exported("refreshFavorites", &[])?;
         set(&js_sys::global(), "statePollInFlight", &true.into())?;
-        let requested = exported("api", &["/state".into()]);
+        let requested = exported("api", &[LIVE_STATE.into()]);
         Ok(promise(async move {
             if let Ok(state) = wait(requested).await {
                 let _ = exported("render", &[state]);
@@ -853,8 +826,6 @@ export async function contracts() {
  localStorage.setItem('cc-center-panel',JSON.stringify({panel:'settings',at:Date.now(),extra:'keep'}));location.search='?panel=chains';__mountApp();eq(ONLY_PANEL,'settings','fresh center override');eq(CENTER_REQ.extra,'keep','unknown request fields');eq(localStorage.getItem('cc-center-panel'),null,'request consumed');ok(document.documentElement.classList.has('gtkapp'),'native root');__attachApp();eq(times.slice(-1)[0].ms,300,'center delay');globalThis.openCenterPanel=r=>actions.push({center:r});times.slice(-1)[0].f();eq(actions.slice(-1)[0].center.panel,'settings','center open');
  localStorage.setItem('cc-center-panel',JSON.stringify({panel:'remote',at:Date.now()-20000}));__mountApp();eq(CENTER_REQ,null,'expired center ignored');eq(ONLY_PANEL,'chains','query fallback');
  location.search='?panel=UsAgE1-news';__mountApp();eq(ONLY_PANEL,'sgnews','query strips all but lowercase');
- location.search='?panel=usage&tab=work';__mountApp();__attachApp();globalThis.openAnalytics=t=>actions.push({analytics:t});times.slice(-1)[0].f();eq(actions.slice(-1)[0],{analytics:'work'},'usage tab');
- location.search='?panel=pomo';__mountApp();__attachApp();times.slice(-1)[0].f();ok(nodes['#btn-pomo'].clicked,'pomo button');
  globalThis.webkit=undefined;location.search='';
  ULOG.buf=[];ulog('ignored','');eq(ULOG.buf.length,0,'empty name ignored');ulog('click','😀'.repeat(50),'x'.repeat(90),-1.5);eq(ULOG.buf.length,1,'buffer one');eq(ULOG.buf[0].n.length,80,'UTF16 limit');eq(ULOG.buf[0].c.length,80,'context limit');eq(ULOG.buf[0].d,-1,'JS round ties');eq(ULOG.buf[0].s,'selected','active pane');
  ulogFlush();eq(ULOG.buf.length,0,'flush drains');eq(navigator.beacons[0][0],'/ui-log','beacon route');const delivered=JSON.parse(await navigator.beacons[0][1].text());eq(delivered.events.length,1,'beacon body');
@@ -865,7 +836,6 @@ export async function contracts() {
  const modal=new Element('settings',['modal','open']);observers.slice(-1)[0].f([{target:modal}]);ok(ULOG.screens.has('modal:settings'),'modal observer starts');modal.classList.delete('open');observers.slice(-1)[0].f([{target:modal}]);ok(!ULOG.screens.has('modal:settings'),'modal observer ends');
  toast('<b>safe</b>',true);eq(nodes['#toasts'].children.slice(-1)[0].textContent,'<b>safe</b>','toast uses text');eq(times.slice(-1)[0].ms,3500,'toast timeout');times.slice(-1)[0].f();
  const card=new Element('', ['alert']);nodes['#toasts'].appendChild(card);ALERTS.set('sess',card);alertResolve('sess');ok(card.removed,'resolve removes old alert');ok(ATTENDED.has('sess'),'attendance mark');
- let polled=0;globalThis.ComandosNotices={instance:{controller:{poll(){polled++}}}};alertPush({});eq(polled,1,'poll notices controller');
  globalThis.S={cfg:{poll:2}};document.hidden=true;eq(remotePollSeconds(),15,'hidden minimum');document.hidden=false;S.cfg.poll='7';eq(remotePollSeconds(),7,'number string');__attachPoll();arm();eq(intervals.slice(-1)[0].ms,7000,'arm interval');ok(cleared.length,'old interval cleared');
  actions=[];p=tick();ok(statePollInFlight,'poll marks synchronously');const extra=await tick();eq(extra,undefined,'duplicate resolves');eq(actions.filter(x=>x.path==='/state').length,1,'one state request');pending.shift().resolve({list:[]});await p;ok(!statePollInFlight,'in flight cleared');ok(actions.some(x=>x.render),'renders');ok(actions.some(x=>x.usage),'usage tick');
  p=tick();pending.shift().reject(Error('offline'));await p;ok(!statePollInFlight,'failure clears flag');

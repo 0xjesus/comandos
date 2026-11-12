@@ -15,7 +15,7 @@ use crate::dash::native::{
     Native, NativeOptions, catalogs,
     files::{self, Strict},
     light, py,
-    tmux::{Output, TmuxError},
+    tmux::{Output, Tmux, TmuxError},
 };
 use comandos_core::json::{response_dumps, truthy};
 use comandos_runtime::{
@@ -283,12 +283,6 @@ async fn steps(native: &Native, phase: &mut &'static str) -> Result<States, Stat
     // El rastreador trabaja sobre una copia que solo se confirma si el
     // cómputo emite (paso 8): un cómputo que declina o falla no deja rastro,
     // así lo que ve el siguiente es lo mismo que vio el Python que respondió.
-    let effects = RealEffects {
-        native,
-        inspector: Arc::new(scanned.inspector),
-        registry: registry.clone(),
-        tracker: Mutex::new(lock(&native.states.tracker).clone()),
-    };
     let inputs = Inputs {
         now,
         panes: scanned.panes,
@@ -296,6 +290,15 @@ async fn steps(native: &Native, phase: &mut &'static str) -> Result<States, Stat
         external: scanned.external,
         labels,
         records: scanned.records,
+    };
+    *phase = "lecturas de tmux por pane";
+    let prefetched = prefetch(&opts.tmux, &inputs.maps).await?;
+    let effects = RealEffects {
+        native,
+        inspector: Arc::new(scanned.inspector),
+        registry: registry.clone(),
+        tracker: Mutex::new(lock(&native.states.tracker).clone()),
+        prefetched,
     };
     *phase = "tarjetas (pantalla, transcripts, cuentas, observación)";
     let mut items = cards::build(&inputs, &effects).await?;
@@ -365,11 +368,72 @@ struct RealEffects<'a> {
     registry: Arc<Value>,
     /// Copia del rastreador del frente para este cómputo.
     tracker: Mutex<StateTracker>,
+    /// Lecturas de tmux de este cómputo ya hechas en lote, por argumentos.
+    prefetched: HashMap<Vec<String>, Output>,
+}
+
+/// Las lecturas de tmux que las tarjetas hacen pane a pane (identidad,
+/// pantalla visible y pistas de trabajo) en un solo lote: decenas de clientes
+/// de tmux por cómputo frenaban al servidor que alimenta las terminales. Vale
+/// solo para este cómputo; lo que el lote no trae se lee como antes.
+async fn prefetch(
+    tmux: &Tmux,
+    maps: &AgentMaps,
+) -> Result<HashMap<Vec<String>, Output>, StateFault> {
+    let mut commands: Vec<Vec<String>> = Vec::new();
+    for info in maps.by_cwd.iter().flat_map(|(_, rows)| rows.iter()) {
+        if info.pane.is_empty() {
+            continue;
+        }
+        let capture = |lines: &str| {
+            ["capture-pane", "-p", "-t", info.pane.as_str(), "-S", lines]
+                .map(str::to_owned)
+                .to_vec()
+        };
+        match info.agent.as_str() {
+            "codex" => commands.push(capture("-12")),
+            "claude" => commands.push(capture("-14")),
+            _ => {}
+        }
+        if info.pid != 0 {
+            commands.push(
+                ["display-message", "-p", "-t", info.pane.as_str(), IDENTITY_FORMAT]
+                    .map(str::to_owned)
+                    .to_vec(),
+            );
+            if matches!(info.agent.as_str(), "codex" | "claude" | "opencode") {
+                commands.push(capture("-45"));
+            }
+        }
+    }
+    let found = match tmux.run_many(&commands).await {
+        Ok(found) => found,
+        Err(TmuxError::Timeout { .. }) => return Err(StateFault::Timeout),
+        Err(_) => return Ok(HashMap::new()),
+    };
+    Ok(commands
+        .into_iter()
+        .zip(found)
+        .filter_map(|(command, out)| Some((command, out?)))
+        .collect())
 }
 
 impl RealEffects<'_> {
     fn opts(&self) -> &NativeOptions {
         self.native.options()
+    }
+
+    fn prefetched(&self, args: &[&str]) -> Option<Output> {
+        let key: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        self.prefetched.get(&key).cloned()
+    }
+
+    /// Una lectura de tmux: la del lote de este cómputo o, si no vino, directa.
+    async fn read(&self, args: &[&str]) -> Result<Output, TmuxError> {
+        match self.prefetched(args) {
+            Some(out) => Ok(out),
+            None => self.opts().tmux.run(args).await,
+        }
     }
 
     fn shared(&self) -> Arc<Mutex<Blocking>> {
@@ -383,9 +447,15 @@ impl CardEffects for RealEffects<'_> {
         args: &[&str],
         timeout: Duration,
     ) -> impl Future<Output = Result<Output, TmuxError>> + Send {
+        let hit = self.prefetched(args);
         let mut tmux = self.opts().tmux.clone();
         tmux.timeout = timeout;
-        async move { tmux.run(args).await }
+        async move {
+            match hit {
+                Some(out) => Ok(out),
+                None => tmux.run(args).await,
+            }
+        }
     }
 
     fn account(
@@ -690,9 +760,8 @@ impl RealEffects<'_> {
     ) -> Result<Observed, StateFault> {
         let opts = self.opts();
         // (a) `_pane_identity`: tmux fuera de un `try` propio; el plazo es 504.
-        let out = match opts
-            .tmux
-            .run(&["display-message", "-p", "-t", pane, IDENTITY_FORMAT])
+        let out = match self
+            .read(&["display-message", "-p", "-t", pane, IDENTITY_FORMAT])
             .await
         {
             Ok(out) => out,
@@ -734,9 +803,8 @@ impl RealEffects<'_> {
         };
         // (c) `pane_visible_config` para codex, claude y opencode.
         if matches!(info.agent.as_str(), "codex" | "claude" | "opencode") {
-            let captured = match opts
-                .tmux
-                .run(&["capture-pane", "-p", "-t", pane, "-S", "-45"])
+            let captured = match self
+                .read(&["capture-pane", "-p", "-t", pane, "-S", "-45"])
                 .await
             {
                 Ok(out) => out,

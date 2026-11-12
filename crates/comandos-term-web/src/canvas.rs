@@ -886,7 +886,9 @@ impl Atlas {
         rc: &mut RasterCtx<'_>,
     ) -> Result<Slot, JsValue> {
         cached_glyph(self, text, key, |atlas, cache| {
+            let started = crate::metrics::perf_now();
             let slot = atlas.rasterize(text, &key, rc, cache)?;
+            crate::metrics::note_raster(crate::metrics::perf_now() - started);
             Ok((slot, slot.page != Slot::UNCACHED))
         })
     }
@@ -1555,8 +1557,9 @@ impl Canvas2d {
     }
 
     /// Glifos de una tira. Un error en una celda se anota y se sigue con la
-    /// siguiente (no se pierde el resto de la fila).
-    fn paint_glyphs(&mut self, run: &Run, y: f64, selected: Option<Selected>) {
+    /// siguiente (no se pierde el resto de la fila). Con `draw = false` solo
+    /// deja los glifos en el atlas (ver `prepare_row`).
+    fn paint_glyphs(&mut self, run: &Run, y: f64, selected: Option<Selected>, draw: bool) {
         let style = &run.style;
         if style.hidden {
             return;
@@ -1631,7 +1634,7 @@ impl Canvas2d {
                     continue;
                 }
             };
-            if slot.w == 0 || slot.h == 0 {
+            if !draw || slot.w == 0 || slot.h == 0 {
                 continue;
             }
             let Some(source) = self.atlas.source(&slot) else {
@@ -1673,7 +1676,7 @@ impl Canvas2d {
                 .fill_rect(f64::from(col) * cw, y, f64::from(cells) * cw, ch);
         }
         for run in &row.runs {
-            self.paint_glyphs(run, y, selected);
+            self.paint_glyphs(run, y, selected, true);
         }
         self.ctx.restore();
         // `restore` devuelve el relleno de antes del `save`.
@@ -1821,6 +1824,17 @@ impl Painter for Canvas2d {
             let y = self.row_y(line);
             self.ctx.fill_rect(0.0, y, width, ch);
             self.clear_cursor_on(line);
+        }
+    }
+
+    fn prepare_row(
+        &mut self,
+        row: &comandos_term::render::RowRender,
+        selected: Option<Selected>,
+        _m: &CellMetrics,
+    ) {
+        for run in &row.runs {
+            self.paint_glyphs(run, 0.0, selected, false);
         }
     }
 

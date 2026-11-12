@@ -1113,6 +1113,61 @@ fn pomodoros_in(records: &[Value], days: &[String], tz: chrono_tz::Tz) -> Result
     });
     Ok(out)
 }
+/// Desde cuándo hacen falta turnos y tramos para la columna (`sidebar_week`):
+/// la medianoche que abre la ventana menos `GAP_S` o los 7 días del consumo
+/// medido, lo que sea antes. Un turno que terminó antes no cambia ninguna pieza
+/// de sesión de la ventana: no puede unirse a uno que empieza ya dentro (los
+/// separa más de `GAP_S`) y lo que aporte a un tramo que cruza la medianoche
+/// queda antes de ella (la pieza de la ventana empieza en la medianoche), así
+/// que `hoy`, `sem` y `measured` salen iguales que con la ventana entera.
+pub fn sidebar_since(now: f64, offset: i64, tz_name: &str) -> Result<f64> {
+    let tz = zone(tz_name)?;
+    let dates = window_dates_in(now, offset, tz)?;
+    let open = local_midnight(dates[WINDOW_DAYS as usize - 1], tz)?.epoch;
+    Ok(pymin(open - GAP_S, now - 604800.))
+}
+/// Solo las cuentas de la columna: lo mismo que `build_week` + `sidebar_accounts`
+/// dejan en `accounts`, sin sesiones a la vista, semana anterior, desperdicio ni
+/// Pomodoro. `rows` puede venir recortado a `sidebar_since`; `snapshots` solo se
+/// leen con `offset < 0` (`weekUsed` de una semana pasada).
+pub fn sidebar_week(input: &WeekInput<'_>) -> Result<Vec<Value>> {
+    let tz = zone(input.tz_name)?;
+    let dates = window_dates_in(input.now, input.offset, tz)?;
+    let iso = dates
+        .iter()
+        .map(ToString::to_string)
+        .collect::<BTreeSet<_>>();
+    let sess = sessions_in(&input.rows.intervals, tz)?
+        .into_iter()
+        .filter(|s| s["d"].as_str().is_some_and(|d| iso.contains(d)))
+        .collect::<Vec<_>>();
+    let window_end = local_midnight(
+        dates[0]
+            .succ_opt()
+            .ok_or_else(|| error("OverflowError", "fecha fuera de rango"))?,
+        tz,
+    )?
+    .epoch;
+    let today = if input.offset == 0 {
+        Some(dates[0].to_string())
+    } else {
+        None
+    };
+    let accounts = build_accounts_in(
+        &AccountsInput {
+            limits: input.limits,
+            sessions: &sess,
+            today: today.as_deref(),
+            window_end,
+            snapshots: input.snapshots,
+            now: input.now,
+            tz_name: input.tz_name,
+            past: input.offset < 0,
+        },
+        tz,
+    )?;
+    sidebar_in(&accounts, input.limits, &input.rows.sidebar)
+}
 pub fn build_week(input: &WeekInput<'_>) -> Result<Value> {
     let tz = zone(input.tz_name)?;
     let dates = window_dates_in(input.now, input.offset, tz)?;

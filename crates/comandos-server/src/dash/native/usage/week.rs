@@ -1,8 +1,9 @@
 //! GET /analytics/week (8326, `analytics_week_query` 6616 → `analytics_week_payload`
 //! 6589): la semana de Analytics por cuenta con los turnos, tramos y fotos de cuota
 //! de la base de uso, los registros de Pomodoro de app-state y la caché de límites
-//! del frente; con `sidebar=1`, las cuotas y el consumo medido de la columna
-//! (`analytics_week.sidebar_accounts`). `demo=<nombre>` sirve los datos de ejemplo
+//! del frente; con `sidebar=1`, solo `{"accounts": [...]}`: las cuotas y el
+//! consumo medido de la columna (`analytics_week.sidebar_week`, lo mismo que
+//! `sidebar_accounts` deja en `accounts`) sin calcular la semana entera. `demo=<nombre>` sirve los datos de ejemplo
 //! del mockup (`tests/fixtures/analytics`).
 //!
 //! Orden de efectos: las dos lecturas (carril de uso y app-state) van primero y
@@ -69,8 +70,10 @@ pub async fn answer(native: &Native, request: &Request) -> Answer {
     if !demo.is_empty() {
         return demo_answer(native, &demo, offset).await;
     }
-    let sidebar = query.first("sidebar") == Some("1");
-    payload(native, offset, sidebar).await
+    if query.first("sidebar") == Some("1") {
+        return sidebar_payload(native, offset).await;
+    }
+    payload(native, offset).await
 }
 
 /// `open(ANALYTICS_DEMO_DIR/week-<demo>[-prev].json)` + `json.load`: no existe
@@ -111,7 +114,7 @@ fn read_fault(error: ReadError) -> Fault {
 /// (`WeekRows`) y las fotos de cuota.
 type UsageRows = (WeekRows, Vec<Value>);
 
-async fn payload(native: &Native, offset: i64, sidebar: bool) -> Answer {
+async fn payload(native: &Native, offset: i64) -> Answer {
     let now = (native.options().clock)() as f64 / 1000.0;
     let since = now - LOOKBACK_S;
     // `int(since)` de `quota_snapshots`: trunca hacia cero.
@@ -157,18 +160,15 @@ async fn payload(native: &Native, offset: i64, sidebar: bool) -> Answer {
         .collect();
     // Cálculo y serialización fuera del hilo del runtime (semanas de turnos).
     let built = tokio::task::spawn_blocking(move || {
-        build(
-            &WeekInput {
-                now,
-                offset,
-                limits: &limits,
-                rows: &rows,
-                snapshots: &snapshots,
-                records: &records,
-                tz_name: analytics_week::TZ,
-            },
-            sidebar,
-        )
+        build(&WeekInput {
+            now,
+            offset,
+            limits: &limits,
+            rows: &rows,
+            snapshots: &snapshots,
+            records: &records,
+            tz_name: analytics_week::TZ,
+        })
     })
     .await
     // Un pánico del hilo de cálculo: todavía no hubo efectos (ni el refresco
@@ -183,22 +183,72 @@ async fn payload(native: &Native, offset: i64, sidebar: bool) -> Answer {
     built
 }
 
-/// `analytics_week.build_week(...)` y, con `sidebar`, `sidebar_accounts`. Una
-/// excepción del port es la del Python (500); lo que el codificador portado no
-/// puede escribir se declina (no hubo efectos todavía).
-fn build(input: &WeekInput<'_>, sidebar: bool) -> Answer {
-    let mut result = analytics_week::build_week(input).map_err(|_| failure())?;
-    if sidebar {
-        let accounts = result
-            .get("accounts")
-            .and_then(Value::as_array)
-            .ok_or_else(failure)?;
-        let side = analytics_week::sidebar_accounts_from(accounts, input.limits, input.rows)
-            .map_err(|_| failure())?;
-        result
-            .as_object_mut()
-            .ok_or_else(failure)?
-            .insert("accounts".into(), Value::Array(side));
+/// `sidebar=1`: la columna de Consumos lee solo `accounts` (cada 60 s mientras
+/// está a la vista), así que se responde `{"accounts": [...]}` con lo mismo que
+/// `build_week` + `sidebar_accounts` dejan ahí, sin calcular la semana entera:
+/// los turnos desde `sidebar_since` (no los 17 días), sin Pomodoro ni sesiones
+/// a la vista, y las fotos de cuota solo para una semana pasada (`weekUsed`).
+async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
+    let now = (native.options().clock)() as f64 / 1000.0;
+    let since = match analytics_week::sidebar_since(now, offset, analytics_week::TZ) {
+        // Nunca antes que la ventana de la semana entera: mismas filas o menos.
+        Ok(at) => at.max(now - LOOKBACK_S),
+        Err(_) => return Err(failure()),
+    };
+    let snapshots_since = (now - SNAPSHOT_LOOKBACK_S) as i64;
+    let past = offset < 0;
+    let rows = native
+        .usage
+        .with(move |u| -> Result<UsageRows, ReadError> {
+            let mut rows = WeekRows::new(now);
+            usage_read::each_week_row(&u.conn, since, true, |kind, row| match kind {
+                WeekRow::Turn => rows.push_turn(row),
+                WeekRow::Span => rows.push_span(row),
+            })?;
+            let snapshots = if past {
+                usage_read::quota_snapshots(&u.conn, snapshots_since)?
+            } else {
+                Vec::new()
+            };
+            Ok((rows, snapshots))
+        })
+        .await?;
+    let (rows, snapshots) = rows.map_err(read_fault)?;
+    let limits: Vec<Value> = native
+        .limits
+        .current()
+        .rows
+        .into_iter()
+        .map(Value::Object)
+        .collect();
+    let built = tokio::task::spawn_blocking(move || {
+        let accounts = analytics_week::sidebar_week(&WeekInput {
+            now,
+            offset,
+            limits: &limits,
+            rows: &rows,
+            snapshots: &snapshots,
+            records: &[],
+            tz_name: analytics_week::TZ,
+        })
+        .map_err(|_| failure())?;
+        let mut body = serde_json::Map::new();
+        body.insert("accounts".into(), Value::Array(accounts));
+        Reply::json(StatusCode::OK, &Value::Object(body)).map_err(|_| Fault::Decline)
+    })
+    .await
+    .map_err(|_| Fault::Decline)?;
+    if let Err(Fault::Decline) = built {
+        return Err(Fault::Decline);
     }
+    let _ = native.limits.get(&native.refresh_deps());
+    built
+}
+
+/// `analytics_week.build_week(...)`. Una excepción del port es la del Python
+/// (500); lo que el codificador portado no puede escribir se declina (no hubo
+/// efectos todavía).
+fn build(input: &WeekInput<'_>) -> Answer {
+    let result = analytics_week::build_week(input).map_err(|_| failure())?;
     Reply::json(StatusCode::OK, &result).map_err(|_| Fault::Decline)
 }

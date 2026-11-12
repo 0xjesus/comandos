@@ -191,6 +191,8 @@ const CANONICAL_POST: &[&str] = &[
     "/terminal/quick",
     "/tab-new",
     "/account/add",
+    "/account/remove",
+    "/account/rename",
     "/app/command",
     "/tmux-mouse",
     "/tmux-scroll",

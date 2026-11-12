@@ -222,6 +222,47 @@ impl Body for OutputBody {
     }
 }
 
+/// Large JSON answers travel gzipped to clients that accept it: the phone
+/// polls `/state` and the feed every few seconds over the tailnet.
+fn compressed(mut reply: Reply) -> Reply {
+    const MIN_BYTES: usize = 16 * 1024;
+    let ReplyBody::Bytes(body) = &reply.body else {
+        return reply;
+    };
+    let json = reply
+        .headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if body.len() < MIN_BYTES
+        || !json
+        || reply.status != StatusCode::OK
+        || reply.headers.contains_key(http::header::CONTENT_ENCODING)
+    {
+        return reply;
+    }
+    let mut encoder = flate2::write::GzEncoder::new(
+        Vec::with_capacity(body.len() / 6),
+        flate2::Compression::new(3),
+    );
+    if std::io::Write::write_all(&mut encoder, body).is_err() {
+        return reply;
+    }
+    let Ok(packed) = encoder.finish() else {
+        return reply;
+    };
+    reply.body = ReplyBody::Bytes(packed.into());
+    reply.headers.insert(
+        http::header::CONTENT_ENCODING,
+        http::HeaderValue::from_static("gzip"),
+    );
+    reply.headers.insert(
+        http::header::VARY,
+        http::HeaderValue::from_static("accept-encoding"),
+    );
+    reply
+}
+
 fn response(reply: Reply, close: bool) -> http::Response<OutputBody> {
     let declared = match &reply.body {
         ReplyBody::SizedStream { length, .. } => Some(*length),
@@ -496,6 +537,9 @@ async fn dispatch(
     } else {
         None
     };
+    let gzip = headers
+        .iter()
+        .any(|(name, value)| name == "accept-encoding" && value.contains("gzip"));
     let request = Request {
         method: parts.method,
         target,
@@ -518,7 +562,7 @@ async fn dispatch(
     // Keep admission capacity through parsing and handler completion/cancellation.
     drop(budget);
     match result {
-        Ok(Ok(Ok(reply))) => response(reply, false),
+        Ok(Ok(Ok(reply))) => response(if gzip { compressed(reply) } else { reply }, false),
         Ok(Ok(Err(HandlerError::Timeout))) | Err(_) => {
             reject(504, "Tiempo de espera agotado", true)
         }

@@ -19,6 +19,7 @@ serde_json.workspace = true
 # local de `datetime.fromtimestamp` (rasgo `clock`, ya en comandos-core).
 chrono = { workspace = true, features = ["clock"] }
 bytes = "=1.12.1"
+flate2 = "=1.1.10"
 base64 = "=0.22.1"
 http = "=1.5.0"
 http-body = "=1.1.0"

@@ -1,12 +1,16 @@
 //! Pane-local overlays and shelf consumers. All workers return through T8 Jobs.
 use super::*;
-use ui::accounts::{self, AccountFlow, AccountStage, Dialog};
+use ui::accounts::{self, AccountFlow, AccountStage, Dialog, Manage};
 pub(super) struct Owned {
     pub account: RefCell<Option<Rc<Dialog>>>,
     pub shelf: ui::extensions::Shelf,
     pub boxes: RefCell<BTreeMap<String, Rc<ui::overlays::PaneOverlay>>>,
     pub models: RefCell<Value>,
     pub models_busy: Cell<bool>,
+    /// Header chip summaries per `session|pane`: when they were read and the answer.
+    pub chips: RefCell<BTreeMap<String, (f64, Value)>>,
+    pub chips_busy: RefCell<BTreeSet<String>>,
+    pub chip_open: RefCell<Option<gtk::Popover>>,
     pub scope: ui::snippets::Scope,
     pub wizard: ui::snippets::Scope,
     pub sources: RefCell<Vec<glib::SourceId>>,
@@ -21,6 +25,9 @@ impl Default for Owned {
             boxes: RefCell::new(BTreeMap::new()),
             models: RefCell::new(Value::Null),
             models_busy: Cell::new(false),
+            chips: RefCell::new(BTreeMap::new()),
+            chips_busy: RefCell::new(BTreeSet::new()),
+            chip_open: RefCell::new(None),
             scope: ui::snippets::Scope::default(),
             wizard: ui::snippets::Scope::default(),
             sources: RefCell::new(vec![]),
@@ -94,6 +101,7 @@ impl App {
         pane: &str,
         harness: &str,
         current: &str,
+        manage: bool,
     ) {
         if !matches!(harness, "claude" | "codex" | "grok") || !ui::app_commands::valid_pane(pane) {
             return;
@@ -119,7 +127,11 @@ impl App {
         let d = Rc::downgrade(&dialog);
         dialog.add.connect_clicked(move |_| {
             if let (Some(app), Some(dialog)) = (weak.upgrade(), d.upgrade()) {
-                app.account_action(&dialog, "", false);
+                if dialog.managing.get() {
+                    dialog.back(app.english, app.writable());
+                } else {
+                    app.account_manage(&dialog, None);
+                }
             }
         });
         dialog.add.set_sensitive(false);
@@ -172,17 +184,156 @@ impl App {
                             app.writable(),
                             Rc::new(move |alias, ready| {
                                 if let (Some(app), Some(dialog)) = (weak.upgrade(), d.upgrade()) {
-                                    app.account_action(&dialog, &alias, ready);
+                                    app.account_action(&dialog, &alias, ready, false);
                                 }
                             }),
                         );
+                        if manage {
+                            app.account_manage(&dialog, None);
+                        }
                     }
                     Err(error) => dialog.fail(&error, false),
                 }
             },
         );
     }
-    fn account_action(self: &Rc<Self>, dialog: &Rc<Dialog>, alias: &str, switch: bool) {
+    /// «Administrar cuentas»: lee la lista sin consumos y la pinta con sus
+    /// controles; `done` es el aviso que queda tras renombrar o eliminar.
+    fn account_manage(self: &Rc<Self>, dialog: &Rc<Dialog>, done: Option<String>) {
+        if !self.account_current(dialog) {
+            return;
+        }
+        dialog.scope.advance();
+        dialog.set_busy(true, true);
+        let path = format!(
+            "/accounts?harness={}&usage=0",
+            ui::webview::encode_query(&dialog.harness)
+        );
+        let ticket = dialog.scope.ticket();
+        let client = dialog.client.clone();
+        let weak = Rc::downgrade(self);
+        let d = Rc::downgrade(dialog);
+        self.jobs.spawn(
+            move || -> Result<Value, String> {
+                client
+                    .get(&path, Duration::from_secs(8))
+                    .map_err(|_| "No se pudieron leer las cuentas".to_string())
+            },
+            move |result| {
+                let (Some(app), Some(dialog)) = (weak.upgrade(), d.upgrade()) else {
+                    return;
+                };
+                if !ticket.current() || !app.account_current(&dialog) {
+                    return;
+                }
+                match result {
+                    Ok(data) => {
+                        let weak = Rc::downgrade(&app);
+                        let dd = Rc::downgrade(&dialog);
+                        dialog.manage(
+                            &data,
+                            app.english,
+                            app.writable(),
+                            Rc::new(move |action| {
+                                let (Some(app), Some(dialog)) = (weak.upgrade(), dd.upgrade())
+                                else {
+                                    return;
+                                };
+                                match action {
+                                    Manage::Add(name) => {
+                                        app.account_action(&dialog, &name, false, false)
+                                    }
+                                    Manage::Relogin(alias) => {
+                                        app.account_action(&dialog, &alias, false, true)
+                                    }
+                                    Manage::Rename(alias, to) => {
+                                        if to.is_empty() || to == alias {
+                                            dialog.fail(
+                                                "Escribe el nombre nuevo y pulsa Renombrar",
+                                                app.writable(),
+                                            );
+                                            return;
+                                        }
+                                        let done = format!("Cuenta {alias} renombrada a {to}");
+                                        app.account_admin(
+                                            &dialog,
+                                            "/account/rename",
+                                            json!({"provider":dialog.harness,"alias":alias,"to":to}),
+                                            done,
+                                        )
+                                    }
+                                    Manage::Remove(alias) => {
+                                        let done = format!(
+                                            "Cuenta {alias} eliminada (se guardó una copia oculta)"
+                                        );
+                                        app.account_admin(
+                                            &dialog,
+                                            "/account/remove",
+                                            json!({"provider":dialog.harness,"alias":alias}),
+                                            done,
+                                        )
+                                    }
+                                }
+                            }),
+                        );
+                        if let Some(done) = done {
+                            dialog.note.set_text(&done);
+                        }
+                    }
+                    Err(error) => dialog.fail(&error, app.writable()),
+                }
+            },
+        );
+    }
+    fn account_admin(
+        self: &Rc<Self>,
+        dialog: &Rc<Dialog>,
+        path: &'static str,
+        payload: Value,
+        done: String,
+    ) {
+        if !self.writable() || !self.account_current(dialog) || dialog.busy.get() {
+            return;
+        }
+        dialog.scope.advance();
+        dialog.set_busy(true, true);
+        dialog.note.style_context().remove_class("acct-err");
+        dialog.note.set_text("Guardando…");
+        let ticket = dialog.scope.ticket();
+        let client = dialog.client.clone();
+        let weak = Rc::downgrade(self);
+        let d = Rc::downgrade(dialog);
+        self.jobs.spawn(
+            move || -> Result<(), String> {
+                let (status, data) = client
+                    .post(path, &payload, Duration::from_secs(20))
+                    .map_err(|_| "No se pudo completar la petición de cuenta".to_string())?;
+                if !(200..300).contains(&status) || data.get("ok") == Some(&json!(false)) {
+                    return Err(accounts::request_error(&data));
+                }
+                Ok(())
+            },
+            move |result| {
+                let (Some(app), Some(dialog)) = (weak.upgrade(), d.upgrade()) else {
+                    return;
+                };
+                if !ticket.current() || !app.account_current(&dialog) {
+                    return;
+                }
+                match result {
+                    Ok(()) => app.account_manage(&dialog, Some(done)),
+                    Err(error) => dialog.fail(&error, app.writable()),
+                }
+            },
+        );
+    }
+    fn account_action(
+        self: &Rc<Self>,
+        dialog: &Rc<Dialog>,
+        alias: &str,
+        switch: bool,
+        relogin: bool,
+    ) {
         if !self.writable() || !self.account_current(dialog) || dialog.busy.get() {
             return;
         }
@@ -213,7 +364,7 @@ impl App {
         let payload = if switch {
             json!({"session":session,"pane":pane,"alias":alias})
         } else {
-            json!({"provider":dialog.harness,"alias":alias})
+            json!({"provider":dialog.harness,"alias":alias,"relogin":relogin})
         };
         let path = if switch {
             "/account/switch"

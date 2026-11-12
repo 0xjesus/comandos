@@ -1,22 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-use comandos_app::ui::header::{HEADER_ACTIONS, badge_text, tween};
+use comandos_app::ui::header::{HEADER_ACTIONS, tween};
 #[path = "support/header_models_oracle.rs"]
 mod header_original;
 #[test]
 fn all_original_header_actions_keep_their_owners() {
-    assert_eq!(
-        HEADER_ACTIONS,
-        [
-            "quickTerminal",
-            "newSession",
-            "sortMenu",
-            "notices",
-            "chains",
-            "analytics"
-        ]
-    );
-    assert_eq!(badge_text(0), None);
-    assert_eq!(badge_text(123), Some("123".into()));
+    assert_eq!(HEADER_ACTIONS, ["quickTerminal", "newSession", "sortMenu"]);
     assert_eq!(tween(0., 0., 1., 150.), 0.);
     assert_eq!(tween(150000., 0., 1., 150.), 1.);
 }
@@ -63,7 +51,6 @@ visible=[];scripts=[];ns['nb']=types.SimpleNamespace(set_visible=visible.append)
 print(json.dumps(out))
 "#;
     let expected = header_original::oracle(script);
-    assert_eq!(json!(HEADER_ACTIONS), expected["actions"]);
     let rasters = native["rasters"].as_array().unwrap();
     assert_eq!(rasters.len(), 504);
     for (i, raster) in rasters.iter().enumerate() {

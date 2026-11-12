@@ -6,7 +6,19 @@ pub const SETTLE_CAP_MS: u64 = 1500;
 /// Con la terminal ya enganchada, el pty se redimensiona cuando la asignación lleva
 /// este tiempo quieta: arrastrar la ventana o el panel mandaba un SIGWINCH por paso y
 /// Claude Code y Codex repintaban cada ancho intermedio encima del historial.
-pub const RESIZE_QUIET_MS: u64 = 180;
+pub const RESIZE_QUIET_MS: u64 = 110;
+/// After that resize the last picture stays on screen until tmux and the program
+/// have drawn the new size: quiet this long after their output, or this long
+/// with no output at all, and never more than the cap. One swap, no half-wrapped text.
+pub const HOLD_QUIET_MS: u64 = 70;
+pub const HOLD_IDLE_MS: u64 = 120;
+pub const HOLD_CAP_MS: u64 = 350;
+/// A tab that is not on screen tells tmux its new size later and one tab at a
+/// time. Resizing every tab with the visible one made every Claude Code
+/// reprint its conversation at once while the one on screen was settling.
+pub const HIDDEN_RESIZE_MS: u64 = 700;
+pub const HIDDEN_RESIZE_STEP_MS: u64 = 180;
+pub const HIDDEN_RESIZE_TURNS: u64 = 40;
 /// `child-exited` → `GLib.timeout_add(800, spawn)` (884).
 pub const RESPAWN_MS: u64 = 800;
 /// Smallest size a view may impose on a shared tmux window. With `window-size latest`

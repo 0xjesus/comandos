@@ -521,22 +521,6 @@ pub fn pick_sel(items: &Value, selected: &str, selected_ts: f64, active: &Value)
 mod list_wrapper {
     pub type Items = Vec<serde_json::Value>;
 }
-pub fn notif_key(it: &Value) -> String {
-    format!(
-        "{}|{}|{}",
-        if truth(at(it, "session")) {
-            s(at(it, "session"))
-        } else {
-            s(at(it, "project"))
-        },
-        if truth(at(it, "kind")) {
-            s(at(it, "kind"))
-        } else {
-            s(at(it, "status"))
-        },
-        num(at(it, "ts"))
-    )
-}
 pub fn ns_defaults() -> Value {
     json!({"harness":"codex","motor":"codex","routeId":"codex:codex","model":"gpt-6.1-sol","effort":"high","harnessAccount":"main","motorAccount":"main"})
 }

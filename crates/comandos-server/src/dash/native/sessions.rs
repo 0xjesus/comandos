@@ -83,6 +83,8 @@ pub enum SessionsRoute {
     SshNewTab,
     SessionNew,
     AccountAdd,
+    AccountRemove,
+    AccountRename,
 }
 
 impl SessionsRoute {
@@ -98,6 +100,8 @@ impl SessionsRoute {
             SessionsRoute::SshNewTab => "/ssh-new-tab",
             SessionsRoute::SessionNew => "/session-new",
             SessionsRoute::AccountAdd => "/account/add",
+            SessionsRoute::AccountRemove => "/account/remove",
+            SessionsRoute::AccountRename => "/account/rename",
         }
     }
 }
@@ -120,6 +124,8 @@ pub const ROUTES: &[Entry] = &[
     entry(SessionsRoute::SshNewTab),
     entry(SessionsRoute::SessionNew),
     entry(SessionsRoute::AccountAdd),
+    entry(SessionsRoute::AccountRemove),
+    entry(SessionsRoute::AccountRename),
 ];
 
 /// `AGENT_LAUNCH` (5935), literal.
@@ -205,7 +211,13 @@ async fn mutate(opts: &NativeOptions, args: &[&str]) -> Result<Output, Fault> {
 pub async fn answer(native: &Arc<Native>, route: SessionsRoute, request: &Request) -> Answer {
     // R2: sin scope de systemd ninguna de las que lo usan se atiende aquí
     // (`/session-new` y `/account/add` no lo usan, como el Python).
-    let scoped = !matches!(route, SessionsRoute::SessionNew | SessionsRoute::AccountAdd);
+    let scoped = !matches!(
+        route,
+        SessionsRoute::SessionNew
+            | SessionsRoute::AccountAdd
+            | SessionsRoute::AccountRemove
+            | SessionsRoute::AccountRename
+    );
     if scoped && native.options().scope.is_none() {
         return Err(Fault::Decline);
     }
@@ -232,6 +244,8 @@ async fn run(native: &Native, route: SessionsRoute, data: Map<String, Value>) ->
         // Antes de `resolve_project_session`, como en el `do_POST` (T4).
         SessionsRoute::SessionNew => return launch::session_new(native, &data).await,
         SessionsRoute::AccountAdd => return launch::account_add(native, &data).await,
+        SessionsRoute::AccountRemove => return launch::account_remove(native, &data).await,
+        SessionsRoute::AccountRename => return launch::account_rename(native, &data).await,
         _ => {}
     }
     let value = Value::Object(data);
@@ -251,7 +265,9 @@ async fn run(native: &Native, route: SessionsRoute, data: Map<String, Value>) ->
         | SessionsRoute::SshConnect
         | SessionsRoute::SshNewTab
         | SessionsRoute::SessionNew
-        | SessionsRoute::AccountAdd => Err(failure()),
+        | SessionsRoute::AccountAdd
+        | SessionsRoute::AccountRemove
+        | SessionsRoute::AccountRename => Err(failure()),
     }
 }
 

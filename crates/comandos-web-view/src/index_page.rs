@@ -59,9 +59,29 @@ mod tests {
             "servers",
             "command-sidebar",
             "session-overview",
-            "usage",
         ] {
             assert!(rendered.contains(&format!("id=\"{id}\"")), "{id}");
         }
+    }
+    #[test]
+    fn retired_modules_are_absent_from_the_shell() {
+        let rendered = shell("es").into_string();
+        for id in [
+            "usage",
+            "an-root",
+            "btn-usage",
+            "btn-notif",
+            "notif-badge",
+            "notif-panel",
+            "notice-settings",
+            "btn-pomo",
+            "pomo-panel",
+        ] {
+            assert!(!rendered.contains(&format!("id=\"{id}\"")), "{id}");
+        }
+        for css in ["#pomo-panel", "#notif-panel", ".nf2", "data-only-panel=\"usage\""] {
+            assert!(!CSS.contains(css), "{css}");
+        }
+        assert!(!LINKS.contains("analytics.css"));
     }
 }

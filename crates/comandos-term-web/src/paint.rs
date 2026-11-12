@@ -43,6 +43,10 @@ impl Selected {
 pub trait Painter {
     /// Deja las filas de la vista con solo el fondo de la terminal.
     fn clear_rows(&mut self, rows: &[usize]);
+    /// Deja en el atlas los glifos que la fila va a usar, antes de pintar
+    /// ninguna: escribir un glifo nuevo en el atlas y copiarlo enseguida
+    /// sincroniza la GPU en cada letra (≈3 ms); juntos, ≈0,1 ms.
+    fn prepare_row(&mut self, _row: &RowRender, _selected: Option<Selected>, _m: &CellMetrics) {}
     /// Repinta una fila entera (fondo, fondos de celda, glifos); `selected`
     /// son sus celdas seleccionadas.
     fn paint_row(&mut self, row: &RowRender, selected: Option<Selected>, m: &CellMetrics);
@@ -354,6 +358,16 @@ impl Scheduler {
         }
         self.empty.clear();
         let wanted = self.wanted_cursor.filter(|c| self.dirty.is_dirty(c.line));
+        for line in 0..self.dirty.rows.len() {
+            if self.dirty.is_dirty(line) {
+                render_row_into(engine, line, palette, opts, &mut self.row);
+                let selected = self.selected.get(line).copied().flatten().map(|cols| Selected {
+                    cols,
+                    color: self.selection_color,
+                });
+                painter.prepare_row(&self.row, selected, m);
+            }
+        }
         for line in 0..self.dirty.rows.len() {
             if !self.dirty.is_dirty(line) {
                 continue;

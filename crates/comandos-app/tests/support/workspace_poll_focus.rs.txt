@@ -8,6 +8,8 @@ struct GtkWorkspace {
 impl GtkWorkspace {
     fn focused(&self) -> Option<String> { self.focus.borrow().clone() }
     fn page_index(&self, key: &str) -> Option<u32> { self.pages.borrow().contains_key(key).then_some(0) }
+    fn shown_index(&self) -> Option<u32> { (!self.pages.borrow().is_empty()).then_some(0) }
+    fn shown_key(&self) -> Option<String> { self.pages.borrow().keys().next().cloned() }
     fn select(&self, key: &str) -> bool {
         if !self.pages.borrow().contains_key(key) { return false; }
         self.selected.borrow_mut().push(key.into());

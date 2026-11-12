@@ -395,12 +395,12 @@ fn legacy_frontend_replacements(
         serde_json::from_str(include_str!("fixtures/install-legacy-linux.json")).unwrap();
     let replacements = [
         ("", "bundle"),
-        ("analytics-render.js", "analytics-render"),
-        ("analytics.css", "/analytics.css"),
-        ("analytics.js", "analytics"),
+        ("analytics-render.js", "retired"),
+        ("analytics.css", "retired"),
+        ("analytics.js", "retired"),
         ("assets", "assets"),
         ("buttons.css", "/buttons.css"),
-        ("chain-builder.js", "chain-builder"),
+        ("chain-builder.js", "retired"),
         ("command-sidebar.js", "command-sidebar"),
         ("device-drafts.js", "term-main"),
         ("extensions.css", "extensions"),
@@ -412,8 +412,8 @@ fn legacy_frontend_replacements(
         ("index.html", "bundle"),
         ("manifest.webmanifest", "/manifest.webmanifest"),
         ("news-reader.js", "news-reader"),
-        ("notifications.js", "notifications"),
-        ("pomodoro.js", "pomodoro"),
+        ("notifications.js", "retired"),
+        ("pomodoro.js", "retired"),
         ("push-settings.js", "push-settings"),
         ("quick-terminal.js", "quick-terminal"),
         ("session-config.js", "session-config"),
@@ -442,6 +442,19 @@ fn legacy_frontend_replacements(
     assert!(!home.join(".claude/hooks/dash").exists());
     for (old, replacement) in replacements {
         match replacement {
+            // Deleted from the dashboard (Analytics, Pomodoro, notices drawer,
+            // Cadenas): no native replacement and no packaged asset.
+            "retired" => {
+                let stem = old.trim_end_matches(".js").trim_end_matches(".css");
+                assert!(
+                    !components.iter().any(|v| v == stem),
+                    "retired {old} still a native component"
+                );
+                assert!(
+                    !assets.contains_key(&format!("/{old}")),
+                    "retired {old} still packaged"
+                );
+            }
             "bundle" => assert!(manifest.files.contains_key("comandos_native_page.json")),
             "assets" => {
                 assert!(!assets.is_empty());

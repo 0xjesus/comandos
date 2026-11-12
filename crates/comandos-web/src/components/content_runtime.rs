@@ -30,11 +30,7 @@ pub fn install_content_loader(loader: js_sys::Function) -> Result<(), JsValue> {
     global_set("__comandosImportContent", &loader.into())
 }
 fn initialize() -> Result<(), JsValue> {
-    for (key, public) in [
-        ("__comandosMountAnalyticsRenderer", "AnalyticsRender"),
-        ("__comandosMountAnalytics", "Analytics"),
-        ("__comandosMountNewsReader", "NewsReader"),
-    ] {
+    for (key, public) in [("__comandosMountNewsReader", "NewsReader")] {
         if get(&js_sys::global(), &format!("__comandosDeferred{public}")) != JsValue::TRUE {
             continue;
         }

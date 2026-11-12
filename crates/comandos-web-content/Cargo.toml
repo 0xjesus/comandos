@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Separate Rust/WASM news, analytics and sound components preserving synchronous factories."
+description = "Separate Rust/WASM news reader component preserving synchronous factories."
 [lib]
 crate-type = ["cdylib", "rlib"]
 [dependencies]

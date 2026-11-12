@@ -1,6 +1,6 @@
 //! GET /analytics/week: nativa, byte a byte con el cc-dash del repo sobre el mismo HOME
-//! (con y sin `sidebar=1`, las dos semanas, los errores de la consulta y los datos de
-//! ejemplo del mockup).
+//! (con y sin `sidebar=1`, que responde solo las cuentas de la columna; las dos
+//! semanas, los errores de la consulta y los datos de ejemplo del mockup).
 mod support;
 use comandos_server::{
     Request,
@@ -167,7 +167,13 @@ async fn compare(front_port: u16, py: &FrozenHttp<'_>, target: &str) {
             b.header("cache-control"),
             "{target}"
         );
-        let (x, y) = if a.status == 200 {
+        let (x, y) = if a.status == 200 && target.contains("sidebar=1") {
+            // La columna responde solo `{"accounts": [...]}`: lo mismo que deja
+            // el Python (`build_week` + `sidebar_accounts`) en `accounts`.
+            let python: Value = serde_json::from_str(&b.text()).unwrap();
+            let only = serde_json::json!({"accounts": python["accounts"]});
+            (masked(&a.text()), masked(&only.to_string()))
+        } else if a.status == 200 {
             (masked(&a.text()), masked(&b.text()))
         } else {
             (a.text(), b.text())
@@ -462,5 +468,139 @@ async fn undecodable_row_declines_without_limits_refresh() {
         .unwrap();
     assert!(matches!(outcome, Outcome::Reply(_)));
     assert!(native.limits().refreshing(), "la respuesta sí lo lanza");
+    native.shutdown().await;
+}
+
+/// Turnos de cuatro cuentas repartidos en 17 días (uno cada `17 * 85_000 / n` s),
+/// la mitad en cadenas de menos de `GAP_S` que cruzan la medianoche y el corte.
+fn seed_many_turns(home: &TestHome, now: i64, n: i64) {
+    let step = 17 * 86_400 / n;
+    let accounts = [
+        ("claude", "main"),
+        ("claude", "relotto"),
+        ("codex", "main"),
+        ("opencode", "main"),
+    ];
+    let mut sql = String::from("begin;");
+    for i in 0..n {
+        let (p, acct) = accounts[(i % 4) as usize];
+        let end = now - 17 * 86_400 + i * step;
+        sql.push_str(&format!(
+            "insert into usage_turns(id,provider,agent,tmux_session,tmux_pane,pane_pwd,git_root,model,\
+             harness_account,turn_started_at,turn_finished_at,total_tokens,cost_usd,source,confidence,raw) values \
+             ('t{i}','{p}','{p}','s{}','%1','/r/P{}','/r/P{}','m{}','{acct}',{},{end},{},0.01,'hook','exact','{{}}');",
+            i % 40,
+            i % 12,
+            i % 12,
+            i % 3,
+            end - step / 2 - (i % 7) * 60,
+            1000 + i % 5000
+        ));
+    }
+    sql.push_str("commit;");
+    seed_usage(home, &sql);
+}
+
+fn reply_json(outcome: Outcome, target: &str) -> Value {
+    let Outcome::Reply(reply) = outcome else {
+        panic!("{target} declinó");
+    };
+    let comandos_server::ReplyBody::Bytes(bytes) = reply.body else {
+        panic!("{target}: cuerpo en flujo");
+    };
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// Lo que respondía `sidebar=1` antes del atajo: `build_week` con todas las filas
+/// de 17 días y `sidebar_accounts` sobre sus cuentas.
+fn sidebar_before(home: &TestHome, full: &Value, now: f64) -> Value {
+    let conn = rusqlite::Connection::open(home.usage_db()).unwrap();
+    let mut turns = vec![];
+    comandos_store::usage_read::each_week_row(&conn, now - 17.0 * 86_400.0, true, |kind, row| {
+        if matches!(kind, comandos_store::usage_read::WeekRow::Turn) {
+            turns.push(row.clone())
+        }
+    })
+    .unwrap();
+    let accounts = comandos_core::analytics_week::sidebar_accounts(
+        full["accounts"].as_array().unwrap(),
+        &[],
+        &turns,
+        now,
+    )
+    .unwrap();
+    serde_json::json!({ "accounts": accounts })
+}
+
+/// `sidebar=1` responde solo `{"accounts": [...]}` y esas cuentas son las mismas
+/// que antes (semana entera + `sidebar_accounts`) con turnos que cruzan el corte.
+#[tokio::test]
+async fn sidebar_accounts_match_the_full_week_path() {
+    let home = TestHome::new("week-sidebar-same");
+    let now = NOW_MS / 1000;
+    seed_many_turns(&home, now, 4_000);
+    let mut opts = home.options();
+    opts.clock = Arc::new(|| NOW_MS);
+    let native = Arc::new(Native::new(opts));
+    let route = NativeRoute::Usage(UsageRoute::Week);
+    let full = reply_json(
+        native
+            .dispatch(route, &week_request("/analytics/week?offset=0"))
+            .await
+            .unwrap(),
+        "full",
+    );
+    let side = reply_json(
+        native
+            .dispatch(route, &week_request("/analytics/week?offset=0&sidebar=1"))
+            .await
+            .unwrap(),
+        "sidebar",
+    );
+    assert_eq!(side.as_object().unwrap().len(), 1, "{side}");
+    assert_eq!(side["accounts"].as_array().unwrap().len(), 4, "{side}");
+    assert_eq!(
+        comandos_core::json::response_dumps(&side).unwrap(),
+        comandos_core::json::response_dumps(&sidebar_before(&home, &full, now as f64)).unwrap()
+    );
+    native.shutdown().await;
+}
+
+/// Tiempo del manejador sobre una base del tamaño de la real (~85 mil turnos en
+/// 17 días): la semana entera (lo que `sidebar=1` calculaba antes) contra el
+/// atajo de la columna. `cargo test … sidebar_timing -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn sidebar_timing_against_the_full_week() {
+    let home = TestHome::new("week-timing");
+    let now = NOW_MS / 1000;
+    seed_many_turns(&home, now, 85_000);
+    let mut opts = home.options();
+    opts.clock = Arc::new(|| NOW_MS);
+    let native = Arc::new(Native::new(opts));
+    let route = NativeRoute::Usage(UsageRoute::Week);
+    let mut bodies = vec![];
+    for target in [
+        "/analytics/week?offset=0",
+        "/analytics/week?offset=0&sidebar=1",
+    ] {
+        let _ = native.dispatch(route, &week_request(target)).await.unwrap();
+        let start = std::time::Instant::now();
+        let mut body = Value::Null;
+        for _ in 0..5 {
+            body = reply_json(
+                native.dispatch(route, &week_request(target)).await.unwrap(),
+                target,
+            );
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / 5.0;
+        println!("{target}: {ms:.1} ms, {} bytes", body.to_string().len());
+        bodies.push(body);
+    }
+    let before = sidebar_before(&home, &bodies[0], now as f64);
+    assert_eq!(
+        comandos_core::json::response_dumps(&bodies[1]).unwrap(),
+        comandos_core::json::response_dumps(&before).unwrap()
+    );
     native.shutdown().await;
 }

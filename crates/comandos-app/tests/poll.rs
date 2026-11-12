@@ -41,8 +41,6 @@ fn disconnected_poller_stops_without_updates_or_sockets() {
         state_prefs: Duration::from_millis(20),
         workspace: Duration::from_millis(20),
         marks: Duration::from_millis(20),
-        notices_backoff: Duration::from_millis(20),
-        notices_timeout: Duration::from_millis(20),
         ..PollIntervals::default()
     };
     let (poller, rx) = Poller::start_with_intervals(client, generation.clone(), intervals);
@@ -59,7 +57,6 @@ fn stopping_interrupts_long_idle_intervals_without_waiting_for_next_poll() {
         state_prefs: Duration::from_secs(30),
         workspace: Duration::from_secs(30),
         marks: Duration::from_secs(30),
-        notices_backoff: Duration::from_secs(30),
         ..PollIntervals::default()
     };
     let (poller, rx) = Poller::start_with_intervals(client, Arc::new(AtomicU64::new(0)), intervals);
@@ -68,20 +65,6 @@ fn stopping_interrupts_long_idle_intervals_without_waiting_for_next_poll() {
     poller.stop();
     assert!(start.elapsed() < Duration::from_millis(500));
     assert!(rx.try_recv().is_err());
-}
-
-#[test]
-fn poll_update_derives_debug_and_partial_eq() {
-    assert_eq!(
-        PollUpdate::Notices {
-            revision: "r".into(),
-            badge: 3
-        },
-        PollUpdate::Notices {
-            revision: "r".into(),
-            badge: 3
-        }
-    );
 }
 
 #[test]
@@ -98,8 +81,6 @@ fn poller_coalesces_repeated_state_and_live_prefs() {
                 r#"{"status":"same"}"#
             } else if request.contains("/prefs") {
                 r#"{"theme":"noche","button_style":"ignored"}"#
-            } else if request.contains("/notices/watch") {
-                r#"{"rev":"r1","badge":7}"#
             } else {
                 "null"
             };
@@ -116,8 +97,6 @@ fn poller_coalesces_repeated_state_and_live_prefs() {
         state_prefs: Duration::from_millis(20),
         workspace: Duration::from_millis(100),
         marks: Duration::from_millis(100),
-        notices_backoff: Duration::from_millis(20),
-        notices_timeout: Duration::from_millis(50),
         ..PollIntervals::default()
     };
     let (poller, rx) = Poller::start_with_intervals(client, Arc::new(AtomicU64::new(3)), intervals);
@@ -137,85 +116,17 @@ fn poller_coalesces_repeated_state_and_live_prefs() {
 }
 
 #[test]
-fn poller_stop_cancels_blocked_notice_worker_under_500ms() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let accepted = Arc::new(AtomicBool::new(false));
-    let done = Arc::new(AtomicBool::new(false));
-    let accepted2 = accepted.clone();
-    let done2 = done.clone();
-    let server = std::thread::spawn(move || {
-        for stream in listener.incoming().take(8) {
-            let mut stream = stream.unwrap();
-            let mut buf = [0u8; 1024];
-            let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
-            let request = String::from_utf8_lossy(&buf[..n]);
-            if request.contains("/notices/watch") {
-                accepted2.store(true, Ordering::Release);
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-                let mut one = [0u8; 1];
-                let _ = std::io::Read::read(&mut stream, &mut one);
-                done2.store(true, Ordering::Release);
-                break;
-            }
-            let body = if request.contains("/prefs") {
-                "{}"
-            } else {
-                "null"
-            };
-            let response = format!(
-                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
-        }
-    });
-    let client = DashClient::new(Some(&format!("http://127.0.0.1:{port}")), RunMode::Live).unwrap();
-    let intervals = PollIntervals {
-        state_prefs: Duration::from_millis(50),
-        workspace: Duration::from_millis(50),
-        marks: Duration::from_millis(50),
-        notices_wait_secs: 25,
-        notices_timeout: Duration::from_secs(35),
-        ..PollIntervals::default()
-    };
-    let (poller, _rx) =
-        Poller::start_with_intervals(client, Arc::new(AtomicU64::new(0)), intervals);
-    let wait_until = Instant::now() + Duration::from_secs(2);
-    while !accepted.load(Ordering::Acquire) && Instant::now() < wait_until {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(accepted.load(Ordering::Acquire));
-    let start = Instant::now();
-    poller.stop();
-    assert!(start.elapsed() < Duration::from_millis(500));
-    assert!(done.load(Ordering::Acquire));
-    server.join().unwrap();
-}
-
-#[test]
-fn gtk_tick_coalesces_latest_state_and_preserves_notice_authority() {
+fn gtk_tick_coalesces_latest_state() {
     let mut batch = comandos_app::poll::PollBatch::default();
-    batch.push(PollUpdate::State(json!({"seq":1,"badge":99})));
-    batch.push(PollUpdate::Notices {
-        revision: "r1".into(),
-        badge: 3,
-    });
-    batch.push(PollUpdate::State(json!({"seq":2,"badge":0})));
-    batch.push(PollUpdate::Notices {
-        revision: "r2".into(),
-        badge: 4,
-    });
+    batch.push(PollUpdate::State(json!({"seq":1})));
+    batch.push(PollUpdate::Marks(json!({"marks":[]})));
+    batch.push(PollUpdate::State(json!({"seq":2})));
     let updates: Vec<_> = batch.drain().collect();
     assert_eq!(
         updates,
         vec![
-            PollUpdate::State(json!({"seq":2,"badge":0})),
-            PollUpdate::Notices {
-                revision: "r2".into(),
-                badge: 4
-            }
+            PollUpdate::State(json!({"seq":2})),
+            PollUpdate::Marks(json!({"marks":[]}))
         ]
     );
 }
@@ -266,7 +177,6 @@ fn favorites_only_changes_and_fresh_generation_reach_gtk() {
             state_prefs: Duration::from_millis(20),
             workspace: Duration::from_secs(1),
             marks: Duration::from_secs(1),
-            notices_timeout: Duration::from_millis(50),
             ..PollIntervals::default()
         },
     );
@@ -376,7 +286,6 @@ assert paths==['/work-marks'];print(paths[0])
             marks: Duration::from_millis(20),
             state_prefs: Duration::from_secs(1),
             workspace: Duration::from_secs(1),
-            notices_backoff: Duration::from_secs(1),
             ..PollIntervals::default()
         },
     );

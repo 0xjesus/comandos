@@ -3,6 +3,9 @@ use crate::term::paint::CellGeom;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 pub const HEADER_EXTRA: f64 = 14.0;
+/// The header text (card and chip) sits this far below the tile's top edge
+/// instead of touching it, so it reads as centered over the pane.
+const HEADER_DROP: i32 = 7;
 #[derive(Debug, Default)]
 pub struct GeometryGate {
     flight: Option<u64>,
@@ -57,13 +60,14 @@ pub struct PaneRecord {
     pub command: String,
     pub active: bool,
 }
-pub const PANE_FORMAT: &str = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_current_command} #{pane_height} #{pane_active} #{pane_pid}";
+pub const PANE_FORMAT: &str = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_current_command} #{pane_height} #{pane_active} #{pane_pid} #{window_zoomed_flag}";
 pub fn parse_geometry(raw: &str) -> Result<Vec<PaneRecord>, String> {
     if raw.len() > 1024 * 1024 {
         return Err("pane geometry exceeds 1 MiB".into());
     }
     let mut panes = vec![];
     let mut seen = BTreeSet::new();
+    let mut zoomed = false;
     for line in raw.lines().filter(|line| !line.trim().is_empty()) {
         let fields = line.split_whitespace().collect::<Vec<_>>();
         let id = fields.first().copied().unwrap_or_default();
@@ -99,6 +103,12 @@ pub fn parse_geometry(raw: &str) -> Result<Vec<PaneRecord>, String> {
             },
             active: fields.get(6).copied() == Some("1"),
         });
+        zoomed |= fields.get(8).copied() == Some("1");
+    }
+    // A zoomed window shows only its active pane; the others keep reporting
+    // their split geometry although nothing of them is on screen.
+    if zoomed {
+        panes.retain(|pane| pane.active);
     }
     Ok(panes)
 }
@@ -325,6 +335,22 @@ pub fn frame_layout(
     }
     layout
 }
+/// tmux answers the new pane sizes a moment after the terminal resized. Panes
+/// that touched the right or bottom edge keep touching it meanwhile, so the
+/// outline follows the window at once instead of lagging behind the text.
+pub fn stretch_to_grid(mut panes: Vec<PaneGeometry>, (cols, rows): (u16, u16)) -> Vec<PaneGeometry> {
+    let right = panes.iter().map(|p| p.left.saturating_add(p.width)).max().unwrap_or(0);
+    let bottom = panes.iter().map(|p| p.top.saturating_add(p.height)).max().unwrap_or(0);
+    for pane in &mut panes {
+        if cols > pane.left && pane.left.saturating_add(pane.width) == right {
+            pane.width = cols - pane.left;
+        }
+        if rows > pane.top && pane.top.saturating_add(pane.height) == bottom {
+            pane.height = rows - pane.top;
+        }
+    }
+    panes
+}
 /// Without runtime pane-active/grid information, produce the frame coordinates only.
 pub fn pane_frames(rows: &[PaneGeometry], geom: &CellGeom, focused: bool) -> Vec<Value> {
     frame_layout(
@@ -442,44 +468,58 @@ pub fn card_rect(row: (f64, f64, f64, f64), cell_h: f64) -> (i32, i32, i32, i32)
         ((rail + cell_h) as i32 - top).max(18),
     )
 }
-/// How the right-hand buttons of a pane header (Cuenta, MCPs · Skills) fit next to
-/// the card's own text: with labels, as icons only, or not at all. In a narrow pane
-/// they used to be drawn on top of the model name.
+/// How the right-hand chip of a pane header fits next to the card's own text: whole,
+/// short (initial and counts), as a single dot, or not at all. In a narrow pane it used
+/// to be drawn on top of the model name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeysFit {
     Full,
     Icons,
+    Dot,
     Hidden,
 }
-pub fn keys_fit(width: i32, card_text: i32, full: i32, icons: i32) -> KeysFit {
-    let room = width - card_text - 16;
+pub fn keys_fit(width: i32, card_text: i32, full: i32, icons: i32, dot: i32) -> KeysFit {
+    let room = width - card_text - 22;
     if full <= room {
         KeysFit::Full
     } else if icons <= room {
         KeysFit::Icons
+    } else if dot <= room {
+        KeysFit::Dot
     } else {
         KeysFit::Hidden
     }
 }
 /// Fits a header's button row (natural width `full`) into a pane `width` px wide whose
-/// card text takes `card_text`: drops the labels when needed. The width it uses, or
-/// `None` when not even the icons fit.
+/// card text takes `card_text`. The width it uses, or `None` when not even the dot fits.
 pub fn fit_keys(keys: &gtk::Widget, width: i32, card_text: i32, full: i32) -> Option<i32> {
-    set_key_labels(keys, false);
+    set_key_tier(keys, 'S');
     let icons = keys.preferred_width().1;
-    let fit = keys_fit(width, card_text, full, icons);
-    set_key_labels(keys, fit == KeysFit::Full);
+    set_key_tier(keys, 'D');
+    let dot = keys.preferred_width().1;
+    let fit = keys_fit(width, card_text, full, icons, dot);
+    set_key_tier(
+        keys,
+        match fit {
+            KeysFit::Icons => 'S',
+            KeysFit::Dot => 'D',
+            KeysFit::Full | KeysFit::Hidden => 'F',
+        },
+    );
     // A later show_all() on the pane must not bring back what did not fit.
     keys.set_no_show_all(fit == KeysFit::Hidden);
     keys.set_visible(fit != KeysFit::Hidden);
     match fit {
         KeysFit::Full => Some(full),
         KeysFit::Icons => Some(icons),
+        KeysFit::Dot => Some(dot),
         KeysFit::Hidden => None,
     }
 }
-/// Shows or hides the text of every button in a header's button row.
-fn set_key_labels(keys: &gtk::Widget, visible: bool) {
+/// Shows the parts of every button in a header's row that belong to `tier` (`F` whole,
+/// `S` short, `D` dot): parts named `tier-…` list their tiers; a plain label shows only
+/// when whole.
+pub fn set_key_tier(keys: &gtk::Widget, tier: char) {
     let Some(row) = keys.downcast_ref::<gtk::Box>() else { return };
     for button in row.children() {
         let Some(content) = button
@@ -490,10 +530,14 @@ fn set_key_labels(keys: &gtk::Widget, visible: bool) {
             continue;
         };
         for part in content.children() {
-            if part.is::<gtk::Label>() {
-                part.set_no_show_all(!visible);
-                part.set_visible(visible);
-            }
+            let name = part.widget_name();
+            let visible = match name.strip_prefix("tier-") {
+                Some(tiers) => tiers.contains(tier),
+                None if part.is::<gtk::Label>() => tier == 'F',
+                None => continue,
+            };
+            part.set_no_show_all(!visible);
+            part.set_visible(visible);
         }
     }
 }
@@ -588,6 +632,8 @@ pub(crate) struct PaneOverlay {
     pub grips: RefCell<Vec<gtk::EventBox>>,
     pub signature: RefCell<String>,
     pub timer: RefCell<Option<glib::SourceId>>,
+    /// Re-reads tmux geometry once the pty resize has settled.
+    pub settle: RefCell<Option<glib::SourceId>>,
     pub prefix_timer: RefCell<Option<glib::SourceId>>,
     pub prefix_until: Cell<f64>,
     pub hot: Cell<Option<usize>>,
@@ -630,6 +676,7 @@ impl PaneOverlay {
             grips: RefCell::new(vec![]),
             signature: RefCell::new(String::new()),
             timer: RefCell::new(None),
+            settle: RefCell::new(None),
             prefix_timer: RefCell::new(None),
             prefix_until: Cell::new(0.0),
             hot: Cell::new(None),
@@ -651,7 +698,7 @@ impl PaneOverlay {
         self.gate.borrow_mut().close();
         self.drag.borrow_mut().take();
         self.wanted.borrow_mut().take();
-        for slot in [&self.timer, &self.prefix_timer] {
+        for slot in [&self.timer, &self.prefix_timer, &self.settle] {
             if let Some(source) = slot.borrow_mut().take() {
                 source.remove();
             }
@@ -690,7 +737,18 @@ impl PaneOverlay {
             .map(|p| p.geometry.id.clone())
             .collect();
         let geom = self.term.cell_geometry();
-        let layout = frame_layout(&panes, &geom, self.term.grid_size(), &active, focused);
+        let grid = self.term.grid_size();
+        if let Some(bottom) = panes.iter().map(|p| p.top.saturating_add(p.height)).max() {
+            self.term.set_status_rows(grid.1.saturating_sub(bottom));
+        }
+        let panes = stretch_to_grid(panes, grid);
+        self.term.set_regions(
+            panes
+                .iter()
+                .map(|p| (p.id.clone(), p.left, p.width, p.top, p.height))
+                .collect(),
+        );
+        let layout = frame_layout(&panes, &geom, grid, &active, focused);
         let state = RepositionState {
             layout: layout.clone(),
             geom,
@@ -719,7 +777,7 @@ impl PaneOverlay {
                 "card" => {
                     pill.widget.set_size_request(w, h);
                     pill.widget.set_margin_start(x.max(0));
-                    pill.widget.set_margin_top(y.max(0));
+                    pill.widget.set_margin_top((y + HEADER_DROP).max(0));
                 }
                 "keys" => {
                     let card_text = self
@@ -733,9 +791,12 @@ impl PaneOverlay {
                         continue;
                     };
                     pill.widget
-                        .set_margin_start(x.max(x + w - used - 8).max(0));
-                    pill.widget
-                        .set_margin_top((y + (h - 22).max(0) / 2 - 1).max(0));
+                        .set_margin_start(x.max(x + w - used - 14).max(0));
+                    // Same band as the card, with the chip centered in it: its text
+                    // lines up with the card's text.
+                    let band = h;
+                    pill.widget.set_size_request(-1, band);
+                    pill.widget.set_margin_top((y + HEADER_DROP).max(0));
                 }
                 _ => {
                     let Some(p) = panes.iter().find(|p| p.id == pill.pane) else {
@@ -810,33 +871,46 @@ impl PaneOverlay {
         ) else {
             return;
         };
+        // Panes are painted by the terminal as tiles, in the same frame as
+        // their text; an outline drawn here would trail it while resizing.
+        let _ = (line, bg);
         let layout = self.layout.borrow();
-        for (index, frame) in layout.frames.iter().enumerate() {
-            let get = |index| frame.get(index).and_then(Value::as_f64).unwrap_or(0.0);
-            let active = self.hovered_frame.get().map_or_else(
-                || frame.get(4).and_then(Value::as_bool).unwrap_or(false),
-                |hovered| hovered == index,
-            );
-            let c = if active { brand } else { line };
-            cr.set_source_rgba(c.red(), c.green(), c.blue(), if active { 0.9 } else { 1.0 });
-            cr.set_line_width(1.0);
-            rounded(
-                cr,
-                get(0) + 0.5,
-                get(1) + 0.5,
-                (get(2) - 1.0).max(0.0),
-                (get(3) - 1.0).max(0.0),
-                10.0,
-            );
-            let _ = cr.stroke();
-        }
         let Some(gutter) = self.hot.get().and_then(|index| layout.gutters.get(index)) else {
             return;
         };
         let dragging = self.drag.borrow().is_some();
         let vertical = gutter.orientation == "v";
-        let cx = gutter.x + gutter.width / 2.0;
-        let cy = gutter.y + gutter.height / 2.0;
+        let mut cx = gutter.x + gutter.width / 2.0;
+        let mut cy = gutter.y + gutter.height / 2.0;
+        // While dragging, the guide sits where the division will land.
+        let preview = dragging
+            .then(|| self.wanted.borrow().clone())
+            .flatten()
+            .and_then(|wish| {
+                let panes = self.geometries();
+                let p = panes.iter().find(|p| p.id == wish.pane)?.clone();
+                let g = self.term.cell_geometry();
+                if vertical {
+                    cx = g.origin_x + (f64::from(p.left) + f64::from(wish.size) + 0.5) * g.cell_w;
+                } else {
+                    cy = g.origin_y + (f64::from(p.top) + f64::from(wish.size) + 0.5) * g.cell_h;
+                }
+                let q = gutter_neighbor(&panes, &wish.pane, &wish.orientation)
+                    .and_then(|id| panes.iter().find(|q| q.id == id).cloned());
+                Some(if vertical {
+                    let total = q.as_ref().map_or(0, |q| p.width + q.width);
+                    q.map_or_else(
+                        || format!("{} col", wish.size),
+                        |_| format!("{} | {} col", wish.size, total.saturating_sub(wish.size)),
+                    )
+                } else {
+                    let total = q.as_ref().map_or(0, |q| p.height + q.height);
+                    q.map_or_else(
+                        || format!("{} filas", wish.size),
+                        |_| format!("{} / {} filas", wish.size, total.saturating_sub(wish.size)),
+                    )
+                })
+            });
         cr.set_source_rgba(
             brand.red(),
             brand.green(),
@@ -875,7 +949,7 @@ impl PaneOverlay {
         if !dragging {
             return;
         }
-        let label = gutter_measure(&self.geometries(), gutter);
+        let label = preview.unwrap_or_else(|| gutter_measure(&self.geometries(), gutter));
         if label.is_empty() {
             return;
         }

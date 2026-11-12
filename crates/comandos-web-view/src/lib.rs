@@ -37,12 +37,6 @@ pub use maud;
 
 pub mod work_marks;
 
-pub mod pomodoro;
-
-pub mod analytics;
-pub mod analytics_resources;
-
-pub mod notifications;
 pub mod utf16;
 
 pub mod news;

@@ -71,6 +71,40 @@ pub struct FeedEntry {
     pub prompt: String,
     pub reply: String,
     pub ask: Option<Ask>,
+    /// Every agent pane of the session (`paneList`), for the focus shelf.
+    pub pane_list: Vec<PaneFeed>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaneFeed {
+    pub pane: String,
+    pub state: FeedState,
+    pub ts: f64,
+    pub agent: String,
+    pub model: String,
+    pub account: String,
+    pub reply: String,
+}
+
+fn parse_panes(value: Option<&Value>) -> Vec<PaneFeed> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(32)
+        .filter_map(|p| {
+            let pane = text(p, "pane");
+            valid_pane(&pane).then(|| PaneFeed {
+                state: FeedState::parse(p.get("state").and_then(Value::as_str).unwrap_or("")),
+                ts: number(p, "ts"),
+                agent: text(p, "agent"),
+                model: text(p, "model"),
+                account: text(p, "account"),
+                reply: text(p, "reply"),
+                pane,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -142,6 +176,7 @@ pub fn parse_feed(value: &Value) -> Option<Feed> {
             prompt: text(item, "prompt"),
             reply: text(item, "reply"),
             ask: item.get("ask").and_then(parse_ask),
+            pane_list: parse_panes(item.get("paneList")),
             session: session.clone(),
         };
         out.sessions.insert(session, entry);

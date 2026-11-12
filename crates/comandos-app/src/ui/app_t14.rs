@@ -1,6 +1,6 @@
 //! Adaptadores de Task14, con propietario débil y respuestas versionadas.
 use super::*;
-use webkit2gtk::{SettingsExt, WebViewExt};
+use webkit2gtk::WebViewExt;
 const SHOW_FAVORITES: bool = false;
 impl App {
     pub(in crate::ui) fn install_header(self: &Rc<Self>) {
@@ -37,18 +37,13 @@ impl App {
         for (button, key) in &self.header.actions {
             let weak = Rc::downgrade(self);
             let key = *key;
-            button.connect_clicked(move |button| {
-                if let Some(app) = weak.upgrade().filter(|a| {
-                    !a.closed.load(Ordering::Acquire) && (key == "notif" || a.writable())
-                }) {
+            button.connect_clicked(move |_| {
+                if let Some(app) = weak
+                    .upgrade()
+                    .filter(|a| !a.closed.load(Ordering::Acquire) && a.writable())
+                {
                     match key {
                         "settings" => app.dashboard_click("btn-settings"),
-                        "notif" => {
-                            if let Err(error) = app.handlers.invoke("T17.notices", &json!({})) {
-                                app.status.set_text(&error.to_string());
-                            }
-                        }
-                        "pomo" => app.panel_popover(button, "pomo", 520, 640),
                         _ => {
                             if let Err(error) = app
                                 .handlers
@@ -140,60 +135,7 @@ impl App {
             json!(id)
         ));
     }
-    fn panel_popover(self: &Rc<Self>, button: &gtk::Button, panel: &str, width: i32, height: i32) {
-        if !self.writable() {
-            return;
-        }
-        if !self.popovers.borrow().contains_key(panel) {
-            let (Some(base), Some(context)) = (self.cfg.dash_url(), self.webview.context()) else {
-                return;
-            };
-            // Comparte el perfil aislado de la ventana y carga el panel una sola vez.
-            let view = webkit2gtk::WebView::with_context(&context);
-            if let Some(settings) = WebViewExt::settings(&view) {
-                settings.set_enable_webaudio(true);
-            }
-            view.set_background_color(&gdk::RGBA::new(0., 0., 0., 0.));
-            let pop = gtk::Popover::new(Some(button));
-            pop.set_position(gtk::PositionType::Bottom);
-            pop.style_context().add_class("cc-popover");
-            view.set_size_request(width, height);
-            let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            head.style_context().add_class("mosaic-head");
-            let title = gtk::Label::new(Some("Pomodoro"));
-            title.set_xalign(0.0);
-            head.pack_start(&title, true, true, 8);
-            let close = ui::icons::button("close", 14, "Cerrar (Esc)");
-            let weak = pop.downgrade();
-            close.connect_clicked(move |_| {
-                if let Some(pop) = weak.upgrade() {
-                    pop.popdown();
-                }
-            });
-            head.pack_end(&close, false, false, 4);
-            content.pack_start(&head, false, false, 0);
-            content.pack_start(&view, true, true, 0);
-            pop.add(&content);
-            view.load_uri(&format!(
-                "{base}/?panel={panel}&v={}",
-                env!("CARGO_PKG_VERSION")
-            ));
-            self.popovers.borrow_mut().insert(panel.into(), (pop, view));
-        } else if let Some((_, view)) = self.popovers.borrow().get(panel) {
-            view.evaluate_javascript("try{typeof pomoRender==='function'&&pomoRender();typeof notifRender==='function'&&notifRender()}catch(e){}",None,None,Some(&self.protocol_cancellable),|_|{});
-        }
-        if let Some((pop, _)) = self.popovers.borrow().get(panel) {
-            pop.show_all();
-            pop.popup();
-        }
-    }
     pub(super) fn shutdown_header(&self) {
-        for (_, (popover, view)) in self.popovers.borrow_mut().iter() {
-            view.stop_loading();
-            popover.popdown();
-        }
-        self.popovers.borrow_mut().clear();
         self.favorite_queue.borrow_mut().clear();
     }
     pub(super) fn paint_marks(&self) {

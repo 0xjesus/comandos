@@ -6,8 +6,9 @@ use super::{
     pty::{DrainOutcome, PtyDrain, PtyError, PtySession},
     schedule::PaintSchedule,
     settle::{
-        RESIZE_QUIET_MS, RESPAWN_MS, SETTLE_CAP_MS, SETTLE_QUIET_MS, Settle, fits_shared_window,
-        initial_size,
+        HIDDEN_RESIZE_MS, HIDDEN_RESIZE_STEP_MS, HIDDEN_RESIZE_TURNS, HOLD_CAP_MS, HOLD_IDLE_MS, HOLD_QUIET_MS,
+        RESIZE_QUIET_MS, RESPAWN_MS, SETTLE_CAP_MS,
+        SETTLE_QUIET_MS, Settle, fits_shared_window, initial_size,
     },
 };
 use crate::config::RunMode;
@@ -30,6 +31,10 @@ pub type LinkCallback = Rc<dyn Fn(&str, &gdk::EventButton, (u16, u16), bool)>;
 pub type ContextCallback = Rc<dyn Fn(&gdk::EventButton, (u16, u16))>;
 pub struct TermOptions {
     pub argv: Vec<String>,
+    /// `tmux -CC attach` for the same session: the app draws the pane itself
+    /// (own history, scroll and selection). `argv` stays as the classic way
+    /// for windows control mode does not cover yet (see `control::Session`).
+    pub control_argv: Option<Vec<String>>,
     pub cwd: PathBuf,
     pub session: Option<String>,
     pub palette: Palette,
@@ -84,11 +89,275 @@ struct Model {
     preedit: String,
     cursor_shape: CursorShape,
     wheel_delta: f64,
+    /// Lines the wheel asked for that the view has not moved yet (positive:
+    /// toward older text), and the part of a line it is past its grid now.
+    /// The view glides there over a few frames instead of jumping.
+    glide: f64,
+    glide_frac: f64,
     ssh_delta: f64,
     ssh_point: (u16, u16),
     ssh_at: Option<u64>,
     resize_at: Option<u64>,
+    /// Lag log: last key sent and first output not yet painted.
+    key_at: Option<Instant>,
+    /// Noise filter: on/off, the panes to filter and the last row maps.
+    hide_noise: bool,
+    /// The tmux control client behind this view, when it is pane-native.
+    control: Option<super::control::Session>,
+    regions: Vec<super::noise::Region>,
+    noise_maps: Vec<(super::noise::Region, Vec<Option<u16>>)>,
+    output_at: Option<Instant>,
+    /// tmux pane id of each region, and the history that fills rows freed by
+    /// hidden noise (fetched off the main thread, see `fetch_history`).
+    pane_ids: Vec<String>,
+    fills: std::collections::HashMap<String, Fill>,
+    fill_wanted: Vec<(String, u16)>,
+    fill_busy: std::collections::HashSet<String>,
+    /// Claude panes the app scrolls back itself, by tmux pane id.
+    scrolls: std::collections::HashMap<String, Scroll>,
+    output_ms: u64,
+    /// Last wheel scroll: tmux moved the text, so history fills are stale.
+    scroll_ms: u64,
+    /// Mouse selection done by the app inside one pane (see `pick.rs`).
+    pick: Option<super::pick::Pick>,
+    /// Per pane, how far tmux copy mode is scrolled back (this frame).
+    copy_pos: Vec<(super::noise::Region, u32)>,
+    /// Rows under the panes that belong to tmux's status line.
+    status_rows: u16,
+    /// Panes as tmux last reported them (late while resizing). `regions`
+    /// holds the panes found on the current frame when tiles are visible.
+    tmux_regions: Vec<super::noise::Region>,
+    tmux_ids: Vec<String>,
+    /// Last tiles found, kept for a frame caught halfway through a tmux
+    /// redraw (no borders yet) so the tiles never blink.
+    held_tiles: Option<(Vec<super::tiles::Tile>, Instant)>,
+    /// The picture kept on screen while a new size settles.
+    hold: Option<Hold>,
+    resized_ms: u64,
+    /// When this tab was last shown. A history fill read before that is drawn
+    /// only once its text has been matched against the screen again.
+    shown_ms: u64,
+    /// Lag log: the tab was just shown and has not painted / got its history.
+    shown_at: Option<Instant>,
+    shown_fill: Option<Instant>,
+    /// What the canvas shows, to repaint only the rows that change.
+    painted: Option<FrameLook>,
+    /// Screen row where the cursor was painted.
+    painted_cursor: Option<u16>,
 }
+
+/// After a resize the old picture stays until tmux and the program have
+/// drawn the new size, so the screen changes once instead of showing every
+/// half-drawn step.
+#[derive(Debug, Clone, Copy)]
+struct Hold {
+    since: u64,
+    cap_at: u64,
+    /// The new screen is drawn; only the history above it is still on its way.
+    filling: bool,
+}
+impl Hold {
+    fn due(&self, output_ms: u64) -> u64 {
+        let quiet = if self.filling {
+            self.cap_at
+        } else if output_ms > self.since {
+            output_ms.saturating_add(HOLD_QUIET_MS)
+        } else {
+            self.since.saturating_add(HOLD_IDLE_MS)
+        };
+        quiet.min(self.cap_at)
+    }
+}
+/// A history fill as one frame paints it.
+#[derive(Clone, PartialEq)]
+struct FillDraw {
+    id: String,
+    region: super::noise::Region,
+    holes: u16,
+    /// Visible lines scrolled back by the app.
+    skip: usize,
+    count: usize,
+    /// Rows of the fill that can be drawn: it moves as the pane scrolls.
+    end: usize,
+    asked_ms: u64,
+}
+/// Everything a picture depends on besides the text of each row. Two equal
+/// looks differ only in the rows whose text changed.
+#[derive(Clone, PartialEq)]
+struct FrameLook {
+    fresh: bool,
+    /// No selection, composition or scrollback on top of the text.
+    plain: bool,
+    size: (u16, u16),
+    area: (i32, i32),
+    geom: CellGeom,
+    opacity: f64,
+    palette: Palette,
+    tiles: Vec<super::tiles::Tile>,
+    maps: Vec<(super::noise::Region, Vec<Option<u16>>)>,
+    fills: Vec<FillDraw>,
+    hovered_link: Option<(Point, Point)>,
+    status_rows: u16,
+}
+/// A frame read at the start of a GTK frame and painted at its end.
+struct Planned {
+    look: FrameLook,
+    /// Screen rows to paint again; `None` paints everything.
+    rows: Option<Vec<bool>>,
+}
+
+/// tmux history above one pane, parsed and planned like the screen.
+struct Fill {
+    frame: FrameCache,
+    /// Rows to show, top to bottom, noise already removed.
+    picks: Vec<usize>,
+    /// Whether each of `picks` is an empty row.
+    blank: Vec<bool>,
+    /// `picks[..end]` are above the live screen and can be drawn.
+    end: usize,
+    asked_ms: u64,
+    /// Rows read.
+    count: usize,
+    /// Row `j` is tmux line `j - base` (0 = top of the live screen).
+    base: usize,
+    /// Rows of the live screen read after the history (0: a scroll copy).
+    /// When the pane scrolls, lines leave the screen: they are already here,
+    /// so `align` only moves `base` and nothing is missing until tmux is
+    /// read again.
+    screen: usize,
+    /// Text marks of the rows from `marks_from` on (see `pick::row_mark`).
+    marks: Vec<u64>,
+    marks_from: usize,
+    aligned: bool,
+    /// Last time `align` found the screen's first rows in this fill.
+    matched_ms: u64,
+    /// The screen is far from where it was read, or was not found: read soon.
+    loose: bool,
+    /// The screen starts exactly where it did when this was read, and
+    /// nowhere else: no line has left it, so the history is still this one.
+    sure: bool,
+    /// Kept to read the text of a filled row when it is selected.
+    engine: TermEngine,
+    lines: u16,
+    /// tmux may hold more history than was asked for.
+    more: bool,
+    left: u16,
+    width: u16,
+    geom: CellGeom,
+}
+impl Fill {
+    /// The rows drawn in `holes` rows above the first screen row shown,
+    /// `skip` visible lines back from the newest.
+    fn shown(&self, skip: usize, holes: usize) -> &[usize] {
+        let end = self.end.saturating_sub(skip);
+        &self.picks[end.saturating_sub(holes)..end]
+    }
+    /// Row `base` is the first row of the live screen.
+    fn set_base(&mut self, base: usize) {
+        self.base = base;
+        let mut end = self.picks.partition_point(|&j| j < base);
+        if self.screen == 0 {
+            // A blank at the end of a scroll copy would just add an empty row.
+            while end > 0 && self.blank[end - 1] {
+                end -= 1;
+            }
+        } else if self.blank.get(end) == Some(&true) {
+            // The pane drops a blank first row (`noise::keep_flags` starts as
+            // if one came before): the row that separates it from its
+            // history is drawn here, or the text would jump a row when that
+            // blank scrolls into the history.
+            end += 1;
+        }
+        self.end = end;
+    }
+    /// Finds where the live screen starts now from the text of its first
+    /// rows (`top`), nearest to where it was read and forward first.
+    fn align(&mut self, top: &[u64], now_ms: u64) {
+        self.aligned = true;
+        if self.screen == 0 || top.is_empty() {
+            return;
+        }
+        let nominal = self.count.saturating_sub(self.screen);
+        let hit = |at: usize| {
+            let known = (self.count - at).min(top.len());
+            known >= top.len().min(3)
+                && top[..known].iter().any(|mark| *mark != 0)
+                && (0..known).all(|i| self.marks.get(at + i - self.marks_from) == Some(&top[i]))
+        };
+        let found = (nominal..self.count).chain((self.marks_from..nominal).rev()).find(|&at| hit(at));
+        self.sure = found == Some(nominal) && !(self.marks_from..self.count).any(|at| at != nominal && hit(at));
+        match found {
+            Some(at) => {
+                self.matched_ms = now_ms;
+                self.loose = at.abs_diff(nominal) * 2 > self.screen;
+                if at != self.base {
+                    self.set_base(at);
+                }
+            }
+            None => self.loose = top.iter().any(|mark| *mark != 0),
+        }
+    }
+    fn fits(&self, m: &Model, r: &super::noise::Region) -> bool {
+        self.geom == m.geom && self.left == r.left && self.width == r.width
+    }
+    /// Read, or matched against the screen, since the tab was last shown: a
+    /// copy kept from an earlier visit is never drawn on trust.
+    fn current(&self, shown_ms: u64) -> bool {
+        self.asked_ms >= shown_ms || self.matched_ms >= shown_ms
+    }
+}
+fn next_turn() -> u64 {
+    thread_local! {
+        static TURN: Cell<u64> = const { Cell::new(0) };
+    }
+    TURN.with(|t| t.replace((t.get() + 1) % HIDDEN_RESIZE_TURNS))
+}
+const MAX_FILL_LINES: u16 = 500;
+/// How long the PTY must stay silent before a frame that follows fresh
+/// output is planned, and the most that wait may add to one frame.
+const SETTLE_OUTPUT_QUIET: Duration = Duration::from_micros(1500);
+const SETTLE_OUTPUT_CAP: Duration = Duration::from_millis(5);
+/// Rows at the top of a pane compared with its history fill.
+const ALIGN_ROWS: usize = 8;
+/// Output that does not move the screen (`Fill::sure`) leaves the history as
+/// it was read; it is still read again after this long, in case the rows
+/// compared were repeated text.
+const FILL_TRUST_MS: u64 = 3000;
+/// Moves a pane's history fill to where its screen starts now.
+fn align_fill(m: &mut Model, id: &str, r: &super::noise::Region, now_ms: u64) {
+    let height = usize::from(r.height);
+    let rows = ALIGN_ROWS.min((height / 3).max(3)).min(height);
+    let mut render = RowRender::default();
+    let top: Vec<u64> = (0..rows)
+        .map(|i| {
+            m.engine.render_line(usize::from(r.top) + i, &mut render);
+            super::pick::row_mark(&render, r.left, r.width)
+        })
+        .collect();
+    if let Some(fill) = m.fills.get_mut(id) {
+        fill.align(&top, now_ms);
+    }
+}
+/// With noise hidden, the wheel over a Claude Code pane does not go to tmux:
+/// tmux would move raw lines (gray ones too) and show the gray text again.
+/// The app shows a filtered copy of the history above the input box and
+/// moves it by the lines the screen shows.
+#[derive(Debug, Clone, Copy)]
+struct Scroll {
+    /// Visible lines back from the newest.
+    back: usize,
+    /// History lines asked from tmux for the copy.
+    lines: u16,
+    busy: bool,
+}
+const SCROLL_LINES: u16 = 800;
+const MAX_SCROLL_LINES: u16 = 6400;
+fn scroll_key(id: &str) -> String {
+    format!("{id}\u{1}scroll")
+}
+/// `(tmux target, first line, last line, done)`: read pane lines from tmux
+/// (0 = top of the live screen, negative = history).
+pub type HistorySource = Rc<dyn Fn(String, i64, i64, Box<dyn FnOnce(Option<String>)>)>;
 struct Inner {
     area: gtk::DrawingArea,
     im: gtk::IMMulticontext,
@@ -99,6 +368,8 @@ struct Inner {
     write_source: RefCell<Option<SourceId>>,
     timer: RefCell<Option<SourceId>>,
     closed: Cell<bool>,
+    /// Control mode gave up on this session's window: attach the classic way.
+    classic: Cell<bool>,
     context_menu: RefCell<Option<ContextCallback>>,
     link_event: RefCell<Option<LinkCallback>>,
     clean_click: RefCell<Option<ContextCallback>>,
@@ -109,6 +380,28 @@ struct Inner {
     last_ctrl_c: Cell<Option<f64>>,
     cleanup_cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     clipboard: Rc<crate::ui::clipboard::Clipboard>,
+    /// Shaped text survives between frames; rebuilt when the font or scale changes.
+    painter: RefCell<Option<TextPainter>>,
+    /// Client-side frame buffer the terminal paints into before one copy.
+    canvas: RefCell<Option<cairo::ImageSurface>>,
+    history: RefCell<Option<HistorySource>>,
+    /// Scrolls tmux while a selection is dragged past the pane's edge.
+    pick_timer: RefCell<Option<SourceId>>,
+    /// The next draw repaints everything.
+    full: Cell<bool>,
+    frame_asked: Cell<bool>,
+    /// A frame callback is moving the view toward where the wheel left it.
+    gliding: Cell<bool>,
+    /// Lag log: when the last frame was asked for and when it started.
+    asked_at: Cell<Option<Instant>>,
+    ticked_at: Cell<Option<Instant>>,
+    /// Lag log: when the main loop was first free after the frame was asked for.
+    free_at: Rc<Cell<Option<Instant>>>,
+    /// When the PTY was last read (see `settle_output`).
+    read_at: Cell<Option<Instant>>,
+    planned: RefCell<Option<Planned>>,
+    /// Place in the queue of hidden tabs that resize one after another.
+    turn: u64,
 }
 #[derive(Clone)]
 pub struct TermView {
@@ -207,16 +500,58 @@ impl TermView {
                 preedit: String::new(),
                 cursor_shape: CursorShape::Block,
                 wheel_delta: 0.,
+                glide: 0.,
+                glide_frac: 0.,
                 ssh_delta: 0.,
                 ssh_point: (0, 0),
                 ssh_at: None,
                 resize_at: None,
+                key_at: None,
+                output_at: None,
+                hide_noise: true,
+                control: None,
+                regions: Vec::new(),
+                noise_maps: Vec::new(),
+                pane_ids: Vec::new(),
+                fills: std::collections::HashMap::new(),
+                fill_wanted: Vec::new(),
+                fill_busy: std::collections::HashSet::new(),
+                scrolls: std::collections::HashMap::new(),
+                output_ms: 0,
+                scroll_ms: 0,
+                pick: None,
+                copy_pos: Vec::new(),
+                status_rows: 1,
+                tmux_regions: Vec::new(),
+                tmux_ids: Vec::new(),
+                held_tiles: None,
+                hold: None,
+                resized_ms: 0,
+                shown_ms: 0,
+                shown_at: None,
+                shown_fill: None,
+                painted: None,
+                painted_cursor: None,
             }),
             options,
+            painter: RefCell::new(None),
+            canvas: RefCell::new(None),
+            history: RefCell::new(None),
+            pick_timer: RefCell::new(None),
+            full: Cell::new(true),
+            frame_asked: Cell::new(false),
+            gliding: Cell::new(false),
+            asked_at: Cell::new(None),
+            ticked_at: Cell::new(None),
+            free_at: Rc::new(Cell::new(None)),
+            read_at: Cell::new(None),
+            turn: next_turn(),
+            planned: RefCell::new(None),
             read_source: RefCell::new(None),
             write_source: RefCell::new(None),
             timer: RefCell::new(None),
             closed: Cell::new(false),
+            classic: Cell::new(false),
             context_menu: RefCell::new(None),
             link_event: RefCell::new(None),
             clean_click: RefCell::new(None),
@@ -269,8 +604,15 @@ impl TermView {
     pub fn on_key_observer(&self, callback: KeyObserver) {
         *self.inner.key_observer.borrow_mut() = Some(callback);
     }
+    /// Geometry in tmux window rows: row 0 is the border line the pane header
+    /// is drawn over. A pane-native view keeps that row free above its text,
+    /// so overlays placed by tmux coordinates land where they always did.
     pub fn cell_geometry(&self) -> CellGeom {
-        self.inner.model.borrow().geom
+        let mut geom = self.inner.model.borrow().geom;
+        if self.inner.pane_native_wanted() {
+            geom.origin_y -= geom.cell_h;
+        }
+        geom
     }
     pub fn grid_size(&self) -> (u16, u16) {
         self.inner.model.borrow().engine.size()
@@ -336,7 +678,7 @@ impl TermView {
     }
     pub fn clear_selection(&self) {
         self.inner.model.borrow_mut().selection = None;
-        self.inner.area.queue_draw();
+        self.inner.redraw();
     }
     pub fn on_link_event(&self, callback: LinkCallback) {
         *self.inner.link_event.borrow_mut() = Some(callback);
@@ -375,11 +717,67 @@ impl TermView {
             .borrow_mut()
             .engine
             .feed(format!("\r\n{message}\r\n").as_bytes(), Instant::now());
-        self.inner.area.queue_draw();
+        self.inner.redraw();
         self.inner.area.set_tooltip_text(Some(message));
     }
     pub fn widget(&self) -> &gtk::DrawingArea {
         &self.inner.area
+    }
+    /// Hide or show Claude Code's gray tool noise in this terminal.
+    pub fn set_hide_noise(&self, on: bool) {
+        let mut m = self.inner.model.borrow_mut();
+        // Retired: cutting gray rows out of the picture tmux draws broke
+        // split panes (text cut at the pane edge, stale history banners). It
+        // returns as stable folding once every pane is drawn by the app.
+        let on = on && false;
+        if m.hide_noise != on {
+            m.hide_noise = on;
+            m.pick = None;
+            m.scrolls.clear();
+            drop(m);
+            self.inner.redraw();
+        }
+    }
+    /// The tmux panes inside this terminal (`left, width, top, height`), so
+    /// each one is filtered on its own columns.
+    pub fn set_regions(&self, regions: Vec<(String, u16, u16, u16, u16)>) {
+        let (ids, regions): (Vec<_>, Vec<_>) = regions
+            .into_iter()
+            .map(|(id, left, width, top, height)| {
+                (id, super::noise::Region { left, width, top, height })
+            })
+            .unzip();
+        let mut m = self.inner.model.borrow_mut();
+        if m.control.is_some() {
+            // The whole view is the pane; tmux draws no borders in it.
+            return;
+        }
+        if m.tmux_regions == regions && m.tmux_ids == ids {
+            return;
+        }
+        if m.tmux_ids != ids {
+            // Different panes: their history and any selection are gone.
+            m.fills.clear();
+            m.scrolls.clear();
+            m.pick = None;
+        }
+        m.tmux_regions = regions;
+        m.tmux_ids = ids;
+        drop(m);
+        self.inner.redraw();
+    }
+    /// Rows at the bottom that tmux uses for its status line.
+    pub fn set_status_rows(&self, rows: u16) {
+        self.inner.model.borrow_mut().status_rows = rows.min(2);
+    }
+    /// Where the filter reads tmux history to fill the rows it frees.
+    pub fn set_history_source(&self, source: HistorySource) {
+        *self.inner.history.borrow_mut() = Some(source);
+    }
+    /// Cell width and the horizontal widget pixels that are not cells.
+    pub fn cell_layout(&self) -> (f64, f64) {
+        let m = self.inner.model.borrow();
+        (m.geom.cell_w, m.geom.origin_x + (m.padding - 4.).max(0.))
     }
     pub fn feed(&self, bytes: &[u8]) -> Result<(), PtyError> {
         self.inner.send(bytes)
@@ -390,6 +788,15 @@ impl TermView {
     }
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), PtyError> {
         self.inner.resize(cols, rows)
+    }
+    /// Moves the view over its own history (positive: older lines).
+    pub fn scroll_lines(&self, lines: i32) {
+        self.inner.model.borrow_mut().glide += f64::from(lines);
+        self.inner.glide();
+    }
+    /// True while a tmux control client feeds this view (pane-native).
+    pub fn pane_native(&self) -> bool {
+        self.inner.model.borrow().control.as_ref().is_some_and(super::control::Session::seeded)
     }
     pub fn session(&self) -> Option<&str> {
         self.inner.options.session.as_deref()
@@ -445,7 +852,7 @@ impl TermView {
     }
     pub fn set_palette(&self, palette: Palette) {
         self.inner.model.borrow_mut().engine.set_palette(palette);
-        self.inner.area.queue_draw();
+        self.inner.redraw();
     }
 }
 impl Inner {
@@ -483,6 +890,7 @@ impl Inner {
         let (width, height) = layout.pixel_size();
         let line_scale = 1.2; // cc-app TERM_LINE_SCALE, not a preference.
         m.font = font;
+        self.painter.borrow_mut().take();
         m.geom.cell_w = f64::from(width.max(1));
         m.geom.cell_h = (f64::from(height.max(1)) * line_scale).ceil();
         m.geom.font_size = size * 96. / 72.;
@@ -494,7 +902,10 @@ impl Inner {
             .unwrap_or(8.)
             .clamp(0., 40.);
         m.geom.origin_x = m.padding + 2.;
-        m.geom.origin_y = m.padding + 14.;
+        // A classic attach starts with tmux's border line, and the pane's
+        // header is drawn over it. A pane-native view has no such line:
+        // leave that row free so the header does not cover text.
+        m.geom.origin_y = m.padding + 14. + if self.pane_native_wanted() { m.geom.cell_h } else { 0. };
         m.opacity = m
             .preferences
             .get("terminal_opacity")
@@ -507,7 +918,7 @@ impl Inner {
             Some("underline") => CursorShape::Underline,
             _ => CursorShape::Block,
         };
-        self.area.queue_draw();
+        self.redraw();
     }
     fn dimensions(&self) -> (u16, u16) {
         let m = self.model.borrow();
@@ -522,15 +933,142 @@ impl Inner {
             self.options.tmux_size,
         )
     }
+    /// Repaints the whole terminal on the next frame. Output alone goes
+    /// through `request_frame`, which repaints only the rows that changed.
+    fn redraw(&self) {
+        self.full.set(true);
+        self.area.queue_draw();
+    }
+    fn request_frame(self: &Rc<Self>) {
+        if self.frame_asked.replace(true) {
+            return;
+        }
+        self.asked_at.set(Some(Instant::now()));
+        // Runs before GTK's repaint but after every ready event source: tells
+        // a busy main loop from a frame clock waiting for the compositor.
+        self.free_at.set(None);
+        let free = self.free_at.clone();
+        glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || {
+            if free.get().is_none() {
+                free.set(Some(Instant::now()));
+            }
+            ControlFlow::Break
+        });
+        let weak = Rc::downgrade(self);
+        self.area.add_tick_callback(move |_, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.ticked_at.set(Some(Instant::now()));
+                inner.settle_output();
+                inner.frame_asked.set(false);
+                inner.plan_frame();
+            }
+            ControlFlow::Break
+        });
+    }
+    /// A redraw reaches the app in pieces a fraction of a millisecond apart
+    /// (tmux forwards the program's output 4 KB at a time). A frame that
+    /// starts between two pieces would show half a redraw, so it waits for
+    /// the PTY to go quiet: at most `SETTLE_OUTPUT_CAP`, and only when output
+    /// arrived within the last `SETTLE_OUTPUT_QUIET`.
+    fn settle_output(self: &Rc<Self>) {
+        let started = Instant::now();
+        while !self.closed.get() && self.area.is_mapped() {
+            let Some(left) = self
+                .read_at
+                .get()
+                .and_then(|at| SETTLE_OUTPUT_QUIET.checked_sub(at.elapsed()))
+                .filter(|_| started.elapsed() < SETTLE_OUTPUT_CAP)
+            else {
+                return;
+            };
+            let more = self.model.borrow().pty.as_ref().is_some_and(|p| p.wait_readable(left));
+            if !more {
+                return;
+            }
+            self.read_at.set(Some(Instant::now()));
+            if !self.read(IOCondition::IN) {
+                return;
+            }
+        }
+    }
+    /// Keeps the current picture while tmux and the program redraw for `size`.
+    fn hold_picture(&self, m: &mut Model, size: (u16, u16)) {
+        let live = self.options.session.is_some() && m.pty.is_some() && self.area.is_mapped();
+        if live && m.engine.size() != size && self.canvas.borrow().is_some() {
+            let now = self.ms();
+            m.hold = Some(Hold { since: now, cap_at: now.saturating_add(HOLD_CAP_MS), filling: false });
+        }
+    }
+    fn release_hold(&self, now: u64) {
+        let mut m = self.model.borrow_mut();
+        let Some(hold) = m.hold else { return };
+        if now < hold.due(m.output_ms) {
+            return;
+        }
+        if !hold.filling && now < hold.cap_at && m.hide_noise && self.history.borrow().is_some() {
+            // The new screen is read now and the history shown above the
+            // filtered text is asked for before the picture changes, so it
+            // does not pop in a moment later.
+            m.resized_ms = now;
+            self.prepare(&mut m, None);
+            if !m.fill_wanted.is_empty() {
+                m.hold = Some(Hold { filling: true, ..hold });
+                return;
+            }
+        }
+        self.end_hold(&mut m, now);
+        drop(m);
+        self.redraw();
+    }
+    fn end_hold(&self, m: &mut Model, now: u64) {
+        if let Some(hold) = m.hold.take() {
+            let (cols, rows) = m.engine.size();
+            super::lag::note(&format!(
+                "resize {} {cols}x{rows} held={}ms",
+                self.options.session.as_deref().unwrap_or("-"),
+                now.saturating_sub(hold.since)
+            ));
+        }
+        m.resized_ms = now;
+        m.output_at = None;
+        m.schedule.reset_queued_paint();
+    }
+    /// Ends a hold that only waited for history once none is on its way.
+    fn fill_arrived(&self) {
+        let mut m = self.model.borrow_mut();
+        if m.hold.is_some_and(|h| h.filling) && m.fill_busy.is_empty() {
+            let now = self.ms();
+            self.end_hold(&mut m, now);
+            drop(m);
+            self.redraw();
+        }
+    }
+    fn hold_delay(&self, m: &Model, now: u64) -> Option<u64> {
+        m.hold.map(|h| h.due(m.output_ms).saturating_sub(now))
+    }
     fn allocate(self: &Rc<Self>) {
         let now = self.ms();
         let mut m = self.model.borrow_mut();
         m.settle.on_alloc(now);
         if m.pty.is_some() {
-            m.resize_at = Some(now.saturating_add(RESIZE_QUIET_MS));
+            // A hidden tab waits for its turn: when every tab tells tmux its
+            // new size at once, every program redraws while the visible one
+            // is still settling.
+            let wait = if self.area.is_mapped() {
+                RESIZE_QUIET_MS
+            } else {
+                HIDDEN_RESIZE_MS.saturating_add(self.turn.saturating_mul(HIDDEN_RESIZE_STEP_MS))
+            };
+            m.resize_at = Some(now.saturating_add(wait));
         }
         drop(m);
         self.arm();
+    }
+    /// A tab shown before its turn takes the new size now.
+    fn resize_if_waiting(&self) {
+        if self.model.borrow().resize_at.is_some() {
+            self.resize_when_quiet(u64::MAX);
+        }
     }
     fn resize_when_quiet(&self, now: u64) {
         let due = self.model.borrow().resize_at.is_some_and(|at| now >= at);
@@ -542,10 +1080,13 @@ impl Inner {
         // Too small to read: keep the size the window already has and clip the
         // drawing, instead of shrinking the tmux window for every client.
         if self.options.session.is_some() && !fits_shared_window((c, r)) {
+            self.redraw();
             return;
         }
-        if self.model.borrow().engine.size() != (c, r) {
-            let _ = self.resize(c, r);
+        // Same grid, or a size the PTY refused: the picture kept while the
+        // window moved is painted again for the new area.
+        if self.model.borrow().engine.size() == (c, r) || self.resize(c, r).is_err() {
+            self.redraw();
         }
     }
     /// Seeing a tmux tab again takes its window back from any other client (phone,
@@ -554,10 +1095,18 @@ impl Inner {
         if self.options.mode == RunMode::Shadow || self.options.session.is_none() {
             return;
         }
-        let m = self.model.borrow();
-        if let Some(pty) = &m.pty {
+        let mut m = self.model.borrow_mut();
+        let m = &mut *m;
+        if let Some(pty) = &mut m.pty {
             let (cols, rows) = m.engine.size();
-            if fits_shared_window((cols, rows)) {
+            if !fits_shared_window((cols, rows)) {
+                return;
+            }
+            if let Some(control) = &mut m.control {
+                let mut wire = Vec::new();
+                control.claim(&mut wire);
+                let _ = pty.write(&wire);
+            } else {
                 let _ = pty.claim_size(cols, rows);
             }
         }
@@ -567,16 +1116,122 @@ impl Inner {
             return Ok(());
         }
         let mut m = self.model.borrow_mut();
-        if let Some(p) = &m.pty {
-            p.resize(cols, rows)?;
+        let m = &mut *m;
+        let wire = Self::native_resize(m, cols, rows);
+        match (&mut m.pty, wire) {
+            (Some(p), Some(wire)) => p.write(&wire)?,
+            (Some(p), None) => p.resize(cols, rows)?,
+            _ => {}
         }
         let px = (
             m.geom.cell_w.round().clamp(1., f64::from(u16::MAX)) as u16,
             m.geom.cell_h.round().clamp(1., f64::from(u16::MAX)) as u16,
         );
+        self.hold_picture(m, (cols, rows));
         m.engine.resize(cols, rows, px);
-        self.area.queue_draw();
+        self.redraw();
         Ok(())
+    }
+    /// Moves the view over its history a part of the way each frame: fast at
+    /// first, slowing as it arrives, and by fractions of a line in between.
+    fn glide(self: &Rc<Self>) {
+        if self.gliding.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.area.add_tick_callback(move |_, _| {
+            let Some(inner) = weak.upgrade().filter(|i| !i.closed.get()) else {
+                return ControlFlow::Break;
+            };
+            let mut m = inner.model.borrow_mut();
+            let left = m.glide;
+            // The last stretch lands the view exactly on a line.
+            let step = if left.abs() < 0.06 { left } else { left * 0.3 };
+            m.glide -= step;
+            let total = m.glide_frac + step;
+            let whole = total.floor();
+            m.glide_frac = total - whole;
+            let done = m.glide == 0.;
+            if done {
+                // Rounding left a hair of a line: settle on the grid.
+                m.glide_frac = if m.glide_frac > 0.5 { 1. } else { 0. };
+            }
+            let mut lines = whole as i32;
+            if m.glide_frac >= 1. {
+                m.glide_frac = 0.;
+                lines += 1;
+            }
+            let moved = if lines == 0 {
+                true
+            } else {
+                let before = m.engine.engine().display_offset();
+                m.engine.scroll(lines);
+                m.engine.engine().display_offset() != before
+            };
+            if !moved {
+                // The first or the last line: nothing further that way.
+                (m.glide, m.glide_frac) = (0., 0.);
+            }
+            let end = m.glide == 0. && m.glide_frac == 0.;
+            drop(m);
+            if lines != 0 || end {
+                inner.redraw();
+            } else {
+                inner.area.queue_draw();
+            }
+            if end {
+                inner.gliding.set(false);
+                ControlFlow::Break
+            } else {
+                ControlFlow::Continue
+            }
+        });
+    }
+    fn pane_native_wanted(&self) -> bool {
+        self.options.control_argv.is_some() && !self.classic.get()
+    }
+    /// The control-mode command line, unless this view fell back to classic.
+    fn control_argv(&self) -> Option<&Vec<String>> {
+        self.options.control_argv.as_ref().filter(|_| !self.classic.get())
+    }
+    /// After a fallback the header row belongs to tmux's border again.
+    fn fit_header(&self) {
+        let mut m = self.model.borrow_mut();
+        m.geom.origin_y = m.padding + 14. + if self.pane_native_wanted() { m.geom.cell_h } else { 0. };
+    }
+    /// Starts (or clears) the control session of a freshly spawned client.
+    fn begin_native(model: &mut Model, on: bool) {
+        model.control = on.then(super::control::Session::default);
+        if on {
+            model.hide_noise = false;
+            model.tmux_regions.clear();
+            model.tmux_ids.clear();
+            model.fills.clear();
+            model.scrolls.clear();
+            model.pick = None;
+        }
+    }
+    /// Typed bytes as control commands (`None`: a classic client takes them raw).
+    fn native_input(m: &mut Model, bytes: &[u8]) -> Option<Vec<u8>> {
+        let control = m.control.as_mut()?;
+        let mut wire = Vec::new();
+        control.input(bytes, &mut wire);
+        // Typing goes to the live screen, like in any terminal. Focus and
+        // mouse reports are not typing: the view stays where it was read.
+        let report = [&b"\x1b[I"[..], b"\x1b[O", b"\x1b[<", b"\x1b[M"].iter().any(|p| bytes.starts_with(p));
+        if !report {
+            m.engine.scroll(i32::MIN / 2);
+            (m.glide, m.glide_frac) = (0., 0.);
+        }
+        Some(wire)
+    }
+    /// The new size as a control command: tmux sizes the window from what
+    /// the client says, not from the PTY the control stream travels on.
+    fn native_resize(m: &mut Model, cols: u16, rows: u16) -> Option<Vec<u8>> {
+        let control = m.control.as_mut()?;
+        let mut wire = Vec::new();
+        control.resize(cols, rows, &mut wire);
+        Some(wire)
     }
     fn spawn(self: &Rc<Self>) -> Result<(), PtyError> {
         if self.options.mode == RunMode::Shadow {
@@ -585,12 +1240,14 @@ impl Inner {
         if let Some(before) = &self.options.before_spawn {
             before().map_err(PtyError::Spawn)?;
         }
+        self.fit_header();
         let (mut cols, mut rows) = self.dimensions();
         if self.options.session.is_some() && !fits_shared_window((cols, rows)) {
             (cols, rows) = self.options.tmux_size.unwrap_or((80, 24));
         }
+        let control = self.control_argv();
         let p = PtySession::spawn_with_env(
-            &self.options.argv,
+            control.unwrap_or(&self.options.argv),
             cols,
             rows,
             &self.options.cwd,
@@ -602,19 +1259,36 @@ impl Inner {
             let mut model = self.model.borrow_mut();
             model.pty = Some(p);
             model.drain = PtyDrain::default();
+            Self::begin_native(&mut model, control.is_some());
         }
         self.resize(cols, rows)?;
+        self.watch_read(fd);
+        Ok(())
+    }
+    /// Reads the PTY when it has output. A tab on screen is read ahead of
+    /// GTK's repaint; a hidden one only when the main loop has nothing else
+    /// to do, so the output of every other tab cannot delay the visible one
+    /// (tmux keeps what a slow client has not read).
+    fn watch_read(self: &Rc<Self>, fd: i32) {
         if let Some(source) = self.read_source.borrow_mut().take() {
             source.remove();
         }
-        let weak = Rc::downgrade(self);
-        *self.read_source.borrow_mut() = Some(glib::source::unix_fd_add_local(
+        let priority = if self.area.is_mapped() {
+            glib::Priority::DEFAULT
+        } else {
+            glib::Priority::DEFAULT_IDLE
+        };
+        let weak = glib::thread_guard::ThreadGuard::new(Rc::downgrade(self));
+        let source = glib::source::unix_fd_source_new(
             fd,
             IOCondition::IN | IOCondition::HUP | IOCondition::ERR,
+            None,
+            priority,
             move |_, condition| {
-                let Some(inner) = weak.upgrade() else {
+                let Some(inner) = weak.get_ref().upgrade() else {
                     return ControlFlow::Break;
                 };
+                inner.read_at.set(Some(Instant::now()));
                 if inner.read(condition) {
                     ControlFlow::Continue
                 } else {
@@ -622,19 +1296,33 @@ impl Inner {
                     ControlFlow::Break
                 }
             },
-        ));
-        Ok(())
+        );
+        *self.read_source.borrow_mut() = Some(source.attach(None));
+    }
+    /// Moves the PTY read to the priority of the tab's new visibility.
+    fn rewatch_read(self: &Rc<Self>) {
+        if self.read_source.borrow().is_none() {
+            return;
+        }
+        let fd = self.model.borrow().pty.as_ref().map(PtySession::raw_fd);
+        if let Some(fd) = fd {
+            self.watch_read(fd);
+        }
     }
     fn send(self: &Rc<Self>, bytes: &[u8]) -> Result<(), PtyError> {
         if self.options.mode == RunMode::Shadow || self.closed.get() {
             return Err(PtyError::Io("terminal is read-only or closed".into()));
         }
-        let mut m = self.model.borrow_mut();
-        let Some(p) = m.pty.as_mut() else {
+        let mut guard = self.model.borrow_mut();
+        let m = &mut *guard;
+        if m.pty.is_none() {
             return Err(PtyError::Io("PTY not attached".into()));
-        };
-        p.write(bytes)?;
-        drop(m);
+        }
+        let wire = Self::native_input(m, bytes);
+        if let Some(p) = m.pty.as_mut() {
+            p.write(wire.as_deref().unwrap_or(bytes))?;
+        }
+        drop(guard);
         self.watch_write();
         Ok(())
     }
@@ -694,14 +1382,53 @@ impl Inner {
     }
     fn read(self: &Rc<Self>, condition: IOCondition) -> bool {
         let mut m = self.model.borrow_mut();
+        let mut fallback = None;
         let outcome = {
             let Model {
-                pty, engine, drain, ..
+                pty, engine, drain, control, ..
             } = &mut *m;
-            pty.as_mut().map_or(DrainOutcome::Closed, |pty| {
-                drain.read_into(pty, |bytes| engine.feed(bytes, Instant::now()))
+            pty.as_mut().map_or(DrainOutcome::Closed, |pty| match control {
+                None => drain.read_into(pty, |bytes| engine.feed(bytes, Instant::now())),
+                Some(control) => {
+                    let (mut wire, mut actions) = (Vec::new(), Vec::new());
+                    let outcome = drain.read_into(pty, |bytes| control.read(bytes, &mut wire, &mut actions));
+                    for action in actions {
+                        match action {
+                            super::control::Action::Feed(bytes) => engine.feed(&bytes, Instant::now()),
+                            super::control::Action::Fallback(why) => fallback = fallback.or(Some(why)),
+                            super::control::Action::Exited => {
+                                engine.feed(b"\x1b[0m\r\n", Instant::now());
+                            }
+                        }
+                    }
+                    if !wire.is_empty() {
+                        let _ = pty.write(&wire);
+                    }
+                    outcome
+                }
             })
         };
+        let native = m.control.is_some();
+        if let Some(why) = fallback {
+            // Splits and extra windows still need tmux to draw them: drop the
+            // control client and attach the classic way, now.
+            super::lag::note(&format!(
+                "control {} falls back: {why}",
+                self.options.session.as_deref().unwrap_or("-")
+            ));
+            self.classic.set(true);
+            m.engine.feed(b"\x1bc", Instant::now());
+            m.control = None;
+            m.pty.take();
+            m.drain = PtyDrain::default();
+            m.respawn_at = Some(self.ms());
+            drop(m);
+            if let Some(source) = self.write_source.borrow_mut().take() {
+                source.remove();
+            }
+            self.arm();
+            return false;
+        }
         let closed = outcome == DrainOutcome::Closed
             || (outcome == DrainOutcome::WouldBlock
                 && condition.intersects(IOCondition::HUP | IOCondition::ERR));
@@ -715,11 +1442,30 @@ impl Inner {
         }
         m.schedule.damage(self.ms(), &lines);
         if !lines.is_empty() {
+            if let Some(key) = m.key_at.take() {
+                let echo = super::lag::ms(key);
+                if echo > super::lag::SLOW_ECHO_MS {
+                    super::lag::note(&format!(
+                        "echo {echo:.0}ms {}",
+                        self.options.session.as_deref().unwrap_or("-")
+                    ));
+                }
+            }
+            m.output_ms = self.ms();
+            if self.area.is_mapped() && m.output_at.is_none() {
+                m.output_at = Some(Instant::now());
+            }
             m.hovered_link = None;
             m.last_motion = None;
         }
         drop(m);
-        if !drained.replies.is_empty() {
+        if native {
+            // Queued commands (a size, the first queries) leave now.
+            self.watch_write();
+        }
+        // In control mode tmux is the program's terminal and has already
+        // answered its queries; answering again would type garbage into it.
+        if !drained.replies.is_empty() && !native {
             self.send_event(&drained.replies);
         }
         if let Some(title) = drained.title
@@ -747,6 +1493,11 @@ impl Inner {
         if self.closed.get() {
             return;
         }
+        // A hidden tab paints nothing: its output must not replace the timer
+        // on every read. The one pending (100 ms at most) does the rest.
+        if !self.area.is_mapped() && self.timer.borrow().is_some() {
+            return;
+        }
         if let Some(id) = self.timer.borrow_mut().take() {
             id.remove();
         }
@@ -755,7 +1506,7 @@ impl Inner {
         // Request this GTK frame directly: rearming the maintenance timeout on
         // every PTY read can otherwise postpone painting under continuous output.
         if m.schedule.queue_due_paint(now, self.area.is_mapped()) {
-            self.area.queue_draw();
+            self.request_frame();
         }
         // fd readiness drives IO; the low-rate fallback observes exit status.
         let mut delay = if m.drain.has_exited() && m.drain.finished().is_none() {
@@ -781,6 +1532,9 @@ impl Inner {
         if let Some(at) = m.resize_at {
             delay = delay.min(at.saturating_sub(now));
         }
+        if let Some(left) = self.hold_delay(&m, now) {
+            delay = delay.min(left);
+        }
         if let Some(at) = m.engine.next_deadline() {
             let ms = u64::try_from(at.saturating_duration_since(self.epoch).as_millis())
                 .unwrap_or(u64::MAX);
@@ -805,6 +1559,9 @@ impl Inner {
     fn tick(self: &Rc<Self>) {
         let now = self.ms();
         self.resize_when_quiet(now);
+        self.release_hold(now);
+        self.fetch_history(now);
+        self.fill_arrived();
         let mut m = self.model.borrow_mut();
         let spawn = self.options.mode != RunMode::Shadow
             && m.respawn.may_start()
@@ -876,10 +1633,10 @@ impl Inner {
         if mapped && blink && m.schedule.blink_due(now) {
             m.blink_visible = !m.blink_visible;
             m.schedule.blinked(now);
-            self.area.queue_draw();
+            self.request_frame();
         }
         if m.schedule.queue_due_paint(now, mapped) {
-            self.area.queue_draw();
+            self.request_frame();
         }
         let ssh = if m.ssh_at.is_some_and(|at| now >= at) {
             m.ssh_at = None;
@@ -958,13 +1715,14 @@ impl Inner {
         match action {
             KeyAction::Send(bytes) => {
                 self.send_event(&bytes);
+                self.model.borrow_mut().key_at = Some(Instant::now());
                 glib::Propagation::Stop
             }
             KeyAction::ScrollPage(direction) => {
                 let mut m = self.model.borrow_mut();
                 let rows = i32::from(m.engine.size().1);
                 m.engine.scroll(-direction * rows);
-                self.area.queue_draw();
+                self.redraw();
                 glib::Propagation::Stop
             }
             KeyAction::None => glib::Propagation::Proceed,
@@ -972,6 +1730,9 @@ impl Inner {
     }
     fn selection_text(&self) -> Option<String> {
         let m = self.model.borrow();
+        if let Some(pick) = m.pick.filter(|p| p.dragged) {
+            return visible_text(&m, &pick).filter(|text| !text.is_empty());
+        }
         m.selection
             .map(|s| selected_text(m.engine.engine(), &s))
             .filter(|text| !text.is_empty())
@@ -981,10 +1742,26 @@ impl Inner {
         let (cols, rows) = m.engine.size();
         let col = ((x - m.geom.origin_x).max(0.) / m.geom.cell_w).floor() as u16;
         let row = ((y - m.geom.origin_y).max(0.) / m.geom.cell_h).floor() as u16;
-        (
-            col.min(cols.saturating_sub(1)),
-            row.min(rows.saturating_sub(1)),
-        )
+        let (col, row) = (col.min(cols.saturating_sub(1)), row.min(rows.saturating_sub(1)));
+        // A filtered pane shows grid rows somewhere else: find the one drawn here.
+        let row = m
+            .noise_maps
+            .iter()
+            .find(|(r, _)| {
+                col >= r.left
+                    && col < r.left.saturating_add(r.width)
+                    && row >= r.top
+                    && row < r.top.saturating_add(r.height)
+            })
+            .and_then(|(r, map)| {
+                map.iter()
+                    .position(|d| *d == Some(row))
+                    .or_else(|| map.iter().position(Option::is_some))
+                    .and_then(|i| u16::try_from(i).ok())
+                    .map(|i| r.top.saturating_add(i))
+            })
+            .unwrap_or(row);
+        (col, row)
     }
     fn absolute(&self, col: u16, row: u16) -> Point {
         let offset =
@@ -992,6 +1769,615 @@ impl Inner {
         (i32::from(row).saturating_sub(offset), col)
     }
 }
+impl Inner {
+    /// The tab is seen again. Its screen kept up while hidden, so the history
+    /// above the filtered text is read from tmux now instead of once output
+    /// goes quiet: no late text and no copy from the last visit.
+    fn shown(self: &Rc<Self>) {
+        let now = self.ms();
+        {
+            let mut m = self.model.borrow_mut();
+            m.shown_ms = now;
+            m.shown_at = Some(Instant::now());
+            m.shown_fill = None;
+            if !m.hide_noise || self.history.borrow().is_none() || m.pty.is_none() {
+                return;
+            }
+            self.prepare(&mut m, None);
+        }
+        self.fetch_history(now);
+        let mut m = self.model.borrow_mut();
+        if !m.fill_busy.is_empty() {
+            m.shown_fill = m.shown_at;
+        }
+    }
+    /// Read the history above panes whose hidden noise left empty rows: right
+    /// after output goes quiet, or at most once a second while it streams.
+    fn fetch_history(self: &Rc<Self>, now: u64) {
+        let Some(source) = self.history.borrow().clone() else {
+            return;
+        };
+        let mut m = self.model.borrow_mut();
+        if m.fill_wanted.is_empty() || !m.hide_noise {
+            return;
+        }
+        // Right after a wheel scroll the fill is wrong: refresh as soon as
+        // tmux has redrawn instead of waiting for output to settle.
+        let recent = |at: u64| now.saturating_sub(at) < 1500;
+        let settle = if recent(m.scroll_ms) || recent(m.resized_ms) || recent(m.shown_ms) { 40 } else { 200 };
+        let quiet = now.saturating_sub(m.output_ms) >= settle;
+        // The live screen is read too (see `Fill::screen`).
+        let whole = m.engine.size().1.saturating_sub(m.status_rows);
+        let jobs: Vec<(String, u16, u16)> = m
+            .fill_wanted
+            .iter()
+            .filter(|(id, _)| {
+                !m.fill_busy.contains(id)
+                    && (quiet
+                        || m.fills
+                            .get(id)
+                            .is_none_or(|f| now.saturating_sub(f.asked_ms) >= if f.loose { 250 } else { 1000 }))
+            })
+            .map(|(id, lines)| {
+                let screen = if id.is_empty() {
+                    whole
+                } else {
+                    m.pane_ids
+                        .iter()
+                        .position(|p| p == id)
+                        .and_then(|i| m.regions.get(i))
+                        .map_or(0, |r| r.height)
+                };
+                (id.clone(), *lines, screen)
+            })
+            .collect();
+        m.fill_wanted.retain(|(id, _)| !jobs.iter().any(|j| j.0 == *id));
+        for (id, ..) in &jobs {
+            m.fill_busy.insert(id.clone());
+        }
+        drop(m);
+        for (id, lines, screen) in jobs {
+            let target = if id.is_empty() {
+                match self.options.session.as_deref() {
+                    Some(session) => format!("={session}:"),
+                    None => continue,
+                }
+            } else {
+                id.clone()
+            };
+            let weak = Rc::downgrade(self);
+            source(
+                target,
+                -i64::from(lines),
+                i64::from(screen) - 1,
+                Box::new(move |text| {
+                    if let Some(inner) = weak.upgrade() {
+                        inner.store_history(id, lines, screen, now, text);
+                        inner.fill_arrived();
+                    }
+                }),
+            );
+        }
+    }
+    fn store_history(&self, id: String, lines: u16, screen: u16, asked_ms: u64, text: Option<String>) {
+        let mut m = self.model.borrow_mut();
+        m.fill_busy.remove(&id);
+        let (cols, rows) = m.engine.size();
+        let region = if id.is_empty() {
+            Some(super::noise::Region { left: 0, width: cols, top: 0, height: rows })
+        } else {
+            m.pane_ids
+                .iter()
+                .position(|p| *p == id)
+                .and_then(|i| m.regions.get(i).copied())
+        };
+        let Some(r) = region else {
+            return;
+        };
+        let fill = parse_fill(&m, &r, &text.unwrap_or_default(), lines, usize::from(screen), asked_ms, self.epoch);
+        m.fills.insert(id, fill);
+        if let Some(at) = m.shown_fill.take() {
+            super::lag::note(&format!(
+                "shown {} history={:.0}ms",
+                self.options.session.as_deref().unwrap_or("-"),
+                super::lag::ms(at)
+            ));
+        }
+        drop(m);
+        self.redraw();
+    }
+    /// Wheel over a pane: scroll it here when the filter owns it (see
+    /// `Scroll`). False leaves the wheel to tmux.
+    fn app_scroll(self: &Rc<Self>, x: f64, y: f64, lines: i32) -> bool {
+        let mut m = self.model.borrow_mut();
+        if !m.hide_noise || self.history.borrow().is_none() {
+            return false;
+        }
+        let (col, row) = raw_cell(&m, x, y);
+        let Some(r) = m
+            .regions
+            .iter()
+            .find(|r| {
+                col >= r.left
+                    && col < r.left.saturating_add(r.width)
+                    && row >= r.top
+                    && row < r.top.saturating_add(r.height)
+            })
+            .copied()
+        else {
+            return false;
+        };
+        if m.regions.is_empty() || copy_pos(&m, &r) > 0 {
+            return false;
+        }
+        let Some(id) = region_id(&m, &r).filter(|id| !id.is_empty()) else {
+            return false;
+        };
+        let Some(input) = super::noise::input_top(m.frame.inks(), &r) else {
+            m.scrolls.remove(&id);
+            return false;
+        };
+        if lines == 0 {
+            return true;
+        }
+        let key = scroll_key(&id);
+        let snap = m
+            .fills
+            .get(&key)
+            .filter(|f| f.fits(&m, &r))
+            .map(|f| (f.picks.len().saturating_sub(usize::from(input)), f.more));
+        let scroll = m.scrolls.entry(id.clone()).or_insert(Scroll { back: 0, lines: 0, busy: false });
+        scroll.back = usize::try_from((scroll.back as i64 - i64::from(lines)).max(0)).unwrap_or(0);
+        if let Some((room, _)) = snap {
+            scroll.back = scroll.back.min(room);
+        }
+        if scroll.back == 0 {
+            m.scrolls.remove(&id);
+            m.fills.remove(&key);
+            drop(m);
+            self.redraw();
+            return true;
+        }
+        // Read the history the first time, and more of it near the top.
+        let ask = match snap {
+            _ if scroll.busy => None,
+            None if scroll.lines == 0 => Some(SCROLL_LINES),
+            Some((room, true)) if scroll.back + usize::from(input) >= room && scroll.lines < MAX_SCROLL_LINES => {
+                Some(scroll.lines.saturating_mul(2).min(MAX_SCROLL_LINES))
+            }
+            _ => None,
+        };
+        if let Some(lines) = ask {
+            scroll.lines = lines;
+            scroll.busy = true;
+        }
+        drop(m);
+        if let Some(lines) = ask
+            && let Some(source) = self.history.borrow().clone()
+        {
+            let weak = Rc::downgrade(self);
+            let asked_ms = self.ms();
+            source(
+                id.clone(),
+                -i64::from(lines),
+                i64::from(input) - 1,
+                Box::new(move |text| {
+                    if let Some(inner) = weak.upgrade() {
+                        inner.store_scroll(id, r, lines, input, asked_ms, text);
+                    }
+                }),
+            );
+        }
+        self.redraw();
+        true
+    }
+    fn store_scroll(
+        &self,
+        id: String,
+        r: super::noise::Region,
+        lines: u16,
+        input: u16,
+        asked_ms: u64,
+        text: Option<String>,
+    ) {
+        let mut m = self.model.borrow_mut();
+        let Some(scroll) = m.scrolls.get_mut(&id) else {
+            return;
+        };
+        scroll.busy = false;
+        let Some(text) = text else {
+            return;
+        };
+        let mut fill = parse_fill(&m, &r, &text, lines, 0, asked_ms, self.epoch);
+        fill.base = fill.count.saturating_sub(usize::from(input));
+        let room = fill.picks.len().saturating_sub(usize::from(input));
+        let back = m.scrolls.get_mut(&id).map_or(0, |s| {
+            s.back = s.back.min(room);
+            s.back
+        });
+        if back == 0 {
+            m.scrolls.remove(&id);
+        } else {
+            m.fills.insert(scroll_key(&id), fill);
+        }
+        drop(m);
+        self.redraw();
+    }
+}
+/// tmux lines read for a pane, parsed and with the noise rows left out. The
+/// last `screen` of them are the live screen (0: only lines to show).
+fn parse_fill(
+    m: &Model,
+    r: &super::noise::Region,
+    text: &str,
+    lines: u16,
+    screen: usize,
+    asked_ms: u64,
+    epoch: Instant,
+) -> Fill {
+    let captured: Vec<&str> = text.lines().collect();
+    let count = u16::try_from(captured.len()).unwrap_or(u16::MAX).max(1);
+    let mut engine = TermEngine::new(r.width, count, 0, m.engine.palette().clone(), false, epoch);
+    engine.feed(captured.join("\r\n").as_bytes(), Instant::now());
+    let mut geom = m.geom;
+    geom.origin_x += f64::from(r.left) * geom.cell_w;
+    let mut frame = FrameCache::default();
+    frame.refresh(&engine, &geom);
+    let (picks, blank): (Vec<usize>, Vec<bool>) = if captured.is_empty() {
+        Default::default()
+    } else {
+        super::noise::kept_rows(frame.inks(), r.width).into_iter().unzip()
+    };
+    let total = captured.len();
+    let screen = screen.min(total);
+    let marks_from = total.saturating_sub(screen * 2);
+    let mut marks = Vec::new();
+    if screen > 0 {
+        let mut row = RowRender::default();
+        for line in marks_from..total {
+            engine.render_line(line, &mut row);
+            marks.push(super::pick::row_mark(&row, 0, r.width));
+        }
+    }
+    let mut fill = Fill {
+        frame,
+        engine,
+        picks,
+        blank,
+        end: 0,
+        asked_ms,
+        count: total,
+        base: 0,
+        screen,
+        marks,
+        marks_from,
+        aligned: screen == 0,
+        matched_ms: 0,
+        loose: false,
+        sure: false,
+        lines,
+        more: total - screen >= usize::from(lines),
+        left: r.left,
+        width: r.width,
+        geom: m.geom,
+    };
+    fill.set_base(total - screen);
+    if screen == 0 {
+        fill.picks.truncate(fill.end);
+        fill.blank.truncate(fill.end);
+    }
+    fill
+}
+/// The cell under a pointer, in display rows (no noise mapping).
+fn raw_cell(m: &Model, x: f64, y: f64) -> (u16, u16) {
+    let (col, row) = raw_point(m, x, y);
+    let (_, rows) = m.engine.size();
+    (col, u16::try_from(row.max(0)).unwrap_or(0).min(rows.saturating_sub(1)))
+}
+/// Like `raw_cell`, but the row may fall above or below the terminal.
+fn raw_point(m: &Model, x: f64, y: f64) -> (u16, i32) {
+    let (cols, _) = m.engine.size();
+    let col = ((x - m.geom.origin_x).max(0.) / m.geom.cell_w).floor() as u16;
+    let row = ((y - m.geom.origin_y) / m.geom.cell_h).floor() as i32;
+    (col.min(cols.saturating_sub(1)), row)
+}
+
+fn region_id(m: &Model, r: &super::noise::Region) -> Option<String> {
+    if m.regions.is_empty() {
+        return Some(String::new());
+    }
+    m.regions.iter().position(|x| x == r).and_then(|i| m.pane_ids.get(i).cloned())
+}
+
+/// History drawn above this pane's screen rows, and how many visible lines
+/// back it is scrolled.
+fn usable_fill<'a>(m: &'a Model, r: &super::noise::Region) -> Option<(&'a Fill, usize)> {
+    let id = region_id(m, r)?;
+    if let Some(scroll) = m.scrolls.get(&id)
+        && let Some(snap) = m.fills.get(&scroll_key(&id)).filter(|f| f.fits(m, r))
+    {
+        return Some((snap, scroll.back));
+    }
+    m.fills
+        .get(&id)
+        .filter(|f| f.fits(m, r) && f.asked_ms >= m.scroll_ms && f.current(m.shown_ms))
+        .map(|f| (f, 0))
+}
+/// The input box row of a pane the app has scrolled back, when its copy of
+/// the history is ready.
+fn scrolled_input(m: &Model, r: &super::noise::Region) -> Option<u16> {
+    let id = region_id(m, r)?;
+    m.scrolls.get(&id)?;
+    m.fills.get(&scroll_key(&id)).filter(|f| f.fits(m, r))?;
+    super::noise::input_top(m.frame.inks(), r)
+}
+
+fn copy_pos(m: &Model, r: &super::noise::Region) -> u32 {
+    m.copy_pos.iter().find(|(x, _)| x == r).map_or(0, |(_, p)| *p)
+}
+
+/// The tmux line shown on each row of a pane (None: an empty row).
+fn region_lines(m: &Model, r: &super::noise::Region) -> Vec<Option<i64>> {
+    let height = usize::from(r.height);
+    let pos = i64::from(copy_pos(m, r));
+    let Some((_, map)) = m.noise_maps.iter().find(|(x, _)| x == r) else {
+        return (0..height).map(|i| Some(i as i64 - pos)).collect();
+    };
+    let mut out = vec![None; height];
+    for (i, shown) in map.iter().enumerate() {
+        if let Some(shown) = shown
+            && let Some(slot) = out.get_mut(usize::from(shown.saturating_sub(r.top)))
+        {
+            *slot = Some(i as i64);
+        }
+    }
+    let holes = usize::from(super::noise::holes(map, r));
+    if let Some((fill, skip)) = usable_fill(m, r) {
+        let shown = fill.shown(skip, holes);
+        let first = holes - shown.len();
+        for (k, &j) in shown.iter().enumerate() {
+            if let Some(slot) = out.get_mut(first + k) {
+                *slot = Some(j as i64 - fill.base as i64);
+            }
+        }
+    }
+    out
+}
+
+/// Start an app-side selection when the press lands inside a tmux pane.
+fn start_pick(m: &mut Model, x: f64, y: f64, kind: gdk::EventType, mods: (bool, bool, bool)) -> bool {
+    let (col, row) = raw_cell(m, x, y);
+    let Some(region) = m
+        .regions
+        .iter()
+        .find(|r| {
+            col >= r.left
+                && col < r.left.saturating_add(r.width)
+                && row >= r.top
+                && row < r.top.saturating_add(r.height)
+        })
+        .copied()
+    else {
+        return false;
+    };
+    let lines = region_lines(m, &region);
+    let mut pick = super::pick::Pick::new(region, (0, col), (col, i32::from(row)), mods);
+    let Some(at) = pick.spot_at_pointer(&lines) else {
+        return false;
+    };
+    pick.anchor = at;
+    pick.head = at;
+    match kind {
+        gdk::EventType::DoubleButtonPress => {
+            let cells = display_cells(m, &region, row);
+            let (from, to) = super::pick::word_bounds(&cells, usize::from(col - region.left));
+            let at_col = |i: usize| region.left.saturating_add(u16::try_from(i).unwrap_or(0));
+            pick.anchor = (at.0, at_col(from));
+            pick.head = (at.0, at_col(to));
+            pick.dragged = true;
+        }
+        gdk::EventType::TripleButtonPress => {
+            pick.anchor = (at.0, region.left);
+            pick.head = (at.0, pick.right());
+            pick.dragged = true;
+        }
+        _ => {}
+    }
+    m.pick = Some(pick);
+    true
+}
+
+/// The link under the pointer. A row the noise filter filled with history
+/// (or a pane scrolled here) is not in the grid: its link is read from the
+/// text drawn there, not from the grid row `point` falls back to.
+fn link_under(m: &Model, x: f64, y: f64, point: Point, (col, row): (u16, u16)) -> Option<String> {
+    let (raw_col, raw_row) = raw_cell(m, x, y);
+    let Some(r) = history_region(m, raw_col, raw_row) else {
+        return super::links::link_at(&m.engine, point, row, col);
+    };
+    let first = raw_row.saturating_sub(3).max(r.top);
+    let last = raw_row.saturating_add(5).min(r.top.saturating_add(r.height));
+    let rows: Vec<Vec<String>> = (first..last).map(|line| display_cells(m, r, line)).collect();
+    if rows.iter().all(|cells| cells.iter().all(|c| c.trim().is_empty())) {
+        return None;
+    }
+    super::links::link_in_cells(
+        &rows,
+        usize::from(raw_row - first),
+        usize::from(raw_col - r.left),
+        None,
+        |_| false,
+    )
+}
+
+/// The pane whose display row `row` is not a grid row (history or blank).
+fn history_region(m: &Model, col: u16, row: u16) -> Option<&super::noise::Region> {
+    m.noise_maps
+        .iter()
+        .find(|(r, map)| {
+            col >= r.left
+                && col < r.left.saturating_add(r.width)
+                && row >= r.top
+                && row < r.top.saturating_add(r.height)
+                && !map.contains(&Some(row))
+        })
+        .map(|(r, _)| r)
+}
+
+/// The cells shown on display row `row` of a pane: a grid row, a row of
+/// history filled in above it, or nothing.
+fn display_cells(m: &Model, r: &super::noise::Region, row: u16) -> Vec<String> {
+    let mut render = RowRender::default();
+    let Some((_, map)) = m.noise_maps.iter().find(|(x, _)| x == r) else {
+        m.engine.render_line(usize::from(row), &mut render);
+        return super::pick::cells_of(&render, r.left, r.width);
+    };
+    if let Some(i) = map.iter().position(|d| *d == Some(row)) {
+        m.engine.render_line(usize::from(r.top) + i, &mut render);
+        return super::pick::cells_of(&render, r.left, r.width);
+    }
+    let holes = super::noise::holes(map, r);
+    let first = r.top.saturating_add(holes);
+    if let Some((fill, skip)) = usable_fill(m, r) {
+        let shown = fill.shown(skip, usize::from(holes));
+        let top = usize::from(first).saturating_sub(shown.len());
+        if usize::from(row) >= top && row < first {
+            if let Some(&j) = shown.get(usize::from(row) - top) {
+                fill.engine.render_line(j, &mut render);
+                return super::pick::cells_of(&render, 0, r.width);
+            }
+        }
+    }
+    vec![String::from(" "); usize::from(r.width)]
+}
+
+/// The selected text when both ends are on screen, as the screen shows it
+/// (rows the noise filter hides are left out). None when part of it is not.
+fn visible_text(m: &Model, pick: &super::pick::Pick) -> Option<String> {
+    let r = pick.region;
+    let lines = region_lines(m, &r);
+    let (a, b) = pick.ordered();
+    if !lines.contains(&Some(a.0)) || !lines.contains(&Some(b.0)) {
+        return None;
+    }
+    Some(
+        pick.spans(&lines)
+            .into_iter()
+            .map(|(row, from, to)| {
+                let cells = display_cells(m, &r, row);
+                super::pick::span_text(&cells, usize::from(from - r.left), usize::from(to - r.left))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// Text of tmux lines read for a pick that left the screen.
+fn captured_text(text: &str, pick: &super::pick::Pick, palette: &Palette, epoch: Instant) -> String {
+    let r = pick.region;
+    let rows: Vec<&str> = text.lines().collect();
+    let count = u16::try_from(rows.len()).unwrap_or(u16::MAX).max(1);
+    let mut engine = TermEngine::new(r.width, count, 0, palette.clone(), false, epoch);
+    engine.feed(rows.join("\r\n").as_bytes(), Instant::now());
+    let (a, b) = pick.ordered();
+    let last = rows.len().saturating_sub(1);
+    let mut render = RowRender::default();
+    (0..rows.len())
+        .map(|k| {
+            engine.render_line(k, &mut render);
+            let cells = super::pick::cells_of(&render, 0, r.width);
+            let from = if k == 0 { usize::from(a.1 - r.left) } else { 0 };
+            let to = if k == last { usize::from(b.1 - r.left) } else { usize::from(r.width) - 1 };
+            super::pick::span_text(&cells, from, to)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+impl Inner {
+    /// Copy a finished pick: from the screen when it is all visible, else
+    /// read the lines from tmux off the main thread.
+    fn copy_pick(self: &Rc<Self>, pick: super::pick::Pick) {
+        let m = self.model.borrow();
+        if let Some(text) = visible_text(&m, &pick) {
+            drop(m);
+            self.copy_text(&text);
+            return;
+        }
+        let (Some(id), Some(source)) = (region_id(&m, &pick.region), self.history.borrow().clone())
+        else {
+            return;
+        };
+        let target = if id.is_empty() {
+            match self.options.session.as_deref() {
+                Some(session) => format!("={session}:"),
+                None => return,
+            }
+        } else {
+            id
+        };
+        let palette = m.engine.palette().clone();
+        drop(m);
+        let (a, b) = pick.ordered();
+        let weak = Rc::downgrade(self);
+        let epoch = self.epoch;
+        source(
+            target,
+            a.0,
+            b.0,
+            Box::new(move |text| {
+                if let (Some(inner), Some(text)) = (weak.upgrade(), text) {
+                    inner.copy_text(&captured_text(&text, &pick, &palette, epoch));
+                }
+            }),
+        );
+    }
+    fn copy_text(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.clipboard
+            .copy_selection(text, glib::monotonic_time() as f64 / 1_000_000.);
+        self.clipboard.copy(crate::ui::clipboard::Target::Primary, text);
+    }
+    /// While a drag sits above or below its pane, scroll tmux that way.
+    fn pick_autoscroll(self: &Rc<Self>) {
+        if self.pick_timer.borrow().is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local(Duration::from_millis(70), move || {
+            let Some(inner) = weak.upgrade() else {
+                return ControlFlow::Break;
+            };
+            let m = inner.model.borrow();
+            let Some(pick) = m.pick.filter(|p| p.held && p.edge() != 0) else {
+                drop(m);
+                inner.pick_timer.borrow_mut().take();
+                return ControlFlow::Break;
+            };
+            let edge = pick.edge();
+            if edge > 0 && copy_pos(&m, &pick.region) == 0 {
+                // Already at the bottom: nothing below to scroll to.
+                return ControlFlow::Continue;
+            }
+            let action = wheel(edge, pick.region.left, pick.region.top, (false, false, false), &m.engine.modes());
+            drop(m);
+            if let WheelAction::Mouse(bytes) | WheelAction::Arrows(bytes) = action {
+                inner.model.borrow_mut().scroll_ms = inner.ms();
+                inner.send_event(&bytes);
+            }
+            ControlFlow::Continue
+        });
+        *self.pick_timer.borrow_mut() = Some(id);
+    }
+    fn stop_autoscroll(&self) {
+        if let Some(id) = self.pick_timer.borrow_mut().take() {
+            id.remove();
+        }
+    }
+}
+
 impl Drop for Inner {
     fn drop(&mut self) {
         self.closed.set(true);
@@ -1130,8 +2516,11 @@ fn connect_events(inner: &Rc<Inner>) {
     inner.area.connect_map(move |_| {
         if let Some(inner) = weak.upgrade().filter(|inner| !inner.closed.get()) {
             inner.model.borrow_mut().schedule.reset_queued_paint();
+            inner.rewatch_read();
+            inner.resize_if_waiting();
             inner.claim_size();
-            inner.area.queue_draw();
+            inner.shown();
+            inner.redraw();
             inner.arm();
         }
     });
@@ -1142,6 +2531,7 @@ fn connect_events(inner: &Rc<Inner>) {
             if let Some(reader) = &mut inner.model.borrow_mut().shadow {
                 reader.set_visible(false);
             }
+            inner.rewatch_read();
             inner.arm();
         }
     });
@@ -1155,7 +2545,7 @@ fn connect_events(inner: &Rc<Inner>) {
     inner.im.connect_preedit_changed(move |im| {
         if let Some(inner) = weak.upgrade() {
             inner.model.borrow_mut().preedit = im.preedit_string().0.to_string();
-            inner.area.queue_draw();
+            inner.redraw();
         }
     });
     let weak = Rc::downgrade(inner);
@@ -1168,8 +2558,9 @@ fn connect_events(inner: &Rc<Inner>) {
             };
             if let Some(bytes) = bytes {
                 inner.send_event(&bytes);
+                inner.model.borrow_mut().key_at = Some(Instant::now());
             }
-            inner.area.queue_draw();
+            inner.redraw();
         }
     });
     let weak = Rc::downgrade(inner);
@@ -1183,6 +2574,16 @@ fn connect_events(inner: &Rc<Inner>) {
         }
         if inner.dispatch_app_key(event) {
             return glib::Propagation::Stop;
+        }
+        if !event.is_modifier() {
+            let mut m = inner.model.borrow_mut();
+            // Typing brings panes the app scrolled back to the live bottom.
+            let back = !m.scrolls.is_empty();
+            m.scrolls.clear();
+            if m.pick.take().is_some() || back {
+                drop(m);
+                inner.redraw();
+            }
         }
         inner.forward_key(event)
     });
@@ -1215,7 +2616,7 @@ fn connect_events(inner: &Rc<Inner>) {
                 if let Some(bytes) = bytes {
                     inner.send_event(bytes);
                 }
-                inner.area.queue_draw();
+                inner.redraw();
             }
             glib::Propagation::Proceed
         };
@@ -1260,18 +2661,25 @@ fn connect_events(inner: &Rc<Inner>) {
         }
         let button = mouse_button(event.button());
         let link = if event.button() == 1 {
-            super::links::link_at(
-                &inner.model.borrow().engine,
-                inner.absolute(col, row),
-                row,
-                col,
-            )
+            link_under(&inner.model.borrow(), x, y, inner.absolute(col, row), (col, row))
         } else {
             None
         };
         let link_gesture = link.is_some();
         if event.button() == 1 {
             inner.model.borrow_mut().link_gesture = link_gesture;
+        }
+        {
+            let mut m = inner.model.borrow_mut();
+            let had = m.pick.take().is_some();
+            if event.button() == 1 && !mods.0 && !link_gesture && start_pick(&mut m, x, y, event.event_type(), mods) {
+                drop(m);
+                inner.redraw();
+                return glib::Propagation::Stop;
+            }
+            if had {
+                inner.redraw();
+            }
         }
         let bytes = encode_mouse(
             button,
@@ -1320,7 +2728,7 @@ fn connect_events(inner: &Rc<Inner>) {
                 })
             };
             drop(m);
-            inner.area.queue_draw();
+            inner.redraw();
         }
         glib::Propagation::Stop
     });
@@ -1330,6 +2738,38 @@ fn connect_events(inner: &Rc<Inner>) {
             return glib::Propagation::Proceed;
         };
         let (x, y) = event.position();
+        if !event.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+            // The release went elsewhere (a menu, another window): end the drag.
+            let mut m = inner.model.borrow_mut();
+            if let Some(pick) = m.pick.as_mut().filter(|p| p.held) {
+                pick.held = false;
+                if !pick.dragged {
+                    m.pick = None;
+                }
+            }
+        }
+        if event.state().contains(gdk::ModifierType::BUTTON1_MASK) {
+            let mut m = inner.model.borrow_mut();
+            let pointer = raw_point(&m, x, y);
+            if let Some(pick) = m.pick.filter(|p| p.held) {
+                if pointer != pick.pointer {
+                    let lines = region_lines(&m, &pick.region);
+                    let mut next = pick;
+                    next.pointer = pointer;
+                    if let Some(head) = next.spot_at_pointer(&lines) {
+                        next.head = head;
+                    }
+                    next.dragged |= next.head != next.anchor || next.edge() != 0;
+                    m.pick = Some(next);
+                    drop(m);
+                    if next.edge() != 0 {
+                        inner.pick_autoscroll();
+                    }
+                    inner.redraw();
+                }
+                return glib::Propagation::Stop;
+            }
+        }
         let (col, row) = inner.point(x, y);
         let point = inner.absolute(col, row);
         let state = event.state();
@@ -1339,13 +2779,16 @@ fn connect_events(inner: &Rc<Inner>) {
         }
         m.last_motion = Some((col, row, state));
         let button = drag_button(state);
-        let linked = super::links::link_at(&m.engine, point, row, col).is_some();
-        let hovered = (linked && button == Button::None)
+        let linked = link_under(&m, x, y, point, (col, row)).is_some();
+        // The underline is drawn on grid cells; a history row has none.
+        let (raw_col, raw_row) = raw_cell(&m, x, y);
+        let on_grid = history_region(&m, raw_col, raw_row).is_none();
+        let hovered = (linked && on_grid && button == Button::None)
             .then(|| word_at(m.engine.engine(), point))
             .flatten();
         if m.hovered_link != hovered {
             m.hovered_link = hovered;
-            area.queue_draw();
+            inner.redraw();
         }
         if let Some(window) = area.window() {
             window.set_cursor(
@@ -1382,18 +2825,18 @@ fn connect_events(inner: &Rc<Inner>) {
             if let Some(selection) = m.selection.as_mut() {
                 selection.head = point;
             }
-            area.queue_draw();
+            inner.redraw();
         }
         drop(m);
         glib::Propagation::Stop
     });
     let weak = Rc::downgrade(inner);
-    inner.area.connect_leave_notify_event(move |area, _| {
+    inner.area.connect_leave_notify_event(move |_, _| {
         if let Some(inner) = weak.upgrade() {
             let mut model = inner.model.borrow_mut();
             model.last_motion = None;
             if model.hovered_link.take().is_some() {
-                area.queue_draw();
+                inner.redraw();
             }
         }
         glib::Propagation::Proceed
@@ -1405,6 +2848,34 @@ fn connect_events(inner: &Rc<Inner>) {
         };
         inner.clipboard.release_selection();
         let (x, y) = event.position();
+        let held = inner.model.borrow().pick.filter(|p| p.held);
+        if event.button() == 1
+            && let Some(pick) = held
+        {
+            inner.stop_autoscroll();
+            let mut m = inner.model.borrow_mut();
+            if pick.dragged {
+                let mut done = m.pick.unwrap_or(pick);
+                done.held = false;
+                m.pick = Some(done);
+                drop(m);
+                inner.copy_pick(done);
+                inner.redraw();
+                return glib::Propagation::Stop;
+            }
+            // A plain click still reaches tmux (focus a pane, click a prompt).
+            m.pick = None;
+            let modes = m.engine.modes();
+            drop(m);
+            let (col, row) = inner.point(x, y);
+            for kind in [MouseKind::Press, MouseKind::Release] {
+                if let Some(bytes) = encode_mouse(mouse_button(1), kind, col, row, pick.mods, &modes) {
+                    inner.send_event(&bytes);
+                }
+            }
+            inner.redraw();
+            return glib::Propagation::Stop;
+        }
         let (col, row) = inner.point(x, y);
         let mods = modifiers(event.state());
         let mut m = inner.model.borrow_mut();
@@ -1449,7 +2920,7 @@ fn connect_events(inner: &Rc<Inner>) {
                 callback(&link);
             }
         }
-        inner.area.queue_draw();
+        inner.redraw();
         glib::Propagation::Stop
     });
     let weak = Rc::downgrade(inner);
@@ -1457,6 +2928,16 @@ fn connect_events(inner: &Rc<Inner>) {
         let Some(inner) = weak.upgrade() else {
             return glib::Propagation::Proceed;
         };
+        let dragging = event.state().contains(gdk::ModifierType::BUTTON1_MASK);
+        {
+            let mut m = inner.model.borrow_mut();
+            // Mid-drag the wheel scrolls and the selection keeps growing; a
+            // finished selection stays on its text too (it is anchored to lines).
+            if !dragging && m.pick.is_some_and(|p| p.held) {
+                m.pick = None;
+                inner.redraw();
+            }
+        }
         let (x, y) = event.position();
         let (col, row) = inner.point(x, y);
         let amount = match event.direction() {
@@ -1478,6 +2959,7 @@ fn connect_events(inner: &Rc<Inner>) {
             && m.selection.is_none()
             && inner.options.on_ssh_scroll.is_some()
         {
+            m.scroll_ms = inner.ms();
             m.ssh_delta = (m.ssh_delta + amount).clamp(-24., 24.);
             m.ssh_point = (col, row);
             if m.ssh_at.is_none() {
@@ -1488,6 +2970,13 @@ fn connect_events(inner: &Rc<Inner>) {
         m.wheel_delta += amount;
         let lines = m.wheel_delta.trunc() as i32;
         m.wheel_delta -= f64::from(lines);
+        drop(m);
+        if !dragging && inner.app_scroll(x, y, lines) {
+            return glib::Propagation::Stop;
+        }
+        let mut m = inner.model.borrow_mut();
+        // tmux moves the text: history fills read before are stale.
+        m.scroll_ms = inner.ms();
         match wheel(lines, col, row, modifiers(event.state()), &m.engine.modes()) {
             WheelAction::Mouse(bytes) | WheelAction::Arrows(bytes) => {
                 drop(m);
@@ -1497,8 +2986,13 @@ fn connect_events(inner: &Rc<Inner>) {
                 inner.send_event(&bytes);
             }
             WheelAction::Scroll(lines) => {
-                m.engine.scroll(-lines);
-                inner.area.queue_draw();
+                // Turning the wheel the other way stops what was left at once.
+                if m.glide * f64::from(-lines) < 0. {
+                    m.glide = 0.;
+                }
+                m.glide = (m.glide + f64::from(-lines)).clamp(-400., 400.);
+                drop(m);
+                inner.glide();
             }
         }
         glib::Propagation::Stop
@@ -1593,32 +3087,585 @@ fn color(context: &cairo::Context, rgb: [u8; 3]) {
 }
 impl Inner {
     fn draw(&self, context: &cairo::Context) {
+        let started = Instant::now();
+        // Paint into a client-side image and copy it in one operation: on X11 the
+        // window surface lives in the X server, where every text run is a request.
+        // The image always holds the last complete picture, so an exposure (a
+        // window dragged over, an overlay) is only a copy.
+        let scale = self.area.scale_factor().max(1);
+        let (w, h) = (self.area.allocated_width().max(1), self.area.allocated_height().max(1));
+        let mut canvas = self.canvas.borrow_mut();
+        let fits = canvas
+            .as_ref()
+            .is_some_and(|c| c.width() == w * scale && c.height() == h * scale);
+        let plan = self.planned.borrow_mut().take();
         let mut m = self.model.borrow_mut();
-        let palette = m.engine.palette();
-        context.set_source_rgba(
-            f64::from(palette.bg[0]) / 255.,
-            f64::from(palette.bg[1]) / 255.,
-            f64::from(palette.bg[2]) / 255.,
-            m.opacity,
-        );
-        context.set_operator(cairo::Operator::Source);
-        let _ = context.paint();
-        context.set_operator(cairo::Operator::Over);
-        let layout = self.area.create_pango_layout(None);
-        let mut text_painter = TextPainter::new(&layout, &m.font);
-        let (_, rows) = m.engine.size();
-        {
+        // While the window changes size, and until tmux and the program have
+        // drawn the new size, the last picture stays as it is (see `Hold`).
+        let keep = m.hold.is_some() || (!fits && m.resize_at.is_some() && plan.is_none() && !self.full.get());
+        if keep && let Some(image) = canvas.as_ref() {
+            let bg = m.engine.palette().bg;
+            context.set_source_rgba(
+                f64::from(bg[0]) / 255.,
+                f64::from(bg[1]) / 255.,
+                f64::from(bg[2]) / 255.,
+                m.opacity,
+            );
+            context.set_operator(cairo::Operator::Source);
+            let _ = context.paint();
+            if context.set_source_surface(image, 0., 0.).is_ok() {
+                context.rectangle(0., 0., f64::from(image.width() / scale), f64::from(image.height() / scale));
+                let _ = context.fill();
+            }
+            context.set_operator(cairo::Operator::Over);
+            return;
+        }
+        let paint = !fits || self.full.get() || plan.is_some() || m.painted.is_none();
+        let mut direct = false;
+        if paint {
+            if !fits {
+                *canvas = cairo::ImageSurface::create(cairo::Format::ARgb32, w * scale, h * scale)
+                    .ok()
+                    .inspect(|c| c.set_device_scale(f64::from(scale), f64::from(scale)));
+                m.painted = None;
+            }
+            // A plan made for this frame already read the screen and took its
+            // changed lines; anything else repaints the whole picture.
+            let plan = plan.filter(|_| fits && !self.full.get());
+            let own = plan.is_none();
+            let (look, rows) = match plan {
+                Some(plan) => (plan.look, plan.rows),
+                None => (self.prepare(&mut m, None), None),
+            };
+            let image = canvas.as_ref().and_then(|c| cairo::Context::new(c).ok());
+            direct = image.is_none();
+            self.draw_frame(&mut m, image.as_ref().unwrap_or(context), look, rows.as_deref());
+            if own {
+                let now = self.ms();
+                m.schedule.painted(now);
+            }
+            self.full.set(false);
+        }
+        if !direct && let Some(image) = canvas.as_ref() {
+            context.set_operator(cairo::Operator::Source);
+            if context.set_source_surface(image, 0., 0.).is_ok() {
+                let _ = context.paint();
+            }
+            // Mid-glide the text sits a part of a line lower than its grid.
+            let shift = (m.glide_frac * m.geom.cell_h).round();
+            if shift > 0. {
+                let (top, bg) = (m.geom.origin_y, m.engine.palette().bg);
+                let _ = context.save();
+                context.rectangle(0., top, f64::from(w), f64::from(h) - top);
+                context.clip();
+                context.set_source_rgba(
+                    f64::from(bg[0]) / 255.,
+                    f64::from(bg[1]) / 255.,
+                    f64::from(bg[2]) / 255.,
+                    m.opacity,
+                );
+                let _ = context.paint();
+                if context.set_source_surface(image, 0., shift).is_ok() {
+                    let _ = context.paint();
+                }
+                let _ = context.restore();
+            }
+            context.set_operator(cairo::Operator::Over);
+        }
+        drop(canvas);
+        if !paint {
+            return;
+        }
+        let took = super::lag::ms(started);
+        let session = self.options.session.as_deref().unwrap_or("-");
+        let phases = super::lag::take_phases();
+        if took > super::lag::SLOW_PAINT_MS {
+            let (cols, rows) = m.engine.size();
+            super::lag::note(&format!("paint {took:.1}ms {session} {cols}x{rows} {phases}"));
+        }
+        if let Some(at) = m.shown_at.take() {
+            super::lag::note(&format!("shown {session} paint={:.0}ms", super::lag::ms(at)));
+        }
+        if let Some(output) = m.output_at.take() {
+            let wait = super::lag::ms(output);
+            if wait > super::lag::SLOW_FRAME_MS {
+                // Where the wait went: until the frame was asked for and until
+                // GTK started it (-1: before this output).
+                let after = |at: Option<Instant>| {
+                    at.and_then(|t| t.checked_duration_since(output))
+                        .map_or(-1., |d| d.as_secs_f64() * 1000.)
+                };
+                let (ask, tick) = (after(self.asked_at.get()), after(self.ticked_at.get()));
+                // `loop` near `tick`: the main loop was busy. `loop` near
+                // `ask` with a late `tick`: the frame clock waited for the
+                // compositor (`clock_gap` is the time since its last frame).
+                let free = after(self.free_at.get());
+                let gap = self.area.frame_clock().map_or(0., |c| {
+                    let now = c.frame_counter();
+                    let at = |n: i64| c.timings(n).map(|t| t.frame_time());
+                    match (at(now), at(now - 1)) {
+                        (Some(a), Some(b)) => (a - b) as f64 / 1000.,
+                        _ => 0.,
+                    }
+                });
+                super::lag::note(&format!(
+                    "frame {wait:.0}ms after output {session} ask={ask:.0} loop={free:.0} tick={tick:.0} clock_gap={gap:.0}"
+                ));
+            }
+        }
+    }
+    /// Runs at the start of a GTK frame, before it paints: reads the screen
+    /// and asks GTK to repaint only the rows that changed. Typing, a spinner
+    /// or the cursor blink then cost a few rows instead of the whole terminal.
+    fn plan_frame(&self) {
+        if self.closed.get() {
+            return;
+        }
+        let mut m = self.model.borrow_mut();
+        if !self.area.is_mapped() {
+            m.schedule.reset_queued_paint();
+            return;
+        }
+        if m.hold.is_some() {
+            // The held picture is replaced in one go by `release_hold`.
+            return;
+        }
+        let scale = self.area.scale_factor().max(1);
+        let (w, h) = (self.area.allocated_width().max(1), self.area.allocated_height().max(1));
+        let fits = self
+            .canvas
+            .borrow()
+            .as_ref()
+            .is_some_and(|c| c.width() == w * scale && c.height() == h * scale);
+        if !fits || self.full.get() || self.planned.borrow().is_some() {
+            drop(m);
+            self.redraw();
+            return;
+        }
+        let lines = m.schedule.pending_lines();
+        // The frame cache matches the last picture: only the changed lines are read again.
+        let known = m.painted.as_ref().is_some_and(|p| {
+            p.fresh && p.size == m.engine.size() && p.geom == m.geom && p.palette == *m.engine.palette()
+        });
+        let look = self.prepare(&mut m, known.then_some(lines.as_slice()));
+        let rows = changed_rows(&m, &look, &lines);
+        let now = self.ms();
+        m.schedule.painted(now);
+        match &rows {
+            Some(only) => {
+                for (y, h) in row_bands(only, &m.geom) {
+                    self.area.queue_draw_area(0, y, w, h);
+                }
+            }
+            None => self.area.queue_draw(),
+        }
+        *self.planned.borrow_mut() = Some(Planned { look, rows });
+    }
+    /// Reads the screen into the frame cache (`lines`: only those changed) and
+    /// works out everything the picture depends on besides the text of each row.
+    fn prepare(&self, m: &mut Model, lines: Option<&[usize]>) -> FrameLook {
+        let refresh_at = Instant::now();
+        let fresh = {
             let Model {
                 engine,
                 frame,
                 geom,
                 ..
             } = &mut *m;
-            frame.refresh(engine, geom);
+            match lines {
+                Some(lines) => frame.refresh_lines(engine, geom, lines),
+                None => frame.refresh(engine, geom),
+            }
+        };
+        super::lag::phase("refresh", refresh_at);
+        // Panes as this frame shows them. tmux's own report arrives later
+        // while the window or a division moves, so it only names them.
+        let tiles = {
+            let rows = m.engine.size().1;
+            let found = m.frame.tiles(rows.saturating_sub(m.status_rows));
+            if !found.is_empty() {
+                m.held_tiles = Some((found.clone(), Instant::now()));
+                found
+            } else {
+                match &m.held_tiles {
+                    Some((held, at)) if !m.tmux_regions.is_empty() && at.elapsed() < Duration::from_millis(500) => {
+                        held.clone()
+                    }
+                    _ => found,
+                }
+            }
+        };
+        if tiles.is_empty() {
+            if m.regions != m.tmux_regions {
+                m.regions = m.tmux_regions.clone();
+                m.pane_ids = m.tmux_ids.clone();
+            }
+        } else {
+            let live: Vec<super::noise::Region> = tiles
+                .iter()
+                .filter(|t| t.height > 1)
+                .map(|t| super::noise::Region {
+                    left: t.left,
+                    width: t.width,
+                    top: t.top.saturating_add(1),
+                    height: t.height - 1,
+                })
+                .collect();
+            let ids: Vec<String> = live
+                .iter()
+                .map(|r| {
+                    let overlap = |o: &super::noise::Region| {
+                        let w = (r.left + r.width).min(o.left + o.width).saturating_sub(r.left.max(o.left));
+                        let h = (r.top + r.height).min(o.top + o.height).saturating_sub(r.top.max(o.top));
+                        u32::from(w) * u32::from(h)
+                    };
+                    m.tmux_regions
+                        .iter()
+                        .enumerate()
+                        .max_by_key(|(_, o)| overlap(o))
+                        .and_then(|(i, _)| m.tmux_ids.get(i).cloned())
+                        .unwrap_or_default()
+                })
+                .collect();
+            m.regions = live;
+            m.pane_ids = ids;
         }
-        for op in m.frame.ops() {
-            paint_op(context, &mut text_painter, &m.geom, op);
+        // A pane scrolled back in tmux copy mode is shown as tmux draws it, so
+        // scrolling feels normal; only the live bottom is filtered.
+        let copy_positions: Vec<(super::noise::Region, u32)> = {
+            let mut render = RowRender::default();
+            m.regions
+                .iter()
+                .filter_map(|r| {
+                    m.engine.render_line(usize::from(r.top), &mut render);
+                    let top = super::pick::cells_of(&render, r.left, r.width);
+                    super::pick::copy_position(&top).filter(|p| *p > 0).map(|p| (*r, p))
+                })
+                .collect()
+        };
+        // A scrolled pane that lost its input box (Claude exited, the pane
+        // moved) goes back to what tmux shows.
+        if !m.scrolls.is_empty() {
+            let lost: Vec<String> = m
+                .scrolls
+                .keys()
+                .filter(|id| {
+                    let region = m.pane_ids.iter().position(|p| p == *id).and_then(|i| m.regions.get(i));
+                    region.is_none_or(|r| {
+                        copy_positions.iter().any(|(x, _)| x == r)
+                            || super::noise::input_top(m.frame.inks(), r).is_none()
+                    })
+                })
+                .cloned()
+                .collect();
+            for id in lost {
+                m.scrolls.remove(&id);
+                m.fills.remove(&scroll_key(&id));
+            }
         }
+        let maps: Vec<(super::noise::Region, Vec<Option<u16>>)> = if m.hide_noise {
+            let (cols, rows) = m.engine.size();
+            let whole = [super::noise::Region { left: 0, width: cols, top: 0, height: rows }];
+            let regions: &[super::noise::Region] = if m.regions.is_empty() { &whole } else { &m.regions };
+            regions
+                .iter()
+                .filter(|r| !copy_positions.iter().any(|(x, _)| x == *r))
+                .filter_map(|r| match scrolled_input(m, r) {
+                    Some(input) => Some((*r, super::noise::scrolled_map(r, input))),
+                    None => super::noise::compact(m.frame.inks(), r).map(|map| (*r, map)),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        m.copy_pos = copy_positions;
+        // Rows freed by hidden noise show earlier history instead of nothing.
+        let mut wanted = Vec::new();
+        let mut fills = Vec::new();
+        for (r, map) in &maps {
+            let holes = super::noise::holes(map, r);
+            if holes == 0 {
+                continue;
+            }
+            let id = if m.regions.is_empty() {
+                Some(String::new())
+            } else {
+                m.regions
+                    .iter()
+                    .position(|x| x == r)
+                    .and_then(|i| m.pane_ids.get(i).cloned())
+            };
+            let Some(id) = id else { continue };
+            if let Some(scroll) = m.scrolls.get(&id)
+                && let Some(snap) = m.fills.get(&scroll_key(&id)).filter(|f| f.fits(m, r))
+            {
+                fills.push(FillDraw {
+                    id: scroll_key(&id),
+                    region: *r,
+                    holes,
+                    skip: scroll.back,
+                    count: snap.shown(scroll.back, usize::from(holes)).len(),
+                    end: snap.end,
+                    asked_ms: snap.asked_ms,
+                });
+                continue;
+            }
+            let want = (holes.saturating_mul(3).saturating_add(40)).min(MAX_FILL_LINES);
+            // The pane scrolled since its fill was read: the lines that left
+            // the screen are in the fill, which only has to move with it.
+            let top = usize::from(r.top);
+            let moved = lines.is_none_or(|lines| lines.iter().any(|l| (top..top + ALIGN_ROWS).contains(l)));
+            if fresh
+                && m.fills
+                    .get(&id)
+                    .is_some_and(|f| f.screen > 0 && f.fits(m, r) && (moved || !f.aligned || !f.current(m.shown_ms)))
+            {
+                align_fill(m, &id, r, self.ms());
+            }
+            let Some(fill) = m
+                .fills
+                .get(&id)
+                .filter(|f| f.geom == m.geom && f.left == r.left && f.width == r.width)
+            else {
+                wanted.push((id, want));
+                continue;
+            };
+            if fill.asked_ms < m.scroll_ms || !fill.current(m.shown_ms) {
+                // tmux scrolled since this was read, or it is a copy from the
+                // last time this tab was open that no longer matches the
+                // screen: better empty than repeated or wrong.
+                wanted.push((id.clone(), want.max(fill.lines)));
+                continue;
+            }
+            let short = fill.end < usize::from(holes) && fill.more && fill.lines < MAX_FILL_LINES;
+            if short {
+                wanted.push((id.clone(), fill.lines.saturating_mul(2).min(MAX_FILL_LINES)));
+            } else if fill.asked_ms < m.output_ms && !(fill.sure && fill.asked_ms + FILL_TRUST_MS >= m.output_ms) {
+                wanted.push((id.clone(), want.max(fill.lines)));
+            }
+            fills.push(FillDraw {
+                id,
+                region: *r,
+                holes,
+                skip: 0,
+                count: fill.end.min(usize::from(holes)),
+                end: fill.end,
+                asked_ms: fill.asked_ms,
+            });
+        }
+        m.fill_wanted = wanted;
+        FrameLook {
+            fresh,
+            plain: m.selection.is_none()
+                && m.pick.is_none()
+                && m.preedit.is_empty()
+                && m.engine.engine().display_offset() == 0,
+            size: m.engine.size(),
+            area: (self.area.allocated_width(), self.area.allocated_height()),
+            geom: m.geom,
+            opacity: m.opacity,
+            palette: m.engine.palette().clone(),
+            tiles,
+            maps,
+            fills,
+            hovered_link: m.hovered_link,
+            status_rows: m.status_rows,
+        }
+    }
+    /// Paints `look` from the frame cache. With `only`, just those screen
+    /// rows are painted again and the rest of the picture is left as it is.
+    fn draw_frame(&self, m: &mut Model, context: &cairo::Context, look: FrameLook, only: Option<&[bool]>) {
+        let mut painter_slot = self.painter.borrow_mut();
+        if painter_slot
+            .as_ref()
+            .is_none_or(|p| p.dpr != m.geom.dpr)
+        {
+            let layout = self.area.create_pango_layout(None);
+            let mut painter = TextPainter::new(&layout, &m.font);
+            painter.dpr = m.geom.dpr;
+            *painter_slot = Some(painter);
+        }
+        let Some(text_painter) = painter_slot.as_mut() else {
+            return;
+        };
+        let (_, rows) = m.engine.size();
+        let (cell_w, cell_h, ox, oy) = (m.geom.cell_w, m.geom.cell_h, m.geom.origin_x, m.geom.origin_y);
+        let width = f64::from(self.area.allocated_width());
+        let height = f64::from(self.area.allocated_height());
+        let ops_at = Instant::now();
+        let _ = context.save();
+        if let Some(only) = only {
+            for (y, h) in row_bands(only, &m.geom) {
+                context.rectangle(0., f64::from(y), width, f64::from(h));
+            }
+            context.clip();
+        }
+        // Rows inside the repainted bands, and rows whose glyphs may reach into them.
+        let in_band = |row: usize| only.is_none_or(|o| o.get(row).copied().unwrap_or(false));
+        let near_band = |row: usize| in_band(row) || in_band(row + 1) || row.checked_sub(1).is_some_and(in_band);
+        let bg = m.engine.palette().bg;
+        context.set_source_rgba(
+            f64::from(bg[0]) / 255.,
+            f64::from(bg[1]) / 255.,
+            f64::from(bg[2]) / 255.,
+            m.opacity,
+        );
+        context.set_operator(cairo::Operator::Source);
+        let _ = context.paint();
+        context.set_operator(cairo::Operator::Over);
+        let maps = &look.maps;
+        let rect_of = |r: &super::noise::Region| {
+            let x0 = if r.left == 0 { 0. } else { ox + f64::from(r.left) * cell_w };
+            let x1 = ox + f64::from(r.left.saturating_add(r.width)) * cell_w;
+            (x0, oy + f64::from(r.top) * cell_h, x1 - x0, f64::from(r.height) * cell_h)
+        };
+        // Losas: one tile per tmux pane, found on this very frame.
+        let tile_rects: Vec<((f64, f64, f64, f64), [u8; 3])> = {
+            let (cols, rows) = m.engine.size();
+            let bottom = rows.saturating_sub(m.status_rows);
+            let (fg, bg) = (m.engine.palette().fg, m.engine.palette().bg);
+            look.tiles
+                .iter()
+                .map(|t| {
+                    let x0 = ox + f64::from(t.left) * cell_w;
+                    let x1 = ox + f64::from(t.left.saturating_add(t.width)) * cell_w;
+                    let y0 = oy + f64::from(t.top) * cell_h;
+                    let y1 = oy + f64::from(t.top.saturating_add(t.height)) * cell_h;
+                    let l = if t.left == 0 { x0 - 4. } else { x0 - cell_w / 2. + 3. };
+                    let r = if t.left.saturating_add(t.width) >= cols { x1 + 4. } else { x1 + cell_w / 2. - 3. };
+                    let top = if t.top == 0 { y0 - 2. } else { y0 + 3. };
+                    let bot = if t.top.saturating_add(t.height) >= bottom { y1 + 2. } else { y1 - 3. };
+                    let (l, r) = (l.max(2.), r.min(width - 2.));
+                    let rgb = mix(bg, fg, if t.active { 0.07 } else { 0.035 });
+                    ((l, top.max(2.), (r - l).max(0.), (bot - top.max(2.)).max(0.)), rgb)
+                })
+                .collect()
+        };
+        // Tiles are solid: letters never show the window behind, and empty
+        // rows look the same as rows with text (no stripes that move with
+        // the output). The window's transparency stays in the gaps.
+        for ((x, y, w, h), rgb) in &tile_rects {
+            rounded_rect(context, *x, *y, *w, *h, 7.);
+            color(context, *rgb);
+            let _ = context.fill();
+        }
+        let hide_borders = !tile_rects.is_empty();
+        // Without tiles, rows moved by the noise filter need their own solid
+        // background (see the text bands below).
+        let solid_rows = m.opacity < 1. && tile_rects.is_empty();
+        let _ = context.save();
+        if !maps.is_empty() {
+            // Everything except the filtered panes is painted as usual.
+            context.rectangle(0., 0., width, height);
+            for (r, _) in maps {
+                let (x, y, w, h) = rect_of(r);
+                context.rectangle(x, y, w, h);
+            }
+            context.set_fill_rule(cairo::FillRule::EvenOdd);
+            context.clip();
+        }
+        if solid_rows {
+            // The window behind must never show through letters: rows that
+            // carry text get a solid band; empty rows keep the transparency.
+            color(context, m.engine.palette().bg);
+            for (y, h) in &text_bands(m.frame.ops(), cell_h) {
+                context.rectangle(0., *y, width, *h);
+            }
+            let _ = context.fill();
+        }
+        for row in (0..usize::from(rows)).filter(|row| near_band(*row)) {
+            for op in m.frame.row_ops(row) {
+                if hide_borders && is_border_op(op) {
+                    continue;
+                }
+                paint_op(context, text_painter, &m.geom, op);
+            }
+        }
+        let _ = context.restore();
+        for (r, map) in maps {
+            let (x, _, w, _) = rect_of(r);
+            for (i, shown) in map.iter().enumerate() {
+                let Some(shown) = *shown else { continue };
+                if !in_band(usize::from(shown)) {
+                    continue;
+                }
+                let grid = usize::from(r.top) + i;
+                let row_ops = m.frame.row_ops(grid);
+                let _ = context.save();
+                context.rectangle(x, oy + f64::from(shown) * cell_h, w, cell_h);
+                context.clip();
+                if solid_rows && !row_ops.is_empty() {
+                    color(context, m.engine.palette().bg);
+                    let _ = context.paint();
+                }
+                context.translate(0., (f64::from(shown) - grid as f64) * cell_h);
+                for op in row_ops {
+                    paint_op(context, text_painter, &m.geom, op);
+                }
+                let _ = context.restore();
+            }
+        }
+        // Rows freed by hidden noise show earlier history instead of nothing.
+        for draw in &look.fills {
+            let Some(fill) = m.fills.get(&draw.id) else { continue };
+            let (x, _, w, _) = rect_of(&draw.region);
+            let shown = fill.shown(draw.skip, usize::from(draw.holes));
+            let count = shown.len();
+            let first = usize::from(draw.region.top.saturating_add(draw.holes));
+            for (k, &j) in shown.iter().enumerate() {
+                let Some(shown) = first.checked_sub(count - k).filter(|row| in_band(*row)) else {
+                    continue;
+                };
+                let row_ops = fill.frame.row_ops(j);
+                let _ = context.save();
+                context.rectangle(x, oy + shown as f64 * cell_h, w, cell_h);
+                context.clip();
+                if solid_rows && !row_ops.is_empty() {
+                    color(context, m.engine.palette().bg);
+                    let _ = context.paint();
+                }
+                context.translate(0., (shown as f64 - j as f64) * cell_h);
+                for op in row_ops {
+                    paint_op(context, text_painter, &m.geom, op);
+                }
+                let _ = context.restore();
+            }
+        }
+        // A pane scrolled back by the app shows no new output: say so on the
+        // row right above its input box.
+        for draw in look.fills.iter().filter(|d| d.skip > 0 && d.holes > 0) {
+            let row = usize::from(draw.region.top.saturating_add(draw.holes - 1));
+            if !in_band(row) {
+                continue;
+            }
+            let text = format!(" historial · {} líneas atrás · cualquier tecla vuelve ", draw.skip);
+            let (x, _, w, _) = rect_of(&draw.region);
+            let badge_w = (text.chars().count() as f64 * cell_w).min(w);
+            let (badge_x, badge_y) = (x + w - badge_w, oy + row as f64 * cell_h);
+            let _ = context.save();
+            context.rectangle(badge_x, badge_y, badge_w, cell_h);
+            context.clip();
+            color(context, m.engine.palette().selection);
+            let _ = context.paint();
+            color(context, m.engine.palette().fg);
+            text_painter.show(context, &text, false, false, badge_x, badge_y);
+            let _ = context.restore();
+        }
+        super::lag::phase("ops", ops_at);
+        // Where a grid row ended up on screen (hidden rows: None).
+        let shown_row = |col: u16, row: u16| -> Option<f64> {
+            match maps
+                .iter()
+                .find(|(r, _)| col >= r.left && col < r.left.saturating_add(r.width) && row >= r.top)
+            {
+                Some((r, map)) => map
+                    .get(usize::from(row - r.top))
+                    .copied()
+                    .unwrap_or(Some(row))
+                    .map(f64::from),
+                None => Some(f64::from(row)),
+            }
+        };
         if let Some((start, end)) = m.hovered_link {
             let offset = i32::try_from(m.engine.engine().display_offset()).unwrap_or(i32::MAX);
             let (cols, rows) = m.engine.size();
@@ -1631,8 +3678,9 @@ impl Inner {
             );
             context.set_line_width(1.);
             for (row, col, cells) in super::hover::lines(start, end, cols, rows, offset) {
+                let Some(row) = shown_row(col, row) else { continue };
                 let x = m.geom.origin_x + f64::from(col) * m.geom.cell_w;
-                let y = m.geom.origin_y + f64::from(row + 1) * m.geom.cell_h - 1.5;
+                let y = m.geom.origin_y + (row + 1.) * m.geom.cell_h - 1.5;
                 context.move_to(x, y);
                 context.line_to(x + f64::from(cells) * m.geom.cell_w, y);
             }
@@ -1661,9 +3709,10 @@ impl Inner {
                         },
                     )
                 };
+                let Some(shown) = shown_row(left, row) else { continue };
                 context.rectangle(
                     m.geom.origin_x + f64::from(left) * m.geom.cell_w,
-                    m.geom.origin_y + f64::from(row) * m.geom.cell_h,
+                    m.geom.origin_y + shown * m.geom.cell_h,
                     f64::from(right.saturating_sub(left).saturating_add(1)) * m.geom.cell_w,
                     m.geom.cell_h,
                 );
@@ -1676,15 +3725,50 @@ impl Inner {
                 let _ = context.fill();
             }
         }
+        m.noise_maps = maps.clone();
+        if let Some(mut pick) = m.pick {
+            let lines = region_lines(m, &pick.region);
+            if pick.held
+                && let Some(head) = pick.spot_at_pointer(&lines)
+            {
+                // tmux scrolled under a held drag: the pointer now covers other text.
+                pick.head = head;
+                pick.dragged |= head != pick.anchor;
+                m.pick = Some(pick);
+            }
+        }
+        if let Some(pick) = m.pick.filter(|p| p.dragged) {
+            let lines = region_lines(m, &pick.region);
+            let sel = m.engine.palette().selection;
+            context.set_source_rgba(
+                f64::from(sel[0]) / 255.,
+                f64::from(sel[1]) / 255.,
+                f64::from(sel[2]) / 255.,
+                0.35,
+            );
+            for (row, from, to) in pick.spans(&lines) {
+                context.rectangle(
+                    ox + f64::from(from) * cell_w,
+                    oy + f64::from(row) * cell_h,
+                    f64::from(to.saturating_sub(from).saturating_add(1)) * cell_w,
+                    cell_h,
+                );
+            }
+            let _ = context.fill();
+        }
         let cursor = m.frame.cursor();
         let blink = m
             .preferences
             .get("cursor_blink")
             .and_then(Value::as_bool)
             .unwrap_or(true);
+        let mut painted_cursor = None;
         if cursor.visible && (!blink || !m.focused || m.blink_visible) {
             let x = m.geom.origin_x + f64::from(cursor.col) * m.geom.cell_w;
-            let y = m.geom.origin_y + cursor.line as f64 * m.geom.cell_h;
+            let line = u16::try_from(cursor.line).unwrap_or(u16::MAX);
+            let shown = shown_row(cursor.col, line).unwrap_or(f64::from(line));
+            painted_cursor = Some(shown as u16);
+            let y = m.geom.origin_y + shown * m.geom.cell_h;
             let width = m.geom.cell_w * if cursor.wide { 2. } else { 1. };
             color(context, m.engine.palette().cursor);
             let shape = comandos_term::render::preferred_cursor_shape(
@@ -1708,33 +3792,30 @@ impl Inner {
                 }
                 let _ = context.fill();
                 if shape == CursorShape::Block {
+                    // The letter under the cursor, in the cursor's contrast color.
                     let _ = context.save();
                     context.rectangle(x, y, width, m.geom.cell_h);
                     context.clip();
-                    for op in m.frame.ops() {
+                    context.translate(0., (shown - f64::from(line)) * m.geom.cell_h);
+                    for op in m.frame.row_ops(cursor.line) {
                         let mut op = op.clone();
                         match &mut op {
                             PaintOp::Text {
-                                y: row_y,
                                 col,
                                 cells,
                                 rgb,
                                 ..
-                            } if *row_y == y
-                                && *col <= cursor.col
-                                && cursor.col < col.saturating_add(*cells) =>
-                            {
+                            } if *col <= cursor.col && cursor.col < col.saturating_add(*cells) => {
                                 *rgb = m.engine.palette().cursor_accent;
-                                paint_op(context, &mut text_painter, &m.geom, &op);
+                                paint_op(context, text_painter, &m.geom, &op);
                             }
                             PaintOp::Glyph {
                                 x: cell_x,
-                                y: row_y,
                                 rgb,
                                 ..
-                            } if *row_y == y && *cell_x == x => {
+                            } if *cell_x == x => {
                                 *rgb = m.engine.palette().cursor_accent;
-                                paint_op(context, &mut text_painter, &m.geom, &op);
+                                paint_op(context, text_painter, &m.geom, &op);
                             }
                             _ => {}
                         }
@@ -1744,6 +3825,7 @@ impl Inner {
             }
         }
         if !m.preedit.is_empty() {
+            let layout = self.area.create_pango_layout(None);
             layout.set_font_description(Some(&m.font));
             layout.set_text(&m.preedit);
             color(context, m.engine.palette().fg);
@@ -1753,23 +3835,136 @@ impl Inner {
             );
             pangocairo::functions::show_layout(context, &layout);
         }
-        m.schedule.painted(self.ms());
+        let _ = context.restore();
+        m.painted_cursor = painted_cursor;
+        m.painted = Some(look);
     }
+}
+
+/// Screen rows to paint again when only `lines` changed since the picture
+/// `m.painted` was made; `None` when the whole picture has to be painted.
+fn changed_rows(m: &Model, look: &FrameLook, lines: &[usize]) -> Option<Vec<bool>> {
+    if !(look.plain && look.fresh) || m.painted.as_ref() != Some(look) {
+        return None;
+    }
+    let rows = usize::from(look.size.1);
+    let mut dirty = vec![false; rows];
+    let cursor = m.frame.cursor();
+    for &line in lines.iter().chain([&cursor.line]) {
+        if let Some(row) = dirty.get_mut(line) {
+            *row = true;
+        }
+        // The noise filter may show the line on another row of its pane.
+        for (r, map) in &look.maps {
+            let shown = line
+                .checked_sub(usize::from(r.top))
+                .and_then(|i| map.get(i).copied().flatten());
+            if let Some(row) = shown.and_then(|row| dirty.get_mut(usize::from(row))) {
+                *row = true;
+            }
+        }
+    }
+    if let Some(row) = m.painted_cursor.and_then(|row| dirty.get_mut(usize::from(row))) {
+        *row = true;
+    }
+    // Glyphs may reach a little into the rows next to theirs.
+    let only: Vec<bool> = (0..rows)
+        .map(|i| dirty[i] || (i > 0 && dirty[i - 1]) || dirty.get(i + 1).copied().unwrap_or(false))
+        .collect();
+    (only.iter().filter(|on| **on).count() * 5 <= rows * 3).then_some(only)
+}
+
+/// Pixel bands `(y, height)` that cover the marked rows, joined when they touch.
+fn row_bands(rows: &[bool], g: &CellGeom) -> Vec<(i32, i32)> {
+    let mut bands: Vec<(i32, i32)> = Vec::new();
+    for (i, _) in rows.iter().enumerate().filter(|(_, on)| **on) {
+        let top = (g.origin_y + i as f64 * g.cell_h).floor() as i32;
+        let bottom = (g.origin_y + (i + 1) as f64 * g.cell_h).ceil() as i32;
+        match bands.last_mut() {
+            Some((y, h)) if *y + *h >= top => *h = bottom - *y,
+            _ => bands.push((top, bottom - top)),
+        }
+    }
+    bands
 }
 
 /// Reuse shaping within one frame while retaining the existing cell positions.
 /// Frame-local ownership also makes font, scale and Pango context changes take
 /// effect immediately. Unusual Unicode output cannot grow the cache unbounded.
+/// Vertical bands (y, height) of rows that contain visible text.
+/// `a` moved `t` of the way toward `b`.
+fn mix(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
+    let lerp = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round().clamp(0., 255.) as u8;
+    [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])]
+}
+
+fn rounded_rect(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    let r = r.min(w / 2.).min(h / 2.).max(0.);
+    cr.new_sub_path();
+    cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.);
+    cr.arc(x + w - r, y + h - r, r, 0., std::f64::consts::FRAC_PI_2);
+    cr.arc(x + r, y + h - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+    cr.arc(x + r, y + r, r, std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+    cr.close_path();
+}
+
+/// tmux's own border lines and title text: the tiles replace them.
+fn is_border_op(op: &PaintOp) -> bool {
+    match op {
+        PaintOp::Text { rgb, .. } | PaintOp::Glyph { rgb, .. } => super::tiles::is_border(*rgb),
+        _ => false,
+    }
+}
+
+fn text_bands(ops: &[PaintOp], cell_h: f64) -> Vec<(f64, f64)> {
+    let mut rows: Vec<f64> = ops
+        .iter()
+        .filter_map(|op| match op {
+            PaintOp::Text { y, text, .. } if !text.trim().is_empty() => Some(*y),
+            PaintOp::Glyph { y, .. } => Some(*y),
+            _ => None,
+        })
+        .collect();
+    rows.sort_by(f64::total_cmp);
+    rows.dedup();
+    let mut bands: Vec<(f64, f64)> = Vec::new();
+    for y in rows {
+        match bands.last_mut() {
+            Some((top, h)) if (*top + *h - y).abs() < 0.5 => *h += cell_h,
+            _ => bands.push((y, cell_h)),
+        }
+    }
+    bands
+}
+
+/// One run of text already shaped into font glyphs. Each glyph keeps its
+/// column so the run stays on the cell grid whatever `cell_w` is.
+struct ShapedRun {
+    pieces: Vec<(cairo::ScaledFont, Vec<GridGlyph>)>,
+}
+/// Glyph index, column, x offset inside the cell and y from the cell top.
+type GridGlyph = (u64, u32, f64, f64);
+
 struct TextPainter {
     template: pango::Layout,
     fonts: [pango::FontDescription; 4],
     layouts: [std::collections::HashMap<String, pango::Layout>; 4],
     entries: usize,
+    /// Grid runs: `None` marks text the fast path cannot draw (missing glyphs).
+    runs: [std::collections::HashMap<String, Option<Rc<ShapedRun>>>; 4],
+    run_entries: usize,
+    attrs: pango::AttrList,
+    glyphs: Vec<cairo::Glyph>,
+    dpr: f64,
 }
 impl TextPainter {
     const MAX_LAYOUTS: usize = 512;
+    const MAX_RUNS: usize = 8192;
 
     fn new(template: &pango::Layout, font: &pango::FontDescription) -> Self {
+        // Per-cell drawing never formed ligatures; keep that look.
+        let attrs = pango::AttrList::new();
+        attrs.insert(pango::AttrFontFeatures::new("liga 0, calt 0, clig 0, dlig 0"));
         Self {
             template: template.clone(),
             fonts: std::array::from_fn(|style| {
@@ -1788,6 +3983,11 @@ impl TextPainter {
             }),
             layouts: std::array::from_fn(|_| std::collections::HashMap::new()),
             entries: 0,
+            runs: std::array::from_fn(|_| std::collections::HashMap::new()),
+            run_entries: 0,
+            attrs,
+            glyphs: Vec::new(),
+            dpr: 1.,
         }
     }
 
@@ -1801,7 +4001,7 @@ impl TextPainter {
         y: f64,
     ) {
         let style = usize::from(bold) | (usize::from(italic) << 1);
-        if let Some(layout) = self.layouts[style].get(text) {
+        if let Some(layout) = self.layouts.get(style).and_then(|cache| cache.get(text)) {
             context.move_to(x, y);
             pangocairo::functions::show_layout(context, layout);
             return;
@@ -1812,16 +4012,130 @@ impl TextPainter {
         } else {
             self.template.clone()
         };
-        layout.set_font_description(Some(&self.fonts[style]));
+        layout.set_font_description(self.fonts.get(style));
         #[cfg(test)]
         native_paint_tests::TEXT_SHAPES.with(|count| count.set(count.get() + 1));
         layout.set_text(text);
         context.move_to(x, y);
         pangocairo::functions::show_layout(context, &layout);
         if retain {
-            self.layouts[style].insert(text.to_string(), layout);
+            if let Some(cache) = self.layouts.get_mut(style) {
+                cache.insert(text.to_string(), layout);
+            }
             self.entries += 1;
         }
+    }
+
+    /// Shape `text` (one char per cell) once, then reuse it every frame.
+    fn shape_grid(&self, text: &str, style: usize) -> Option<ShapedRun> {
+        use glib::prelude::Cast;
+        use pangocairo::prelude::PangoCairoFontExt as _;
+        let layout = self.template.copy();
+        layout.set_font_description(self.fonts.get(style));
+        layout.set_attributes(Some(&self.attrs));
+        layout.set_text(text);
+        #[cfg(test)]
+        native_paint_tests::TEXT_SHAPES.with(|count| count.set(count.get() + 1));
+        if layout.line_count() != 1 {
+            return None;
+        }
+        let scale = f64::from(pango::SCALE);
+        let baseline = f64::from(layout.baseline()) / scale;
+        let mut column = vec![0u32; text.len() + 1];
+        for (index, (byte, _)) in text.char_indices().enumerate() {
+            *column.get_mut(byte)? = u32::try_from(index).ok()?;
+        }
+        let line = layout.line_readonly(0)?;
+        let mut pieces = Vec::new();
+        for run in line.runs() {
+            let item = run.item();
+            let font = item.analysis().font();
+            let scaled = font.dynamic_cast_ref::<pangocairo::Font>()?.scaled_font()?;
+            let glyphs = run.glyph_string();
+            let mut out = Vec::with_capacity(glyphs.glyph_info().len());
+            let mut cluster = -1;
+            let mut advance = 0.;
+            for (info, &start) in glyphs.glyph_info().iter().zip(glyphs.log_clusters()) {
+                if start != cluster {
+                    cluster = start;
+                    advance = 0.;
+                }
+                let glyph = info.glyph();
+                let geometry = info.geometry();
+                if glyph & pango::GLYPH_UNKNOWN_FLAG != 0 {
+                    return None;
+                }
+                if glyph != pango::GLYPH_EMPTY {
+                    let byte = usize::try_from(item.offset() + start).ok()?;
+                    out.push((
+                        u64::from(glyph),
+                        *column.get(byte)?,
+                        advance + f64::from(geometry.x_offset()) / scale,
+                        baseline + f64::from(geometry.y_offset()) / scale,
+                    ));
+                }
+                advance += f64::from(geometry.width()) / scale;
+            }
+            pieces.push((scaled, out));
+        }
+        Some(ShapedRun { pieces })
+    }
+
+    /// Draw a run whose chars each take one cell, in one cairo call per font.
+    #[allow(clippy::too_many_arguments)]
+    fn show_grid(
+        &mut self,
+        context: &cairo::Context,
+        text: &str,
+        bold: bool,
+        italic: bool,
+        x: f64,
+        y: f64,
+        cell_w: f64,
+    ) -> bool {
+        self.show_grid_at(context, text, bold, italic, x, y, cell_w)
+            .unwrap_or(false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn show_grid_at(
+        &mut self,
+        context: &cairo::Context,
+        text: &str,
+        bold: bool,
+        italic: bool,
+        x: f64,
+        y: f64,
+        cell_w: f64,
+    ) -> Option<bool> {
+        let style = usize::from(bold) | (usize::from(italic) << 1);
+        let shaped = match self.runs.get(style)?.get(text) {
+            Some(found) => found.clone(),
+            None => {
+                if self.run_entries >= Self::MAX_RUNS {
+                    self.runs.iter_mut().for_each(std::collections::HashMap::clear);
+                    self.run_entries = 0;
+                }
+                let shaped = self.shape_grid(text, style).map(Rc::new);
+                if let Some(cache) = self.runs.get_mut(style) {
+                    cache.insert(text.to_string(), shaped.clone());
+                }
+                self.run_entries += 1;
+                shaped
+            }
+        };
+        let Some(shaped) = shaped else {
+            return Some(false);
+        };
+        for (font, glyphs) in &shaped.pieces {
+            self.glyphs.clear();
+            self.glyphs.extend(glyphs.iter().map(|&(index, col, dx, dy)| {
+                cairo::Glyph::new(index as _, x + f64::from(col) * cell_w + dx, y + dy)
+            }));
+            context.set_scaled_font(font);
+            let _ = context.show_glyphs(&self.glyphs);
+        }
+        Some(true)
     }
 }
 
@@ -1845,7 +4159,11 @@ fn paint_op(context: &cairo::Context, text_painter: &mut TextPainter, g: &CellGe
             color(context, *rgb);
             if *cells <= 2 && text.chars().count() != usize::from(*cells) {
                 text_painter.show(context, text, *bold, *italic, *x, *y);
+            } else if text.chars().count() == usize::from(*cells)
+                && text_painter.show_grid(context, text, *bold, *italic, *x, *y, g.cell_w)
+            {
             } else {
+                super::lag::count_slow(text.chars().count());
                 for (index, character) in text.chars().enumerate() {
                     text_painter.show(
                         context,
@@ -2001,6 +4319,41 @@ mod native_paint_tests {
             "a frame must reuse identical glyph layouts instead of reshaping every terminal cell"
         );
     }
+    /// `cargo test -p comandos-app --lib paint_speed -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing probe"]
+    fn paint_speed() {
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 1700, 1100).unwrap();
+        let context = cairo::Context::new(&surface).unwrap();
+        let layout = pangocairo::functions::create_layout(&context);
+        let font = pango::FontDescription::from_string("JetBrainsMono Nerd Font Mono 11");
+        let geom = CellGeom { cell_w: 8., cell_h: 19., origin_x: 0., origin_y: 0., dpr: 1., font_size: 13. };
+        let line = "  Lo armé enfocado en profundizar el lado Solana + adopción LatAm (que es justo lo que Superteam financia): Solana Desk v2, onboarding en español ";
+        let ops: Vec<PaintOp> = (0..55)
+            .map(|row| PaintOp::Text { col: 0, x: 0., y: f64::from(row) * 19., cells: line.chars().count() as u16, text: line.into(), rgb: [220; 3], bold: row % 7 == 0, italic: false })
+            .collect();
+        let mut painter = TextPainter::new(&layout, &font);
+        let start = Instant::now();
+        for _ in 0..30 {
+            for op in &ops {
+                paint_op(&context, &mut painter, &geom, op);
+            }
+        }
+        let fast = start.elapsed() / 30;
+        let start = Instant::now();
+        for _ in 0..30 {
+            let mut painter = TextPainter::new(&layout, &font);
+            for op in &ops {
+                if let PaintOp::Text { x, y, text, bold, italic, .. } = op {
+                    for (i, c) in text.chars().enumerate() {
+                        painter.show(&context, &c.to_string(), *bold, *italic, x + i as f64 * geom.cell_w, *y);
+                    }
+                }
+            }
+        }
+        let old = start.elapsed() / 30;
+        eprintln!("frame 150x55: new {fast:?}  old {old:?}");
+    }
     #[test]
     fn text_layout_cache_is_bounded_for_diverse_unicode() {
         let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 64, 32).unwrap();
@@ -2108,10 +4461,20 @@ mod native_paint_tests {
         }
         for font in ["monospace 13", "monospace 16"] {
             for scale in [1., 2.] {
-                assert_eq!(
-                    render(false, font, scale),
-                    render(true, font, scale),
-                    "{font} at {scale}"
+                // Glyph runs are positioned in exact doubles, Pango layouts in
+                // 1/1024 px: only anti-aliasing at glyph edges may differ.
+                let (fast, reference) = (render(false, font, scale), render(true, font, scale));
+                let inked = reference.iter().filter(|&&v| v != 0).count();
+                let differ = fast.iter().zip(&reference).filter(|(a, b)| a != b).count();
+                let worst = fast
+                    .iter()
+                    .zip(&reference)
+                    .map(|(a, b)| a.abs_diff(*b))
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    worst <= 96 && differ * 20 <= inked,
+                    "{font} at {scale}: {differ} of {inked} inked bytes differ, worst {worst}"
                 );
             }
         }

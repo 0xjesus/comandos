@@ -51,40 +51,6 @@
     "host_calls": [],
     "risks": []
   },
-  "Analytics": {
-    "defined_by": [
-      "script:analytics.js"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:analytics"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "AnalyticsRender": {
-    "defined_by": [
-      "script:analytics-render.js"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "script:analytics.js"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
   "CENTER_PANELS": {
     "defined_by": [
       "region:app-nativa"
@@ -102,23 +68,6 @@
     "host_calls": [],
     "risks": []
   },
-  "ComandosChainBuilder": {
-    "defined_by": [
-      "script:chain-builder.js"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:barra-de-comandos"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
   "ComandosCommandSidebar": {
     "defined_by": [
       "script:command-sidebar.js"
@@ -129,7 +78,6 @@
     "patched_by": [],
     "fallback_by": [],
     "used_by": [
-      "script:chain-builder.js",
       "region:barra-de-comandos"
     ],
     "mutated_by": [],
@@ -148,26 +96,6 @@
     "fallback_by": [],
     "used_by": [
       "term:main"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "ComandosNotices": {
-    "defined_by": [
-      "script:notifications.js"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:helpers",
-      "region:avisos-de-eventos",
-      "region:notificaciones-del-sistema",
-      "region:tail"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -366,7 +294,6 @@
       "region:analytics",
       "script:workspace.js",
       "script:work-marks.js",
-      "script:pomodoro.js",
       "region:tail"
     ],
     "mutated_by": [],
@@ -975,8 +902,7 @@
       "script:workspace-dock.js",
       "region:app-combinada",
       "region:remoto",
-      "script:work-marks.js",
-      "script:pomodoro.js"
+      "script:work-marks.js"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -1345,25 +1271,7 @@
     "used_by": [
       "region:tema",
       "region:prefs-de-terminal",
-      "script:workspace.js",
-      "script:pomodoro.js"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "mountChainPage": {
-    "defined_by": [
-      "region:barra-de-comandos"
-    ],
-    "binding": [
-      "function"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:ui-general"
+      "script:workspace.js"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -1385,48 +1293,6 @@
     "mutated_by": [],
     "called_by": [],
     "host_calls": [],
-    "risks": []
-  },
-  "notifBadge": {
-    "defined_by": [
-      "region:helpers"
-    ],
-    "binding": [
-      "function"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:render",
-      "region:avisos-de-eventos"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "notifRender": {
-    "defined_by": [
-      "region:helpers"
-    ],
-    "binding": [
-      "function"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [],
-    "mutated_by": [],
-    "called_by": [
-      "bin/cc-app"
-    ],
-    "host_calls": [
-      {
-        "from": "bin/cc-app",
-        "line": 6471,
-        "via": "run_javascript",
-        "origin": "literal"
-      }
-    ],
     "risks": []
   },
   "nsOpen": {
@@ -1509,43 +1375,6 @@
     "fallback_by": [],
     "used_by": [
       "script:workspace.js"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "openAnalytics": {
-    "defined_by": [
-      "region:analytics"
-    ],
-    "binding": [
-      "function"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:app-nativa",
-      "region:barra-de-comandos",
-      "region:modales-en-medio",
-      "region:ui-general"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "openAnalyticsTab": {
-    "defined_by": [
-      "region:analytics"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "script:pomodoro.js"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -1725,36 +1554,11 @@
     "fallback_by": [],
     "used_by": [
       "region:barra-de-comandos",
-      "script:workspace.js",
-      "script:pomodoro.js"
+      "script:workspace.js"
     ],
     "mutated_by": [],
     "called_by": [],
     "host_calls": [],
-    "risks": []
-  },
-  "pomoRender": {
-    "defined_by": [
-      "script:pomodoro.js"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [],
-    "mutated_by": [],
-    "called_by": [
-      "bin/cc-app"
-    ],
-    "host_calls": [
-      {
-        "from": "bin/cc-app",
-        "line": 6471,
-        "via": "run_javascript",
-        "origin": "literal"
-      }
-    ],
     "risks": []
   },
   "quickTerminal": {
@@ -2119,67 +1923,6 @@
     "host_calls": [],
     "risks": []
   },
-  "sidebarTermAction": {
-    "defined_by": [
-      "region:barra-de-comandos"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [],
-    "mutated_by": [],
-    "called_by": [
-      "bin/cc-app"
-    ],
-    "host_calls": [
-      {
-        "from": "bin/cc-app",
-        "line": 7415,
-        "via": "_dash_js_quiet",
-        "origin": "literal"
-      }
-    ],
-    "risks": [],
-    "member_access": [
-      "bin/cc-app:7415 (window.sidebarTermAction)"
-    ]
-  },
-  "sidebarTermFocused": {
-    "defined_by": [
-      "region:barra-de-comandos"
-    ],
-    "binding": [
-      "window"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [],
-    "mutated_by": [],
-    "called_by": [
-      "bin/cc-app"
-    ],
-    "host_calls": [
-      {
-        "from": "bin/cc-app",
-        "line": 7777,
-        "via": "_dash_js_quiet",
-        "origin": "literal"
-      },
-      {
-        "from": "bin/cc-app",
-        "line": 7780,
-        "via": "_dash_js_quiet",
-        "origin": "literal"
-      }
-    ],
-    "risks": [],
-    "member_access": [
-      "bin/cc-app:7777 (window.sidebarTermFocused)",
-      "bin/cc-app:7780 (window.sidebarTermFocused)"
-    ]
-  },
   "snipDlg": {
     "defined_by": [
       "region:snippets"
@@ -2227,8 +1970,7 @@
       "region:helpers",
       "region:tema",
       "region:notificaciones-del-sistema",
-      "region:analytics",
-      "script:pomodoro.js"
+      "region:analytics"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -2247,23 +1989,6 @@
     "used_by": [
       "region:app-combinada",
       "region:funciones-de-ui-globales"
-    ],
-    "mutated_by": [],
-    "called_by": [],
-    "host_calls": [],
-    "risks": []
-  },
-  "syncCommandSidebar": {
-    "defined_by": [
-      "region:barra-de-comandos"
-    ],
-    "binding": [
-      "function"
-    ],
-    "patched_by": [],
-    "fallback_by": [],
-    "used_by": [
-      "region:render"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -2376,8 +2101,7 @@
       "region:notificaciones-del-sistema",
       "region:ui-general",
       "region:analytics",
-      "script:work-marks.js",
-      "script:pomodoro.js"
+      "script:work-marks.js"
     ],
     "mutated_by": [],
     "called_by": [],
@@ -2444,7 +2168,6 @@
       "region:snippets",
       "script:workspace.js",
       "script:work-marks.js",
-      "script:pomodoro.js",
       "region:tail"
     ],
     "mutated_by": [],
@@ -2478,10 +2201,7 @@
     ],
     "patched_by": [],
     "fallback_by": [],
-    "used_by": [
-      "script:pomodoro.js",
-      "script:notifications.js"
-    ],
+    "used_by": [],
     "mutated_by": [],
     "called_by": [],
     "host_calls": [],
@@ -2610,25 +2330,7 @@
     "region:tail"
   ],
   "@dom_ids": {
-    "btn-notif": {
-      "called_by": [
-        "bin/cc-app"
-      ],
-      "in_markup": true
-    },
     "btn-settings": {
-      "called_by": [
-        "bin/cc-app"
-      ],
-      "in_markup": true
-    },
-    "notif-badge": {
-      "called_by": [
-        "bin/cc-app"
-      ],
-      "in_markup": true
-    },
-    "notif-panel": {
       "called_by": [
         "bin/cc-app"
       ],

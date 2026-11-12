@@ -23,13 +23,14 @@ fn main() {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     let pane = serde_json::json!({"pane":"%1","harness":"claude","motor":"claude","state":"verified","model":"fable-5-1","effort":"high","hAcct":"jesus-signara"});
+    let summary = serde_json::json!({"ok":true,"mcps":{"on":40,"total":43,"up":[],"down":[{"name":"chrome-bg","why":"no conectó"},{"name":"cloudflare","why":"no conectó"},{"name":"glitchtip","why":"sin respuesta"}]},"skills":{"on":201,"tokens":387250,"used":[]}});
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
     for width in &widths {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let label = gtk::Label::new(Some(&format!("{width}px")));
         label.set_size_request(60, -1);
         row.pack_start(&label, false, false, 0);
-        row.pack_start(&comandos_app::ui::app::header_preview(&pane, "Cobbler", "jesus-signara", *width), false, false, 0);
+        row.pack_start(&comandos_app::ui::app::header_preview(&pane, "Cobbler", "jesus-signara", Some(&summary), *width), false, false, 0);
         column.pack_start(&row, false, false, 0);
     }
     let window = gtk::OffscreenWindow::new();

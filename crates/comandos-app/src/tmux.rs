@@ -610,6 +610,30 @@ impl TmuxCtl {
         self.attach_with(session, "-f ignore-size ")
     }
 
+    /// `tmux -CC attach`: tmux sends each pane's raw output instead of a drawn
+    /// screen, and the app owns history, scroll and selection. Live sessions
+    /// only; `COMANDOS_TMUX_CONTROL=0` keeps every terminal on the classic attach.
+    pub fn control_argv(&self, session: &str) -> Option<Vec<String>> {
+        let off = std::env::var("COMANDOS_TMUX_CONTROL").is_ok_and(|v| v == "0");
+        // SSH tabs scroll the remote side with their own wheel handling.
+        let ssh = session.starts_with("ssh-") || session.starts_with("sshtab-");
+        if self.mode != RunMode::Live || off || ssh {
+            return None;
+        }
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+        // A control client outlives its terminal: it ignores the hangup when
+        // the app goes away and would stay attached, sizing the window. The
+        // watcher ends it once the app (this shell's parent) is gone; the
+        // hangup is ignored so the shell and the watcher live to do it.
+        // `cat` keeps the tab open when the session ends, as the classic attach does.
+        let attach = format!(
+            "trap '' HUP; ( tail --pid=$PPID -f /dev/null; pkill -TERM -P $$ tmux ) >/dev/null 2>&1 & w=$!; tmux -S {} -CC attach -t {}; kill $w 2>/dev/null; echo '[sesion terminada — cierra esta pestana con la x]'; exec cat",
+            quote(&self.socket.display().to_string()),
+            quote(&format!("={session}")),
+        );
+        Some(vec!["/bin/sh".into(), "-c".into(), attach])
+    }
+
     fn attach_with(&self, session: &str, flags: &str) -> Vec<String> {
         if self.mode == RunMode::Shadow {
             return Vec::new();

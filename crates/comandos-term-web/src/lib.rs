@@ -396,6 +396,8 @@ struct Inner {
     blink_on: bool,
     frame_cb: Option<Closure<dyn FnMut(f64)>>,
     frame_id: Option<i32>,
+    /// (frames, total ms, slowest ms, its new glyphs, their ms): `note_frame`.
+    frame_stats: (u32, f64, f64, u32, f64),
     timer_cb: Option<Closure<dyn FnMut()>>,
     /// `devicePixelContentBox` del canvas (si el navegador lo da).
     observer: Option<ResizeObserver>,
@@ -1193,6 +1195,7 @@ impl Inner {
     fn on_frame(&mut self) {
         self.frame_id = None;
         let now = self.now();
+        let raster_before = metrics::raster_stats();
         let input = self.cursor_input();
         if self.overlay.dirty {
             // Las filas cuyas celdas seleccionadas cambiaron se repintan:
@@ -1221,6 +1224,35 @@ impl Inner {
         }
         self.sync_textarea();
         self.arm_timer(now);
+        self.note_frame(now, raster_before);
+    }
+
+    /// Diagnostics in `window.__termStats`: frames, their time, the slowest
+    /// and how much of it went to rasterizing new glyphs.
+    fn note_frame(&mut self, started: f64, raster_before: (u32, f64)) {
+        let took = self.now() - started;
+        let (glyphs, glyph_ms) = metrics::raster_stats();
+        let s = &mut self.frame_stats;
+        s.0 = s.0.saturating_add(1);
+        s.1 += took;
+        if took > s.2 {
+            s.2 = took;
+            s.3 = glyphs.saturating_sub(raster_before.0);
+            s.4 = glyph_ms - raster_before.1;
+        }
+        let stats = js_sys::Object::new();
+        for (k, v) in [
+            ("frames", f64::from(s.0)),
+            ("frameMs", s.1.round()),
+            ("maxFrameMs", s.2.round()),
+            ("maxFrameGlyphs", f64::from(s.3)),
+            ("maxFrameGlyphMs", s.4.round()),
+            ("glyphs", f64::from(glyphs)),
+            ("glyphMs", glyph_ms.round()),
+        ] {
+            let _ = js_sys::Reflect::set(&stats, &k.into(), &v.into());
+        }
+        let _ = js_sys::Reflect::set(&self.window, &"__termStats".into(), &stats);
     }
 
     /// Un solo temporizador: el próximo cambio del parpadeo o el
@@ -1617,6 +1649,7 @@ impl WebTerm {
             blink_on: true,
             frame_cb: None,
             frame_id: None,
+            frame_stats: (0, 0.0, 0.0, 0, 0.0),
             timer_cb: None,
             observer: None,
             observer_cb: None,

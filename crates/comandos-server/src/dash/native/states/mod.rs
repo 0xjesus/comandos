@@ -62,14 +62,42 @@ pub const ROUTES: &[Entry] = &[Entry {
     route: NativeRoute::State,
 }];
 
-/// `self._json(200, read_states_cached())`.
-pub async fn answer(native: &Native) -> Answer {
+/// `self._json(200, read_states_cached())`. `?live=1` (the web page) keeps
+/// only sessions alive, with a tab or external, and shortens their `detail`:
+/// the full list carries hundreds of finished sessions nobody draws.
+pub async fn answer(native: &Native, target: &str) -> Answer {
     let states = native.states_cached().await?;
-    Ok(Reply::bytes(
-        http::StatusCode::OK,
-        "application/json",
-        states.body.clone(),
-    ))
+    let live = target
+        .split_once('?')
+        .is_some_and(|(_, query)| query.split('&').any(|pair| pair == "live=1"));
+    if !live {
+        return Ok(Reply::bytes(
+            http::StatusCode::OK,
+            "application/json",
+            states.body.clone(),
+        ));
+    }
+    Reply::json(http::StatusCode::OK, &Value::Array(live_items(&states.items)))
+        .map_err(Fault::Error)
+}
+
+/// Longest `detail` sent to the web page (notifications show a line of it).
+const LIVE_DETAIL_CHARS: usize = 400;
+
+pub fn live_items(items: &[Value]) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|it| ["alive", "tabbed", "external"].iter().any(|k| truthy(&it[*k])))
+        .map(|it| {
+            let mut it = it.clone();
+            if let Some(Value::String(detail)) = it.get_mut("detail")
+                && let Some((cut, _)) = detail.char_indices().nth(LIVE_DETAIL_CHARS)
+            {
+                detail.truncate(cut);
+            }
+            it
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,5 +285,21 @@ mod tests {
         assert_eq!(py_float(&json!("١٢")), PyFloat::Unsure);
         assert_eq!(py_float(&json!([])), PyFloat::Raises);
         assert_eq!(py_float(&json!(false)), PyFloat::Value(0.0));
+    }
+
+    #[test]
+    fn live_items_keep_drawn_sessions_and_shorten_detail() {
+        let long = "é".repeat(500);
+        let items = vec![
+            json!({"session":"a","alive":true,"detail":long}),
+            json!({"session":"b","alive":false,"tabbed":true,"detail":"x"}),
+            json!({"session":"c","external":true}),
+            json!({"session":"gone","alive":false,"tabbed":false,"detail":"old"}),
+        ];
+        let live = live_items(&items);
+        let names: Vec<_> = live.iter().map(|it| it["session"].as_str().unwrap()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(live[0]["detail"].as_str().unwrap().chars().count(), LIVE_DETAIL_CHARS);
+        assert_eq!(live[1]["detail"], "x");
     }
 }

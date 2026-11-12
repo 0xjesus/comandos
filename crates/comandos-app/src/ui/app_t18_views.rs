@@ -131,15 +131,6 @@ impl App {
                 .js_value()
                 .map(|v| v.to_str().to_string())
                 .unwrap_or_default();
-            if kind == "chains"
-                && let Ok(message) = serde_json::from_str::<Value>(&raw)
-                && message.get("chainModal").is_some()
-            {
-                if let Err(error) = app.chain_message(&message) {
-                    app.status.set_text(&error.to_string());
-                }
-                return;
-            }
             match ui::bridge::parse_bridge(&raw) {
                 Ok(message) => {
                     if let Err(error) = app.dispatch_bridge(message) {
@@ -149,132 +140,29 @@ impl App {
                 Err(error) => app.status.set_text(&error.to_string()),
             }
         });
-        if kind == "reader" {
-            self.t18
-                .reader_signals
-                .borrow_mut()
-                .push((manager.upcast(), id));
-        } else if let Some(owner) = self.t18.windows.borrow_mut().get_mut(kind) {
-            owner.signals.push((manager.upcast(), id));
-        }
+        self.t18
+            .reader_signals
+            .borrow_mut()
+            .push((manager.upcast(), id));
     }
-    pub(super) fn open_internal_modal(
-        self: &Rc<Self>,
-        kind: ModalKind,
-    ) -> Result<(), CommandError> {
-        let base = self
-            .cfg
-            .dash_url()
-            .ok_or_else(|| CommandError::Refused("dashboard unavailable".into()))?
-            .to_string();
-        if kind == ModalKind::Analytics {
-            return self.open_web_modal(
-                &format!("{base}/?panel=usage&v={}", env!("CARGO_PKG_VERSION")),
-                kind,
-            );
-        }
-        let session = self
-            .action_session()
-            .filter(|s| crate::tab_actions::valid_session(s))
-            .unwrap_or_default();
-        if session.is_empty() {
-            return self.open_web_modal(
-                &format!(
-                    "{base}/?panel=chains&v={}&session=&pane=",
-                    env!("CARGO_PKG_VERSION")
-                ),
-                kind,
-            );
-        }
-        self.close_window("chains");
-        let scope = Rc::new(ui::snippets::Scope::default());
-        let ticket = scope.ticket();
-        self.t18.requests.borrow_mut().insert("chains", scope);
-        let worker = ticket.clone();
-        let tmux = self.tmux.clone();
-        let instance = self
-            .term_for_action(&session)
-            .map(|t| t.cleanup_cancellation());
-        let guard = instance.clone();
-        let weak = Rc::downgrade(self);
-        let closed = self.closed.clone();
-        self.jobs.spawn(
-            move || {
-                ui::extensions::wizard_target_when(&tmux, &session, "", || {
-                    worker.current()
-                        && !closed.load(Ordering::Acquire)
-                        && guard.as_ref().is_none_or(|g| !g.load(Ordering::Acquire))
-                })
-            },
-            move |result| {
-                if let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire))
-                    && ticket.current()
-                    && instance.as_ref().is_none_or(|g| !g.load(Ordering::Acquire))
-                {
-                    match result {
-                        Ok((session, pane, _)) => {
-                            let uri = format!(
-                                "{base}/?panel=chains&v={}&session={}&pane={}",
-                                env!("CARGO_PKG_VERSION"),
-                                ui::webview::encode_query(&session),
-                                ui::webview::encode_query(&pane)
-                            );
-                            if let Err(error) = app.open_web_modal(&uri, kind) {
-                                app.status.set_text(&error.to_string());
-                            }
-                        }
-                        Err(error) => app.status.set_text(&error),
-                    }
-                }
-            },
-        );
-        Ok(())
-    }
-    pub(super) fn chain_message(&self, message: &Value) -> Result<(), CommandError> {
-        if !self.writable() {
-            return Err(CommandError::Refused("chain action unavailable".into()));
-        }
-        self.close_window("chains");
-        if let Some(script) = ui::modals::chain_refresh(message) {
-            self.quiet_js(&script);
-        }
-        Ok(())
-    }
-    pub(super) fn open_web_modal(
-        self: &Rc<Self>,
-        uri: &str,
-        kind: ModalKind,
-    ) -> Result<(), CommandError> {
-        self.open_web_modal_label(uri, kind, "")
-    }
-    pub(super) fn open_web_modal_label(
-        self: &Rc<Self>,
-        uri: &str,
-        kind: ModalKind,
-        label: &str,
-    ) -> Result<(), CommandError> {
+    pub(super) fn open_web_modal(self: &Rc<Self>, uri: &str, label: &str) -> Result<(), CommandError> {
         if uri.len() > 8192 || !(uri.starts_with("http://") || uri.starts_with("https://")) {
             return Err(CommandError::Invalid("invalid web URL".into()));
         }
-        let name = match kind {
-            ModalKind::Chains => "chains",
-            ModalKind::Analytics => "analytics",
-            _ => "link",
-        };
+        let name = "link";
         self.close_window(name);
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_transient_for(Some(&self.window));
-        window.set_modal(kind != ModalKind::Analytics);
+        window.set_modal(true);
         window.set_decorated(false);
         window.style_context().add_class("mosaic-zoom");
         let (w, h) = self.window.size();
-        let size = ui::modals::modal_size(kind, w, h);
+        let size = ui::modals::modal_size(ModalKind::Url, w, h);
         window.set_default_size(size.0, size.1);
         window.set_position(gtk::WindowPosition::CenterOnParent);
         let page = ui::webview::create_page(&self.cfg, &self.webview, "centro", uri)
             .map_err(|e| CommandError::Failed(format!("{e:?}")))?;
         let scope = Rc::new(ui::snippets::Scope::default());
-        let ticket = scope.ticket();
         let view = page.view.clone();
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         {
@@ -283,23 +171,7 @@ impl App {
             head.style_context().add_class("mosaic-head");
             let title = gtk::Label::new(None);
             title.set_ellipsize(pango::EllipsizeMode::End);
-            let title_text = match kind {
-                ModalKind::Analytics => {
-                    if self.english {
-                        "Usage"
-                    } else {
-                        "Uso"
-                    }
-                }
-                ModalKind::Chains => "ComandOS",
-                _ => {
-                    if label.is_empty() {
-                        uri
-                    } else {
-                        label
-                    }
-                }
-            };
+            let title_text = if label.is_empty() { uri } else { label };
             let text = title_text.chars().take(80).collect::<String>();
             title.set_markup(&format!("<span weight=\"bold\"> 🌐 {}</span><span foreground=\"#8A8F98\" size=\"small\">  · Esc {}</span>",glib::markup_escape_text(&text),if self.english{"closes"}else{"cierra"}));
             title.set_xalign(0.0);
@@ -327,7 +199,6 @@ impl App {
                 scope,
             },
         );
-        self.bind_aux_bridge(&view, &ticket, uri, name);
         self.bind_window_close(name, &window, false);
         window.show_all();
         Ok(())
@@ -887,7 +758,7 @@ impl App {
         self.t18.cell_ticks.borrow_mut().insert(key, tick);
     }
     pub(super) fn left_panel_set(self: &Rc<Self>, hidden: bool) {
-        let was_hidden = !self.t18.side.is_visible();
+        let was_hidden = !self.t18.left.is_visible();
         let position = self.paned.position();
         if hidden {
             self.t18
@@ -901,13 +772,13 @@ impl App {
                     self.left_fx_run(true, width);
                 }
             }
-            self.t18.side.hide();
+            self.t18.left.hide();
         } else {
             let target = self.t18.state.borrow().left_pos.max(280);
             if was_hidden {
                 self.left_fx_run(false, target);
             }
-            self.t18.side.show();
+            self.t18.left.show();
             self.paned.set_position(target);
             self.t18.state.borrow_mut().set_left(false, position);
         }
@@ -952,19 +823,19 @@ impl App {
     fn left_snapshot(&self) {
         self.t18.fx.borrow_mut().take();
         self.t18.snapshot.borrow_mut().take();
-        if !self.t18.side.is_mapped() {
+        if !self.t18.left.is_mapped() {
             return;
         }
-        let a = self.t18.side.allocation();
+        let a = self.t18.left.allocation();
         if a.width() < 40 || a.height() < 40 {
             return;
         }
-        let Some(window) = self.t18.side.window() else {
+        let Some(window) = self.t18.left.window() else {
             return;
         };
         let Some((x, y)) = self
             .t18
-            .side
+            .left
             .translate_coordinates(&self.modal_overlay, 0, 0)
         else {
             return;

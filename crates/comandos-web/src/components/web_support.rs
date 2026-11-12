@@ -92,12 +92,14 @@ pub fn toast(message: &str) {
     let _ = invoke(&global("toast"), &[message.into(), true.into()]);
 }
 // Explicitly selected by B6/B7: these arguments are internally encoded text.
+#[allow(dead_code)] // shared with comandos-web-content
 pub fn utf16_query(root: &JsValue, sel: &str) -> JsValue {
     call(root, "querySelector", &[utf16_value(sel)]).unwrap_or(JsValue::NULL)
 }
 pub fn utf16_attr(el: &JsValue, key: &str, value: &str) {
     let _ = call(el, "setAttribute", &[utf16_value(key), utf16_value(value)]);
 }
+#[allow(dead_code)] // shared with comandos-web-content
 pub fn utf16_escape(value: &str) -> String {
     invoke(&global("mdEsc"), &[utf16_value(value)])
         .map(|v| utf16_string(&v))

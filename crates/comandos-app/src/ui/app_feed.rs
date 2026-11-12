@@ -7,7 +7,7 @@ use webkit2gtk::WebViewExt;
 
 #[derive(Default)]
 pub(super) struct Owned {
-    feed: RefCell<Option<Feed>>,
+    pub(super) feed: RefCell<Option<Feed>>,
     preview: RefCell<Option<ui::feed_preview::FeedPreview>>,
     /// Session whose card is on screen.
     preview_key: RefCell<Option<String>>,
@@ -251,6 +251,7 @@ impl App {
             self.feed_show_preview(&key);
         }
         self.feed_seen_on_poll();
+        self.focus_refresh();
     }
 
     fn feed_current_seen(&self, key: &str) -> bool {
@@ -332,6 +333,7 @@ impl App {
             self.post_session_seen(&session);
         }
         self.paint_feed_tiles();
+        self.focus_refresh();
     }
 
     fn feed_seen_on_poll(&self) {

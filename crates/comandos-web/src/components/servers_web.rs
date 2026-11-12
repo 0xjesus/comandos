@@ -333,7 +333,7 @@ fn manager() {
     let modal = id("servers");
     let opening = !has(&modal, "open");
     cls(&modal, "open", opening);
-    for other in ["settings", "remote", "usage"] {
+    for other in ["settings", "remote"] {
         cls(&id(other), "open", false)
     }
     if opening {
@@ -461,7 +461,6 @@ fn header() -> Result<(), JsValue> {
     for (id_, action) in [
         ("btn-terminal", "quickTerminal"),
         ("btn-newsess", "newSession"),
-        ("btn-notif", "notices"),
     ] {
         listen(
             &id(id_),

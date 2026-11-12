@@ -580,7 +580,7 @@ mod web {
                 }
             }
             let sessions = async {
-                let state = wait(exported("api", &["/state".into()])).await?;
+                let state = wait(exported("api", &["/state?live=1".into()])).await?;
                 let state = if truthy(&state) {
                     state
                 } else {

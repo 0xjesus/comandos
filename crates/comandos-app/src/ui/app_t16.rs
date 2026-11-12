@@ -837,24 +837,37 @@ impl App {
                                 item.style_context().add_class("cc-danger");
                             }
                             if action == MenuAction::ExistingSessions {
+                                // One row per session is most of this menu
+                                // and is rarely opened: it is filled when the
+                                // row is first pointed at.
                                 let submenu = gtk::Menu::new();
-                                for session in &ctx.sessions {
-                                    let child = gtk::MenuItem::with_label(session);
-                                    let weak = Rc::downgrade(&app);
-                                    let key = key.clone();
-                                    let instance = instance.clone();
-                                    let session = session.clone();
-                                    child.connect_activate(move |_| {
-                                        if let Some(app) = weak.upgrade().filter(|a| {
-                                            a.instance(&key, &instance)
-                                                && a.t16.menu_epoch.load(Ordering::Acquire) == epoch
-                                        }) {
-                                            app.open_existing(&session, &session, true);
-                                        }
-                                    });
-                                    submenu.append(&child);
-                                }
                                 item.set_submenu(Some(&submenu));
+                                let weak = Rc::downgrade(&app);
+                                let key = key.clone();
+                                let instance = instance.clone();
+                                let ctx = ctx.clone();
+                                item.connect_select(move |_| {
+                                    if !submenu.children().is_empty() {
+                                        return;
+                                    }
+                                    for session in &ctx.sessions {
+                                        let child = gtk::MenuItem::with_label(session);
+                                        let weak = weak.clone();
+                                        let key = key.clone();
+                                        let instance = instance.clone();
+                                        let session = session.clone();
+                                        child.connect_activate(move |_| {
+                                            if let Some(app) = weak.upgrade().filter(|a| {
+                                                a.instance(&key, &instance)
+                                                    && a.t16.menu_epoch.load(Ordering::Acquire) == epoch
+                                            }) {
+                                                app.open_existing(&session, &session, true);
+                                            }
+                                        });
+                                        submenu.append(&child);
+                                    }
+                                    submenu.show_all();
+                                });
                             } else {
                                 let weak = Rc::downgrade(&app);
                                 let key = key.clone();

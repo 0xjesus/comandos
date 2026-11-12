@@ -94,8 +94,6 @@
   @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
     :root[data-treatment="glass"] #topbar,
     :root[data-treatment="glass"] .modal-panel,
-    :root[data-treatment="glass"] #notif-panel,
-    :root[data-treatment="glass"] #pomo-panel,
     :root[data-treatment="glass"] #mdl-menu{
       background:var(--panel);
       background:color-mix(in srgb,var(--panel) 78%,transparent);
@@ -107,8 +105,7 @@
   }
   @media (prefers-reduced-transparency:reduce),(prefers-contrast:more),(forced-colors:active){
     :root[data-treatment="glass"] #topbar,:root[data-treatment="glass"] .modal-panel,
-    :root[data-treatment="glass"] #notif-panel,
-    :root[data-treatment="glass"] #pomo-panel,:root[data-treatment="glass"] #mdl-menu{
+    :root[data-treatment="glass"] #mdl-menu{
       background:var(--panel);-webkit-backdrop-filter:none;backdrop-filter:none;
     }
   }
@@ -312,23 +309,10 @@
   .pmono{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.04em}
   .usage-chip{display:inline-flex;align-items:center;gap:5px}
   .acct-chip{flex:none}
-  #btn-pomo.running{color:var(--brand);border-color:var(--brand);font-weight:700}
-  #btn-pomo .pomo-mini{font:800 10px var(--mono);margin-left:4px;font-variant-numeric:tabular-nums}
-  #btn-notif{position:relative}
   /* Popover de la app: solo el panel, ocupando toda la vista, sin sombra ni borde */
-  body.only-panel > *:not(#notif-panel):not(#pomo-panel):not(#settings):not(#news-reader):not(#notices):not(#usage):not(#remote):not(#servers):not(#sovereignty):not(.backdrop){display:none !important}
-  /* Estante del escritorio: el cajón ocupa TODO el alto del estante. La altura de
-     franja (--nt-h en línea, pensada para el remoto) no aplica aquí. */
-  html[data-only-panel="notices"] body.only-panel #notices{display:flex!important;flex-direction:column;position:fixed;inset:0;border-top:0}
-  html[data-only-panel="notices"] body.only-panel #notices .nt-strip-slot{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-  html[data-only-panel="notices"] body.only-panel #notices .nt-strip{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-  html[data-only-panel="notices"] body.only-panel #notices .nt-body{flex:1 1 auto;height:auto!important;min-height:0}
-  html[data-only-panel="notices"] body.only-panel #notices .nt-grip,html[data-only-panel="notices"] body.only-panel #notices [data-nt-act="max"]{display:none}
-  html:not([data-only-panel="notices"]) body.only-panel #notices{display:none!important}
+  body.only-panel > *:not(#settings):not(#news-reader):not(#remote):not(#servers):not(#sovereignty){display:none !important}
   html:not([data-only-panel="news"]) body.only-panel #news-reader{display:none !important}
   body.only-panel{background:var(--panel)}
-  body.only-panel #notif-panel,body.only-panel #pomo-panel{position:static !important;width:100% !important;max-width:none;max-height:none;
-    border:none;box-shadow:none;border-radius:0;left:auto !important;right:auto !important;top:auto !important}
   html:not([data-only-panel="appearance"]):not([data-only-panel="settings"]) body.only-panel #settings{display:none!important}
   html:not([data-only-panel="remote"]) body.only-panel #remote,html:not([data-only-panel="servers"]) body.only-panel #servers,
   html:not([data-only-panel="sovereignty"]) body.only-panel #sovereignty{display:none!important}
@@ -336,12 +320,7 @@
   html:is([data-only-panel="settings"],[data-only-panel="remote"],[data-only-panel="servers"],[data-only-panel="sovereignty"]) body.only-panel :is(#settings,#remote,#servers,#sovereignty).open{position:static!important;display:flex!important;background:var(--bg)!important;padding:0!important;min-height:100vh}
   html:is([data-only-panel="settings"],[data-only-panel="remote"],[data-only-panel="servers"],[data-only-panel="sovereignty"]) body.only-panel :is(#settings,#remote,#servers,#sovereignty) .modal-panel{width:100%!important;max-width:none!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important}
   html[data-only-panel="appearance"] body.only-panel #settings{position:static!important;display:flex!important;background:var(--bg)!important;padding:0!important}
-  /* Modal Cadenas del escritorio (?panel=chains): el constructor llena la ventana GTK centrada */
-  html[data-only-panel="chains"] body.only-panel > .backdrop[data-mclose]{display:flex!important;padding:0!important;background:var(--panel)!important}
-  html[data-only-panel="chains"] body.only-panel > .backdrop[data-mclose] > .modal.chain-only{width:100%!important;height:100%!important;border:0!important;border-radius:0!important;box-shadow:none!important}
   html[data-only-panel="appearance"] body.only-panel #settings .modal-panel{width:100%!important;max-width:none!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important}
-  html:not([data-only-panel="usage"]) body.only-panel #usage{display:none!important}
-  html[data-only-panel="usage"] body.only-panel #usage{position:static!important;display:flex!important;background:var(--bg)!important;padding:14px 16px!important}
   .sov-panel{max-width:760px}
   .sov-h{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:14px 0 8px;display:flex;align-items:center;gap:8px}
   .sov-h::after{content:"";flex:1;height:1px;background:var(--line)}
@@ -366,151 +345,6 @@
   .sov-priv.no{color:var(--dim)}
   .sov-tables{font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:3px;line-height:1.5}
   @container modal (max-width:760px){.sov-flow{grid-template-columns:1fr}.sov-arrow{transform:rotate(90deg)}}
-  .nbadge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:99px;
-    background:var(--waiting);color:var(--on-brand);font-family:var(--mono);font-size:10px;font-weight:800;
-    display:inline-flex;align-items:center;justify-content:center;line-height:1}
-  #notif-panel{position:fixed;z-index:60;right:12px;background:var(--panel);border:1px solid var(--line2);
-    border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px;
-    box-shadow:0 16px 44px #000A;width:min(380px,calc(100vw - 24px));max-height:min(70vh,640px);overflow:auto}
-  .nf-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .nf-h .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;
-    background:color-mix(in srgb,var(--brand) 10%,transparent);font-family:var(--mono);font-size:10px;
-    letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:color-mix(in srgb,var(--brand) 80%,var(--text))}
-  .nf-local{font-family:var(--mono);font-size:10px;color:var(--faint)}
-  .nf-sec{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-top:2px}
-  .nf-item{border:1px solid var(--line);border-left:3px solid var(--line2);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:opacity .15s,background .15s}
-  .nf-item.read{opacity:.52;background:color-mix(in srgb,var(--panel2) 45%,transparent);border-left-color:var(--line2)}
-  .nf-item .read-state{margin-left:auto;color:var(--faint);font:700 10px var(--mono);text-transform:uppercase;letter-spacing:.08em}
-  .nf-item.waiting{border-left-color:var(--waiting)} .nf-item.done{border-left-color:var(--done)} .nf-item.pomo{border-left-color:var(--brand)}
-  /* Notificaciones v2: cards de prioridad con acciones */
-  .nf2{border:1px solid var(--line);border-left:3px solid var(--line2);border-radius:10px;
-    padding:9px 11px;display:flex;flex-direction:column;gap:6px;background:var(--panel);
-    transition:border-color .15s}
-  .nf2.err{border-left-color:var(--err)} .nf2.warn{border-left-color:var(--warn)}
-  .nf2.brand{border-left-color:var(--brand)} .nf2.ok{border-left-color:var(--ok)}
-  .nf2-h{display:flex;align-items:center;gap:6px;min-width:0}
-  .nf2-ico{display:inline-flex;flex:none}
-  .nf2-cls{font:700 10px var(--mono);letter-spacing:.08em;color:var(--faint);
-    border:1px solid var(--line);border-radius:5px;padding:1px 5px;flex:none}
-  .nf2-t{font-size:13px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nf2-h small{margin-left:auto;flex:none;color:var(--faint);font-size:10px}
-  .nf2-b{font-size:11px;color:var(--dim);line-height:1.45}
-  .nf2-a{display:flex;flex-wrap:wrap;gap:5px}
-  .nf2-act{display:inline-flex;align-items:center;gap:4px;font:600 11px var(--sans,inherit);
-    border:1px solid var(--line2);border-radius:7px;background:none;color:var(--text);
-    padding:4px 9px;cursor:pointer;transition:border-color .12s,background .12s,transform .08s}
-  .nf2-act:hover{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 10%,transparent)}
-  .nf2-act:active{transform:scale(.95)}
-  .nf2-act.quiet{color:var(--faint);border-color:var(--line)}
-  .nf2-act.quiet:hover{color:var(--text);border-color:var(--faint);background:none}
-  /* ✕ SIEMPRE en el mismo lugar de cada card: click-click-click sin cazar
-     el boton. El card reserva el espacio (padding-right). */
-  .nf2{position:relative;padding-right:34px}
-  .nf2{padding-right:60px}
-  .nf2-web{position:absolute;top:7px;right:34px;width:22px;height:22px;display:grid;
-    place-items:center;border:1px solid var(--line);border-radius:7px;background:var(--panel);
-    color:var(--dim);cursor:pointer;transition:color .12s,border-color .12s,transform .08s}
-  .nf2-web:hover{color:var(--brand);border-color:var(--brand)}
-  .nf2-web:active{transform:scale(.9)}
-  .nf2-x{position:absolute;top:7px;right:7px;width:22px;height:22px;display:grid;
-    place-items:center;border:1px solid var(--line);border-radius:7px;background:var(--panel);
-    color:var(--faint);cursor:pointer;transition:color .12s,border-color .12s,transform .08s}
-  .nf2-x:hover{color:var(--text);border-color:var(--faint)}
-  .nf2-x:active{transform:scale(.9)}
-  .nf2-clearall{display:inline-flex;align-items:center;gap:4px;margin-left:8px;
-    font:700 10px var(--mono);border:1px solid var(--line2);border-radius:7px;
-    background:none;color:var(--dim);padding:3px 8px;cursor:pointer}
-  .nf2-clearall:hover{color:var(--text);border-color:var(--brand)}
-  .nf2-detail{margin-top:2px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;
-    background:color-mix(in srgb,var(--panel2) 70%,transparent);display:flex;flex-direction:column;gap:7px}
-  .nfd-title{font-size:13px;font-weight:700;color:var(--text);line-height:1.4;white-space:normal;overflow-wrap:anywhere}
-  .nfd-meta{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11px;color:var(--dim)}
-  .nfd-meta i{font-style:normal;color:var(--faint);text-transform:uppercase;font-size:10px;letter-spacing:.5px;margin-right:3px}
-  .nfd-links{display:flex;flex-direction:column;gap:4px}
-  .nfd-link{display:grid;grid-template-columns:auto auto 1fr;gap:7px;align-items:center;
-    font-size:11px;color:var(--dim);cursor:pointer;padding:4px 6px;border-radius:7px}
-  .nfd-link:hover{background:var(--panel)}
-  .nfd-link input{accent-color:var(--brand);width:13px;height:13px;cursor:pointer}
-  .nfd-ln{color:var(--text);font-weight:600;white-space:nowrap}
-  .nfd-lu{font-family:var(--mono);font-size:10px;color:var(--faint);overflow-wrap:anywhere;min-width:0}
-  .nfd-hint{font-size:11px;color:var(--dim);line-height:1.5;border-left:2px solid var(--line);padding-left:8px}
-  .nfd-acts{display:flex;gap:6px}
-  .nf2-rest{margin-top:4px}
-  .nf2-rest summary{cursor:pointer;font-size:11px;color:var(--faint);padding:7px 10px;
-    border:1px dashed var(--line);border-radius:9px;user-select:none}
-  .nf2-rest summary:hover{color:var(--text)}
-  .nf2-rest[open] summary{margin-bottom:6px}
-  .nf2-turn{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);
-    padding:5px 8px;border-radius:7px}
-  .nf2-turn:hover{background:var(--panel2)}
-  .nf2-turn b{color:var(--text)}
-  .nf2-dot{width:7px;height:7px;border-radius:50%;flex:none}
-  .nf2-dot.waiting{background:var(--waiting)} .nf2-dot.done{background:var(--done)}
-  .nf2-open{margin-left:auto;border:1px solid var(--line);border-radius:6px;background:none;
-    color:var(--dim);font-size:10px;padding:2px 8px;cursor:pointer}
-  .nf2-open:hover{color:var(--text);border-color:var(--faint)}
-  .nf-t{display:flex;justify-content:space-between;gap:8px;font-size:13px;align-items:baseline}
-  .nf-t b{font-family:var(--mono)} .nf-t small{font-family:var(--mono);color:var(--faint);white-space:nowrap}
-  .nf-b{font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-height:150px;overflow:auto}
-  .nf-a{display:flex;justify-content:flex-end}
-  .nf-a button{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;border:1px solid var(--brand);color:var(--brand);background:none;cursor:pointer}
-  .nf-empty{font-size:13px;color:var(--dim);padding:6px 2px}
-  #pomo-panel{position:fixed;z-index:60;background:var(--panel);border:1px solid var(--line2);
-    border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px;
-    box-shadow:0 16px 44px #000A;width:280px;max-width:92vw;max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain}
-  .pp-ring{position:relative;width:150px;height:150px;margin:0 auto}
-  .pp-ring svg{transform:rotate(-90deg)}
-  .pp-ring .bgc{stroke:var(--line);fill:none}
-  .pp-ring .fgc{stroke:var(--brand);fill:none;stroke-linecap:round;
-    transition:stroke-dashoffset .9s linear}
-  .pp-time{position:absolute;inset:0;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:2px}
-  .pp-time b{font-family:var(--mono);font-size:26px;letter-spacing:.02em}
-  .pp-time small{font-family:var(--mono);font-size:10px;color:var(--dim);
-    max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pp-durs{display:flex;gap:6px;justify-content:center}
-  .pp-durs button{font-family:var(--mono);font-size:13px;font-weight:700;
-    width:52px;height:38px;border-radius:10px;border:1px solid var(--line2);
-    background:none;color:var(--dim);cursor:pointer;transition:all .13s ease}
-  .pp-durs button:hover{color:var(--text);border-color:var(--text)}
-  .pp-durs button.on{color:var(--brand);border-color:var(--brand);
-    background:color-mix(in srgb,var(--brand) 10%,transparent)}
-  .pp-go{font-family:var(--mono);font-size:13px;font-weight:700;height:40px;
-    border-radius:11px;border:none;background:var(--brand);color:var(--panel);cursor:pointer;
-    transition:filter .12s ease}
-  .pp-go:hover{filter:brightness(1.1)}
-  .pp-go.stop{background:none;border:1px solid var(--line2);color:var(--dim)}
-  .pp-go.stop:hover{color:#FF6B6B;border-color:#FF6B6B}
-  .pp-proj{font-family:var(--mono);font-size:11px;color:var(--dim);text-align:center}
-  .pp-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-  .pp-tile{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:12px;
-    padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:2px}
-  .pp-tile b{font-family:var(--mono);font-size:17px}
-  .pp-tile small{font-family:var(--mono);font-size:10px;color:var(--faint);
-    letter-spacing:.08em;text-transform:uppercase}
-  .pp-breaks button{width:64px}
-  .pp-break-go{background:none;border:1px solid var(--line2);color:var(--dim);height:34px;font-size:11px}
-  .pp-break-go:hover{color:var(--done);border-color:var(--done);filter:none}
-  .pp-smart{font-family:var(--mono);font-size:11px;color:var(--waiting);line-height:1.45}
-  .pp-smart.ok{color:var(--done)}
-  .pp-qh{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-top:4px}
-  .pp-q{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
-  .pp-qt{display:flex;justify-content:space-between;gap:8px;font-size:13px}
-  .pp-qt small{font-family:var(--mono);color:var(--faint)}
-  .pp-qb{font-size:13px;color:var(--text);line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto}
-  .pp-open{align-self:flex-end;font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;border:1px solid var(--brand);color:var(--brand);background:none;cursor:pointer}
-  #pomo-panel.break .fgc{stroke:var(--done)}
-  #pomo-panel.break .pp-time b{color:var(--done)}
-  .pp-link{font-family:var(--mono);font-size:10px;color:var(--dim);background:none;
-    border:none;cursor:pointer;text-align:left;padding:0}
-  .pp-link:hover{color:var(--brand)}
-  .pp-bars{display:flex;gap:5px;align-items:flex-end;height:56px;padding:0 4px}
-  .pp-bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;
-    justify-content:flex-end}
-  .pp-bar span{width:100%;border-radius:4px 4px 2px 2px;background:color-mix(in srgb,var(--brand) 55%,transparent);min-height:2px;
-    transition:height .3s ease}
-  .pp-bar.today span{background:var(--brand)}
-  .pp-bar small{font-family:var(--mono);font-size:10px;color:var(--faint)}
   button:focus-visible,[tabindex]:focus-visible,input:focus-visible{
     outline:2px solid var(--brand);outline-offset:2px;border-radius:6px}
   .tier-sym{font-family:var(--mono);font-size:10px;font-weight:700;margin-left:3px}
@@ -805,13 +639,10 @@
     display:none;align-items:flex-start;justify-content:center;
     padding:6vh 16px;overflow-y:auto;-webkit-user-select:none;user-select:none}
   .modal.open{display:flex}
-  #usage > .an{width:100%}
-  #usage{-webkit-user-select:text;user-select:text}
-  @media (max-width:600px){html[data-only-panel="usage"] body.only-panel #usage{padding:0!important}}
   /* El contenido de cada modal se acomoda por el ancho del MODAL, no de la ventana (1-oct): en el
      escritorio el modal ya mide la columna izquierda (el tablero solo ocupa esa columna) y en el
      remoto partido ahora también; con @media el remoto lo acomodaba como si tuviera toda la pantalla. */
-  .modal:not(.chain-only){container-type:inline-size;container-name:modal}
+  .modal{container-type:inline-size;container-name:modal}
   .modal-panel{position:relative;width:100%;max-width:640px;
     background:var(--panel2);border:1px solid var(--line);border-radius:12px;
     padding:28px 30px 26px;box-shadow:0 20px 60px rgba(0,0,0,.4);
@@ -1350,9 +1181,6 @@
 	    .srv-info{flex-basis:100%}
 	    .srv-row button{flex:1 1 0;min-height:36px}
 	  }
-	/* escritorio: la terminal de la barra y su cabecera son nativas (debajo del webview) */
-html[data-native-side-term] #command-sidebar .sec-terms{display:none}
-html[data-native-side-term] #command-sidebar .sec-cmds{flex:1 1 auto!important}
 /* Vista Chat (grill móvil 10-oct): conversación del agente sobre la terminal, ‹ › y deslizar
    cambian de sesión. La terminal sigue conectada detrás pero no se pinta.
    Cabecera ‹ sesión › (solo en chat, 11-oct) y barra inferior (teclas + borrador) son de las dos vistas: van fuera de
@@ -1360,11 +1188,10 @@ html[data-native-side-term] #command-sidebar .sec-cmds{flex:1 1 auto!important}
 #cv-head,#cv-dock{display:none}
 body.app.chat-on #term-area.on~#cv-head{display:flex}
 body.app #term-area.on~#cv-dock{display:flex;flex-direction:column}
-/* filas: pestañas · cabecera · terminal · barra · avisos (workspace.css carga después: `html` gana) */
+/* filas: pestañas · cabecera · terminal · barra · (fila 5 vacía, antes avisos) (workspace.css carga después: `html` gana) */
 html body.app #panes{grid-template-rows:auto min-content minmax(0,1fr) min-content auto}
 html body.app #view-panel{grid-row:2/5}
 html body.app #term-area{grid-row:3}
-html body.app #notices{grid-row:5}
 #cv-head{grid-column:1;grid-row:2;min-width:0}
 #cv-dock{grid-column:1;grid-row:4;min-width:0;border-top:1px solid var(--line);background:var(--panel)}
 @media (min-width:748px){

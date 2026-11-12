@@ -109,6 +109,27 @@ async fn run(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> Result<Output, RunError> {
+    let raw = run_raw(program, args, cwd, timeout).await?;
+    Ok(Output {
+        ok: raw.ok,
+        stdout: universal(raw.stdout)?,
+        stderr: universal(raw.stderr)?,
+    })
+}
+
+/// La salida sin decodificar: `run_many` la parte antes de decodificar.
+struct Raw {
+    ok: bool,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn run_raw(
+    program: &Program,
+    args: &[&str],
+    cwd: Option<&Path>,
+    timeout: Duration,
+) -> Result<Raw, RunError> {
     let mut cmd = program.command();
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
@@ -124,11 +145,39 @@ async fn run(
         .await
         .map_err(|_| RunError::Timeout)?
         .map_err(RunError::Spawn)?;
-    Ok(Output {
+    Ok(Raw {
         ok: out.status.success(),
-        stdout: universal(out.stdout)?,
-        stderr: universal(out.stderr)?,
+        stdout: out.stdout,
+        stderr: out.stderr,
     })
+}
+
+/// Tope de bytes de argumentos por invocación de `run_many`: un mensaje de
+/// tmux (imsg) admite 16 KiB y lleva además el entorno de trabajo.
+const BATCH_ARG_BYTES: usize = 6000;
+
+/// Línea que separa las salidas de un lote; aleatoria para que ningún pane
+/// la contenga.
+fn batch_marker() -> Option<String> {
+    let mut bytes = [0u8; 12];
+    getrandom::fill(&mut bytes).ok()?;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Some(format!("comandos-lote-{hex}"))
+}
+
+/// Las salidas de las órdenes que terminaron, en orden: lo que hay antes de
+/// cada línea de marca. Lo que sigue a la última marca es de una orden que no
+/// llegó a terminar y se descarta.
+fn split_batch(stdout: &[u8], marker: &str) -> Vec<Vec<u8>> {
+    let line = format!("{marker}\n");
+    let line = line.as_bytes();
+    let mut done = Vec::new();
+    let mut rest = stdout;
+    while let Some(at) = rest.windows(line.len()).position(|w| w == line) {
+        done.push(rest[..at].to_vec());
+        rest = &rest[at + line.len()..];
+    }
+    done
 }
 
 /// Ruta del socket que tmux usaría con `TMUX_TMPDIR=socket_dir`
@@ -211,6 +260,71 @@ impl Tmux {
             })
     }
 
+    /// Varias órdenes de solo lectura con las mínimas invocaciones de tmux:
+    /// cada cliente nuevo le cuesta al servidor (un solo hilo, el mismo que
+    /// alimenta las terminales) mucho más que la orden en sí. `Some` es la
+    /// salida de una orden que terminó bien; `None`, una que falló, que no
+    /// entró en un lote o cuya salida no se pudo separar: quien llama la
+    /// repite con `run` para obtener su resultado real. Ningún argumento
+    /// puede terminar en `;` (tmux lo leería como separador).
+    pub async fn run_many(&self, commands: &[Vec<String>]) -> Result<Vec<Option<Output>>, TmuxError> {
+        let mut found = vec![None; commands.len()];
+        let Some(marker) = batch_marker() else {
+            return Ok(found);
+        };
+        let order: Vec<usize> = (0..commands.len())
+            .filter(|&i| !commands[i].is_empty() && commands[i].iter().all(|a| !a.ends_with(';')))
+            .collect();
+        let mut next = 0;
+        while next < order.len() {
+            let mut args: Vec<&str> = Vec::new();
+            let (mut bytes, mut end) = (0, next);
+            while end < order.len() {
+                let command = &commands[order[end]];
+                let size = command.iter().map(|a| a.len() + 1).sum::<usize>() + marker.len() + 24;
+                if end > next && bytes + size > BATCH_ARG_BYTES {
+                    break;
+                }
+                if end > next {
+                    args.push(";");
+                }
+                args.extend(command.iter().map(String::as_str));
+                args.extend([";", "display-message", "-p", marker.as_str()]);
+                bytes += size;
+                end += 1;
+            }
+            let raw = run_raw(&self.program, &args, None, self.timeout)
+                .await
+                .map_err(|error| match error {
+                    RunError::Timeout => TmuxError::Timeout {
+                        args: args.iter().map(|a| (*a).to_owned()).collect(),
+                        after: self.timeout,
+                    },
+                    RunError::Spawn(e) => TmuxError::Spawn(e.kind(), e.raw_os_error()),
+                    RunError::Decode => TmuxError::Decode,
+                })?;
+            let done = split_batch(&raw.stdout, &marker);
+            let sent = end - next;
+            if done.len() > sent {
+                // Un pane mostraba la marca: nada de este lote es fiable.
+                next = end;
+                continue;
+            }
+            let finished = done.len();
+            for (i, stdout) in done.into_iter().enumerate() {
+                found[order[next + i]] = universal(stdout).ok().map(|stdout| Output {
+                    ok: true,
+                    stdout,
+                    stderr: String::new(),
+                });
+            }
+            // tmux corta la lista en la primera orden que falla: esa queda
+            // sin salida y se sigue con las de después.
+            next += if finished == sent { sent } else { finished + 1 };
+        }
+        Ok(found)
+    }
+
     /// `run` desde un hilo de bloqueo (librerías síncronas de `comandos-runtime`).
     /// El reactor, los timers y el reaper los mueve el hilo del runtime, que
     /// está en `Runtime::block_on`; aquí solo se espera el resultado.
@@ -266,6 +380,16 @@ impl TmuxError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batch_splits_at_each_marker_and_drops_the_unfinished_tail() {
+        let out = b"uno\nM\nM\ndos\nmas\nM\na medias";
+        assert_eq!(
+            split_batch(out, "M"),
+            vec![b"uno\n".to_vec(), b"".to_vec(), b"dos\nmas\n".to_vec()]
+        );
+        assert!(split_batch(b"can't find pane", "M").is_empty());
+    }
 
     #[test]
     fn every_child_drops_the_front_malloc_tuning() {

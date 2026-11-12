@@ -266,7 +266,6 @@ pub(crate) struct Shelf {
     pub paned: gtk::Paned,
     pub host: gtk::Box,
     pub extension: RefCell<Option<ShelfView>>,
-    pub notices: RefCell<Option<ShelfView>>,
     pub serial: Cell<u64>,
     pub request: super::snippets::Scope,
     pub opening: RefCell<Option<(String, crate::dash_client::DashClient)>>,
@@ -287,7 +286,6 @@ impl Shelf {
             paned,
             host,
             extension: RefCell::new(None),
-            notices: RefCell::new(None),
             serial: Cell::new(0),
             request: super::snippets::Scope::default(),
             opening: RefCell::new(None),
@@ -329,19 +327,11 @@ impl Shelf {
         }
         self.sync();
     }
-    pub fn close_notices(&self) {
-        if let Some(view) = self.notices.borrow_mut().take() {
-            self.host.remove(&view.page.view);
-        }
-        self.sync();
-    }
     pub fn sync(&self) {
-        self.host
-            .set_visible(self.extension.borrow().is_some() || self.notices.borrow().is_some());
+        self.host.set_visible(self.extension.borrow().is_some());
     }
     pub fn cancel(&self) {
         self.close_extension();
-        self.close_notices();
         self.request.close();
         self.css.borrow_mut().take();
     }

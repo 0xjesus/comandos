@@ -15,19 +15,17 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Mosaic,
-    NoticesDebug,
     JavascriptDebug,
 }
 impl Action {
     pub fn signal(self) -> i32 {
         match self {
             Self::Mosaic => nix::libc::SIGUSR2,
-            Self::NoticesDebug => nix::libc::SIGRTMIN() + 2,
             Self::JavascriptDebug => nix::libc::SIGRTMIN() + 3,
         }
     }
     fn from_signal(signal: i32) -> Option<Self> {
-        [Self::Mosaic, Self::NoticesDebug, Self::JavascriptDebug]
+        [Self::Mosaic, Self::JavascriptDebug]
             .into_iter()
             .find(|action| action.signal() == signal)
     }
@@ -42,7 +40,6 @@ impl SignalRelay {
     pub fn new() -> std::io::Result<Self> {
         let mut signals = signal_hook::iterator::Signals::new([
             Action::Mosaic.signal(),
-            Action::NoticesDebug.signal(),
             Action::JavascriptDebug.signal(),
         ])?;
         let handle = signals.handle();

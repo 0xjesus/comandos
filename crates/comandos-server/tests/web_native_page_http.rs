@@ -94,7 +94,6 @@ impl Front {
             "/comandos_web_content_bg.wasm",
             "/workspace.css",
             "/buttons.css",
-            "/analytics.css",
             "/manifest.webmanifest",
             "/icon-192.png",
             "/icon-512.png",
@@ -573,7 +572,7 @@ async fn serve_real_native_payload_for_remote_smoke() {
 }
 
 #[tokio::test]
-async fn compiled_metadata_admits_atomic_analytics_pair() {
+async fn compiled_metadata_admits_page_without_retired_modules() {
     let front = Front::start().await;
     let registry = Resolved::embedded(None);
     let mut selection = dash::web::Selection {
@@ -587,15 +586,17 @@ async fn compiled_metadata_admits_atomic_analytics_pair() {
     let plan =
         dash::web::native_page::admit(&registry, &selection, &manifest, &front.root.join("web"))
             .unwrap();
-    let render = plan
-        .ids
-        .iter()
-        .position(|id| id == "analytics-render")
-        .unwrap();
-    let controller = plan.ids.iter().position(|id| id == "analytics").unwrap();
-    assert!(render < controller);
-    assert_eq!(plan.ids.len(), 48);
-    selection.on.remove("analytics");
+    assert_eq!(plan.ids.len(), 43);
+    for gone in [
+        "analytics",
+        "analytics-render",
+        "pomodoro",
+        "notifications",
+        "chain-builder",
+    ] {
+        assert!(!plan.ids.iter().any(|id| id == gone), "{gone}");
+    }
+    selection.on.remove("command-sidebar");
     assert!(
         dash::web::native_page::admit(&registry, &selection, &manifest, &front.root.join("web"))
             .is_err()

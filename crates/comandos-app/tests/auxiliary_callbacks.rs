@@ -41,17 +41,6 @@ fn actual_tabs_layout_keeps_arrows_paints_accent_and_persist_false_does_not_post
     );
 }
 #[test]
-fn actual_sidebar_messages_coalesce_and_stale_read_cannot_replace_selection() {
-    let app = include_str!("../src/ui/app_t18_side.rs");
-    let methods =
-        native::body(app, "fn side_from_web(") + &native::body(app, "fn side_show_current(");
-    let source = include_str!("support/t18_sidebar.rs.txt").replace("// ACTUAL_METHODS", &methods);
-    assert_eq!(
-        native::execute_source(&source, &serde_json::json!({})),
-        serde_json::json!({"reads":1,"created":1,"root":"root","stale_created":0})
-    );
-}
-#[test]
 fn actual_reader_bridge_rebinds_edition_and_drops_callbacks_and_pages_on_close() {
     let source = include_str!("../src/ui/app_t18_views.rs");
     let methods = native::body(source, "fn reader_action(")

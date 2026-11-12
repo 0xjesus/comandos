@@ -23,6 +23,10 @@ pub fn image(name: &str, pixels: i32, color: &str) -> gtk::Image {
         "copy" => include_str!("../../../../dash/icons/copy.svg"),
         "external-link" => include_str!("../../../../dash/icons/external-link.svg"),
         "sparkles" => include_str!("../../../../dash/icons/sparkles.svg"),
+        "columns" => include_str!("../../../../dash/icons/columns.svg"),
+        "layers" => include_str!("../../../../dash/icons/layers.svg"),
+        "eye" => include_str!("../../../../dash/icons/eye.svg"),
+        "eye-off" => include_str!("../../../../dash/icons/eye-off.svg"),
 
         _ => return gtk::Image::from_icon_name(Some(name), gtk::IconSize::SmallToolbar),
     };

@@ -57,7 +57,10 @@ use comandos_runtime::{
 use serde_json::{Map, Value, json};
 use std::{
     fs, io,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -1424,6 +1427,7 @@ pub(super) async fn account_add(native: &Native, data: &Map<String, Value>) -> A
         Some(v) if truthy(v) => py::strip(&str_of(v)?).to_owned(),
         _ => String::new(),
     };
+    let relogin = data.get("relogin") == Some(&Value::Bool(true));
     let (reads, prov) = (opts.clone(), provider.clone());
     let plan = blocking(move || -> Result<Result<AccountPlan, Answer>, Fault> {
         let paths = paths(&reads);
@@ -1444,10 +1448,13 @@ pub(super) async fn account_add(native: &Native, data: &Map<String, Value>) -> A
         dir.to_str().ok_or(Fault::Decline)?;
         let list = accounts::list_accounts(&registry, &prov, &paths).map_err(decline)?;
         let wanted = json!(alias);
-        if list
-            .iter()
-            .find(|a| python_eq(&a["alias"], &wanted))
-            .is_some_and(|a| truthy(&a["selectable"]))
+        // `relogin`: volver a iniciar sesión en una cuenta que ya la tiene
+        // (cambiar el correo o renovar el login desde el chip «Cuenta»).
+        if !relogin
+            && list
+                .iter()
+                .find(|a| python_eq(&a["alias"], &wanted))
+                .is_some_and(|a| truthy(&a["selectable"]))
         {
             let error =
                 format!("La cuenta {alias} ya tiene sesión iniciada. Elígela para cambiar.");
@@ -1729,5 +1736,283 @@ mod tests {
             "ANTHROPIC_DEFAULT_OPUS_MODEL='gpt 5' ANTHROPIC_DEFAULT_SONNET_MODEL='gpt 5' \
              ANTHROPIC_DEFAULT_HAIKU_MODEL='gpt 5' CLAUDE_CODE_SUBAGENT_MODEL='gpt 5'"
         );
+    }
+}
+
+// ------------------------------------------- eliminar y renombrar cuentas
+
+/// Proveedor y alias (no `main`) de una petición de administración de cuentas.
+fn admin_target(data: &Map<String, Value>, key: &str) -> Result<(String, String), Answer> {
+    let provider = data
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or("claude")
+        .to_owned();
+    if !matches!(provider.as_str(), "claude" | "codex" | "grok") {
+        return Err(reply(
+            StatusCode::BAD_REQUEST,
+            &json!({"error": "provider de cuenta no soportado"}),
+        ));
+    }
+    let alias = data
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default();
+    if alias.is_empty() || alias == "main" {
+        return Err(reply(
+            StatusCode::BAD_REQUEST,
+            &json!({"error": "La cuenta principal (main) no se puede eliminar ni renombrar"}),
+        ));
+    }
+    match accounts::validate_alias(&json!(alias)) {
+        Ok(alias) => Ok((provider, alias)),
+        Err(e) => Err(reply(StatusCode::BAD_REQUEST, &json!({"error": e.0}))),
+    }
+}
+
+/// ¿Es un agente (claude, codex o grok)? Un servidor o una shell que solo
+/// heredó la variable de un pane no cuenta (12-nov: un `http.server` de hace
+/// 12 días bloqueaba relotto-api).
+fn is_agent(proc_root: &Path, pid: i64) -> bool {
+    let Ok(raw) = fs::read(proc_root.join(pid.to_string()).join("cmdline")) else {
+        return false;
+    };
+    raw.split(|b| *b == 0).take(2).any(|arg| {
+        let base = arg.rsplit(|b| *b == b'/').next().unwrap_or(arg);
+        [&b"claude"[..], b"codex", b"grok"]
+            .iter()
+            .any(|name| base.starts_with(name))
+    })
+}
+
+/// Agentes vivos del usuario que corren con esta carpeta de cuenta (su
+/// variable `CLAUDE_CONFIG_DIR`/`CODEX_HOME`/`GROK_HOME`, o algo debajo).
+fn account_in_use(proc_root: &Path, env_key: &str, dir: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return 0;
+    };
+    let dir = dir.as_os_str().as_bytes();
+    let mut count = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<i64>().ok()) else {
+            continue;
+        };
+        let env = comandos_runtime::agent_procs::read_environ(proc_root, pid);
+        if let Some(value) = env.get(env_key.as_bytes()) {
+            let value = value.strip_suffix(b"/").unwrap_or(value);
+            if (value == dir || (value.starts_with(dir) && value.get(dir.len()) == Some(&b'/')))
+                && is_agent(proc_root, pid)
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Carpeta, variable de entorno y raíz de la cuenta, o la respuesta de error.
+fn admin_dir(
+    registry: &Value,
+    provider: &str,
+    alias: &str,
+    paths: &accounts::Paths,
+) -> Result<(PathBuf, String), String> {
+    let dir = accounts::account_home(registry, provider, &json!(alias), paths)
+        .map_err(|e| e.0.clone())?;
+    let env_key = registry["harnesses"][provider]["accountEnv"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if env_key.is_empty() {
+        return Err("registro de cuentas incompleto".into());
+    }
+    Ok((dir, env_key))
+}
+
+/// POST `/account/remove` `{provider, alias}`: mueve la carpeta de la cuenta a
+/// `.removed-<alias>-<fecha>` en la misma raíz (se puede recuperar a mano).
+/// Rechaza `main` y cualquier cuenta con un proceso vivo.
+pub(super) async fn account_remove(native: &Native, data: &Map<String, Value>) -> Answer {
+    let _serial = ACCOUNT_ADD_LOCK.lock().await;
+    let (provider, alias) = match admin_target(data, "alias") {
+        Ok(t) => t,
+        Err(answer) => return answer,
+    };
+    let registry = registry(native).await?;
+    let opts = native.options().clone();
+    let stamp = {
+        let secs = now(&opts) as i64;
+        chrono_stamp(secs)
+    };
+    blocking(move || {
+        let paths = paths(&opts);
+        let (dir, env_key) = match admin_dir(&registry, &provider, &alias, &paths) {
+            Ok(v) => v,
+            Err(error) => return Ok(reply(StatusCode::BAD_REQUEST, &json!({"error": error}))),
+        };
+        if !dir.is_dir() {
+            return Ok(reply(
+                StatusCode::NOT_FOUND,
+                &json!({"error": format!("La cuenta {alias} no existe")}),
+            ));
+        }
+        let busy = account_in_use(&opts.proc_root, &env_key, &dir);
+        if busy > 0 {
+            return Ok(reply(
+                StatusCode::CONFLICT,
+                &json!({"error": format!("La cuenta {alias} la usan {busy} agentes abiertos. Cambia esos panes a otra cuenta antes de eliminarla.")}),
+            ));
+        }
+        let parent = dir.parent().ok_or(Fault::Decline)?;
+        let target = parent.join(format!(".removed-{alias}-{stamp}"));
+        mark_effect();
+        fs::rename(&dir, &target).map_err(|_| failure())?;
+        let lock = parent.join(format!("{alias}.lock"));
+        if lock.is_dir() {
+            let _ = fs::rename(&lock, parent.join(format!(".removed-{alias}-{stamp}.lock")));
+        }
+        Ok(reply(
+            StatusCode::OK,
+            &json!({"ok": true, "alias": alias, "provider": provider, "movedTo": target.to_string_lossy()}),
+        ))
+    })
+    .await?
+}
+
+/// POST `/account/rename` `{provider, alias, to}`: renombra la carpeta de la
+/// cuenta (transcripts y memoria van con ella). Rechaza `main`, un nombre ya
+/// usado y cualquier cuenta con un proceso vivo.
+pub(super) async fn account_rename(native: &Native, data: &Map<String, Value>) -> Answer {
+    let _serial = ACCOUNT_ADD_LOCK.lock().await;
+    let (provider, alias) = match admin_target(data, "alias") {
+        Ok(t) => t,
+        Err(answer) => return answer,
+    };
+    let (_, to) = match admin_target(data, "to") {
+        Ok(t) => t,
+        Err(answer) => return answer,
+    };
+    if to == alias || to.ends_with(".lock") {
+        return reply(
+            StatusCode::BAD_REQUEST,
+            &json!({"error": "Elige un nombre nuevo distinto"}),
+        );
+    }
+    let registry = registry(native).await?;
+    let opts = native.options().clone();
+    blocking(move || {
+        let paths = paths(&opts);
+        let (dir, env_key) = match admin_dir(&registry, &provider, &alias, &paths) {
+            Ok(v) => v,
+            Err(error) => return Ok(reply(StatusCode::BAD_REQUEST, &json!({"error": error}))),
+        };
+        let (target, _) = match admin_dir(&registry, &provider, &to, &paths) {
+            Ok(v) => v,
+            Err(error) => return Ok(reply(StatusCode::BAD_REQUEST, &json!({"error": error}))),
+        };
+        if !dir.is_dir() {
+            return Ok(reply(
+                StatusCode::NOT_FOUND,
+                &json!({"error": format!("La cuenta {alias} no existe")}),
+            ));
+        }
+        if fs::symlink_metadata(&target).is_ok() {
+            return Ok(reply(
+                StatusCode::CONFLICT,
+                &json!({"error": format!("Ya existe una cuenta llamada {to}")}),
+            ));
+        }
+        let busy = account_in_use(&opts.proc_root, &env_key, &dir);
+        if busy > 0 {
+            return Ok(reply(
+                StatusCode::CONFLICT,
+                &json!({"error": format!("La cuenta {alias} la usan {busy} agentes abiertos. Cambia esos panes a otra cuenta antes de renombrarla.")}),
+            ));
+        }
+        mark_effect();
+        fs::rename(&dir, &target).map_err(|_| failure())?;
+        if let Some(parent) = dir.parent() {
+            let lock = parent.join(format!("{alias}.lock"));
+            if lock.is_dir() {
+                let _ = fs::rename(&lock, parent.join(format!("{to}.lock")));
+            }
+        }
+        Ok(reply(
+            StatusCode::OK,
+            &json!({"ok": true, "alias": to, "from": alias, "provider": provider}),
+        ))
+    })
+    .await?
+}
+
+/// `YYYYMMDDTHHMMSSZ` en UTC, como las carpetas `.removed-…` que ya existen.
+fn chrono_stamp(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Días desde 1970-01-01 a fecha civil (Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+#[cfg(test)]
+mod account_admin_tests {
+    use super::*;
+
+    #[test]
+    fn stamp_matches_existing_removed_folders() {
+        // 2026-10-15T14:31:48Z, como `.removed-cuenta-2-20261015T143148Z`.
+        assert_eq!(chrono_stamp(1_792_074_708), "20261015T143148Z");
+    }
+
+    #[test]
+    fn main_and_bad_names_are_refused() {
+        let mut data = Map::new();
+        data.insert("alias".into(), json!("main"));
+        assert!(admin_target(&data, "alias").is_err());
+        data.insert("alias".into(), json!("../x"));
+        assert!(admin_target(&data, "alias").is_err());
+        data.insert("alias".into(), json!("relotto-api"));
+        assert_eq!(
+            admin_target(&data, "alias").ok(),
+            Some(("claude".into(), "relotto-api".into()))
+        );
+    }
+
+    #[test]
+    fn in_use_matches_the_folder_and_below_only() {
+        let root = std::env::temp_dir().join(format!("acct-proc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (pid, value, cmd) in [
+            ("11", "/h/a", "claude\0--resume\0"),
+            ("12", "/h/a/sub", "node\0/usr/bin/codex\0"),
+            ("13", "/h/ab", "/home/u/.local/bin/claude\0"),
+            ("14", "/h/a", "python3\0-m\0http.server\0"),
+        ] {
+            fs::create_dir_all(root.join(pid)).unwrap();
+            fs::write(root.join(pid).join("cmdline"), cmd).unwrap();
+            fs::write(
+                root.join(pid).join("environ"),
+                format!("X=1\0CLAUDE_CONFIG_DIR={value}\0"),
+            )
+            .unwrap();
+        }
+        assert_eq!(account_in_use(&root, "CLAUDE_CONFIG_DIR", Path::new("/h/a")), 2);
+        assert_eq!(account_in_use(&root, "CLAUDE_CONFIG_DIR", Path::new("/h/ab")), 1);
+        let _ = fs::remove_dir_all(&root);
     }
 }

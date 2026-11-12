@@ -324,3 +324,27 @@ mod tests {
         assert!(parse_css_int("-px").is_nan());
     }
 }
+
+thread_local! {
+    /// Glyphs rasterized and their time, read by `stats()` (diagnostics).
+    static RASTER: std::cell::Cell<(u32, f64)> = const { std::cell::Cell::new((0, 0.0)) };
+}
+
+/// `performance.now()`, or 0 where there is none.
+pub fn perf_now() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map_or(0.0, |p| p.now())
+}
+
+pub fn note_raster(ms: f64) {
+    RASTER.with(|r| {
+        let (n, t) = r.get();
+        r.set((n.saturating_add(1), t + ms));
+    });
+}
+
+/// Glyphs rasterized so far and the milliseconds they took.
+pub fn raster_stats() -> (u32, f64) {
+    RASTER.with(std::cell::Cell::get)
+}

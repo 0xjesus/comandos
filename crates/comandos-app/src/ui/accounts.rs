@@ -127,6 +127,17 @@ pub(crate) struct Dialog {
     pub busy: Cell<bool>,
     pub timer: RefCell<Option<glib::SourceId>>,
     pub buttons: RefCell<Vec<(gtk::Button, bool)>>,
+    /// Lo último que se pintó, para volver de «Administrar» a la lista.
+    pub last: RefCell<Option<(Value, String, Rc<dyn Fn(String, bool)>)>>,
+    pub managing: Cell<bool>,
+}
+/// Lo que pide la vista «Administrar cuentas».
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Manage {
+    Add(String),
+    Relogin(String),
+    Rename(String, String),
+    Remove(String),
 }
 impl Dialog {
     #[allow(clippy::too_many_arguments)]
@@ -158,11 +169,7 @@ impl Dialog {
         outer.pack_start(&title, false, false, 0);
         let rows = gtk::Box::new(gtk::Orientation::Vertical, 4);
         outer.pack_start(&rows, false, false, 0);
-        let add = gtk::Button::with_label(if english {
-            "+ Add account"
-        } else {
-            "+ Añadir cuenta"
-        });
+        let add = gtk::Button::with_label(manage_label(english, false));
         outer.pack_start(&add, false, false, 0);
         let note = gtk::Label::new(Some(if english {
             "Loading accounts…"
@@ -191,6 +198,8 @@ impl Dialog {
             busy: Cell::new(false),
             timer: RefCell::new(None),
             buttons: RefCell::new(vec![]),
+            last: RefCell::new(None),
+            managing: Cell::new(false),
         });
         let weak = Rc::downgrade(&dialog);
         dialog.pop.connect_closed(move |_| {
@@ -233,6 +242,9 @@ impl Dialog {
         writable: bool,
         clicked: Rc<dyn Fn(String, bool)>,
     ) {
+        *self.last.borrow_mut() = Some((data.clone(), current.to_string(), clicked.clone()));
+        self.managing.set(false);
+        self.add.set_label(manage_label(english, false));
         for old in self.rows.children() {
             self.rows.remove(&old);
         }
@@ -342,6 +354,148 @@ impl Dialog {
         });
         self.rows.show_all();
         self.set_busy(false, writable);
+    }
+}
+impl Dialog {
+    /// Vuelve a la lista de cuentas con lo último que se leyó.
+    pub fn back(&self, english: bool, writable: bool) {
+        let last = self.last.borrow().clone();
+        if let Some((data, current, clicked)) = last {
+            self.fill(&data, &current, english, writable, clicked);
+        }
+    }
+    /// Vista «Administrar cuentas»: añadir con nombre, renombrar, volver a
+    /// iniciar sesión y eliminar (este pide un segundo clic).
+    pub fn manage(&self, data: &Value, english: bool, writable: bool, act: Rc<dyn Fn(Manage)>) {
+        self.managing.set(true);
+        self.add.set_label(manage_label(english, true));
+        for old in self.rows.children() {
+            self.rows.remove(&old);
+        }
+        self.buttons.borrow_mut().clear();
+        let push = |button: &gtk::Button| {
+            self.buttons.borrow_mut().push((button.clone(), true));
+        };
+        // Nueva cuenta con nombre.
+        let new_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        new_box.style_context().add_class("acct-manage");
+        let title = gtk::Label::new(None);
+        title.set_xalign(0.0);
+        title.set_markup(if english { "<b>New account</b>" } else { "<b>Nueva cuenta</b>" });
+        new_box.pack_start(&title, false, false, 0);
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let entry = gtk::Entry::new();
+        entry.set_max_length(64);
+        entry.set_hexpand(true);
+        entry.set_placeholder_text(Some(if english { "name, e.g. work" } else { "nombre, ej. trabajo" }));
+        let add = gtk::Button::with_label(if english { "Add and sign in" } else { "Añadir y abrir login" });
+        {
+            let (act, entry) = (act.clone(), entry.clone());
+            add.connect_clicked(move |_| act(Manage::Add(entry.text().trim().to_string())));
+        }
+        {
+            let add = add.clone();
+            entry.connect_activate(move |_| add.clicked());
+        }
+        line.pack_start(&entry, true, true, 0);
+        line.pack_start(&add, false, false, 0);
+        new_box.pack_start(&line, false, false, 0);
+        push(&add);
+        self.rows.pack_start(&new_box, false, false, 0);
+        for account in data
+            .get("accounts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(256)
+        {
+            let alias = account.get("alias").and_then(Value::as_str).unwrap_or_default().to_string();
+            let logged = account.get("selectable").is_some_and(comandos_core::json::truthy);
+            let main = alias == "main";
+            let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            card.style_context().add_class("acct-manage");
+            let name = gtk::Label::new(None);
+            name.set_xalign(0.0);
+            name.set_markup(&format!("<b>{}</b>", glib::markup_escape_text(&alias)));
+            card.pack_start(&name, false, false, 0);
+            let identity = account.get("identity").and_then(Value::as_str).filter(|s| !s.is_empty());
+            let who = match (identity, logged, english) {
+                (Some(id), _, _) => id.to_string(),
+                (None, true, true) => "signed in".into(),
+                (None, true, false) => "sesión iniciada".into(),
+                (None, false, true) => "not signed in".into(),
+                (None, false, false) => "sin sesión".into(),
+            };
+            card.pack_start(&dim_label(&who, 0.0), false, false, 0);
+            if !main {
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let entry = gtk::Entry::new();
+                entry.set_max_length(64);
+                entry.set_hexpand(true);
+                entry.set_text(&alias);
+                let rename = gtk::Button::with_label(if english { "Rename" } else { "Renombrar" });
+                {
+                    let (act, entry, alias) = (act.clone(), entry.clone(), alias.clone());
+                    rename.connect_clicked(move |_| {
+                        act(Manage::Rename(alias.clone(), entry.text().trim().to_string()))
+                    });
+                }
+                {
+                    let rename = rename.clone();
+                    entry.connect_activate(move |_| rename.clicked());
+                }
+                line.pack_start(&entry, true, true, 0);
+                line.pack_start(&rename, false, false, 0);
+                card.pack_start(&line, false, false, 0);
+                push(&rename);
+            }
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let relogin = gtk::Button::with_label(match (logged, english) {
+                (true, true) => "Sign in again",
+                (true, false) => "Iniciar sesión otra vez",
+                (false, true) => "Sign in",
+                (false, false) => "Iniciar sesión",
+            });
+            {
+                let (act, alias) = (act.clone(), alias.clone());
+                relogin.connect_clicked(move |_| act(Manage::Relogin(alias.clone())));
+            }
+            line.pack_start(&relogin, false, false, 0);
+            push(&relogin);
+            if !main {
+                let remove = gtk::Button::with_label(if english { "Delete" } else { "Eliminar" });
+                remove.style_context().add_class("acct-danger");
+                let armed = Rc::new(Cell::new(false));
+                let (act, alias) = (act.clone(), alias.clone());
+                remove.connect_clicked(move |b| {
+                    if !armed.replace(true) {
+                        b.set_label(if english { "Sure? Click again" } else { "¿Seguro? Clic otra vez" });
+                        return;
+                    }
+                    act(Manage::Remove(alias.clone()))
+                });
+                line.pack_start(&remove, false, false, 0);
+                push(&remove);
+            }
+            card.pack_start(&line, false, false, 0);
+            self.rows.pack_start(&card, false, false, 0);
+        }
+        self.note.style_context().remove_class("acct-err");
+        self.note.set_text(if english {
+            "Rename or delete only works when no pane uses that account. Delete keeps a hidden copy."
+        } else {
+            "Renombrar o eliminar solo funciona si ningún pane usa esa cuenta. Eliminar guarda una copia oculta."
+        });
+        self.rows.show_all();
+        self.set_busy(false, writable);
+    }
+}
+pub fn manage_label(english: bool, managing: bool) -> &'static str {
+    match (english, managing) {
+        (true, false) => "+ Add, edit or delete accounts",
+        (false, false) => "+ Añadir, editar o eliminar cuentas",
+        (true, true) => "← Back to accounts",
+        (false, true) => "← Volver a las cuentas",
     }
 }
 impl Drop for Dialog {

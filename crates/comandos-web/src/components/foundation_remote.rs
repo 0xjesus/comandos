@@ -218,7 +218,7 @@ mod web {
                 Array::from(&call(&terms, "keys", &[])?).get(0),
             );
             if !truthy(&session)
-                && let Ok(rows) = wait(invoke(&global("api"), &["/state".into()])).await
+                && let Ok(rows) = wait(invoke(&global("api"), &["/state?live=1".into()])).await
             {
                 let candidate = Array::from(&rows).iter().find(|row| {
                     let s = get(row, "session");
@@ -341,7 +341,7 @@ mod web {
             function(|_| {
                 let el = query_node("#remote");
                 let on = truthy(&call(&get(&el, "classList"), "toggle", &["open".into()])?);
-                for selector in ["#settings", "#servers", "#usage"] {
+                for selector in ["#settings", "#servers"] {
                     classes(&query_node(selector), "open", false);
                 }
                 if on {

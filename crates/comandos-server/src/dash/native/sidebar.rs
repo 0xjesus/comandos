@@ -1,4 +1,4 @@
-//! Bounded session explorer and account-wide OpenRouter credits.
+//! Account-wide OpenRouter credits for the sidebar «Consumos» view.
 use super::{Answer, Entry, Key, Native, NativeRoute, Verb, reply};
 use crate::Request;
 use http::{Method, StatusCode};
@@ -7,17 +7,12 @@ use std::{
     fs,
     io::{Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::{Component, Path, PathBuf},
-    sync::{Arc, OnceLock},
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 pub const ROUTES: &[Entry] = &[
-    Entry {
-        verb: Verb::Post,
-        key: Key::Path("/fs/explorer"),
-        route: NativeRoute::Sidebar,
-    },
     Entry {
         verb: Verb::Get,
         key: Key::Path("/credits/openrouter"),
@@ -31,11 +26,6 @@ pub const ROUTES: &[Entry] = &[
 ];
 #[derive(Default)]
 pub struct CreditsCache(pub tokio::sync::Mutex<Option<(Instant, Value)>>);
-fn gate() -> Arc<tokio::sync::Semaphore> {
-    static GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-    GATE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
-        .clone()
-}
 fn error(status: StatusCode, message: &str) -> Answer {
     reply(status, &json!({"error":message}))
 }
@@ -44,200 +34,6 @@ fn now() -> i64 {
 }
 fn disconnected(message: &str) -> Value {
     json!({"connected":false,"updated_at":now(),"error":message})
-}
-fn select_pane(rows: &str, session: &str, pane: &str) -> Result<(String, String), &'static str> {
-    if session.is_empty() || session.len() > 200 || session.chars().any(char::is_control) {
-        return Err("Invalid session");
-    }
-    if !pane.is_empty()
-        && (!pane.starts_with('%')
-            || pane.len() < 2
-            || !pane[1..].bytes().all(|c| c.is_ascii_digit()))
-    {
-        return Err("Invalid pane");
-    }
-    for row in rows.lines() {
-        let cols: Vec<_> = row.splitn(5, '\t').collect();
-        if cols.len() != 5 || cols[0] != session {
-            continue;
-        }
-        if (!pane.is_empty() && cols[1] == pane)
-            || (pane.is_empty() && cols[2] == "1" && cols[3] == "1")
-        {
-            if !Path::new(cols[4]).is_absolute() {
-                return Err("Pane working directory unavailable");
-            }
-            return Ok((cols[1].into(), cols[4].into()));
-        }
-    }
-    Err("Pane does not belong to the requested session")
-}
-fn listing(
-    root: &Path,
-    path: &str,
-    expected: Option<&str>,
-    pane: &str,
-) -> Result<Value, &'static str> {
-    let root = root
-        .canonicalize()
-        .map_err(|_| "Working directory unavailable")?;
-    if expected.is_some_and(|v| !v.is_empty() && Path::new(v) != root) {
-        return Err("Working directory changed; refresh explorer");
-    }
-    let relative = Path::new(path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
-    {
-        return Err("Path must stay within the working directory");
-    }
-    let dir = root
-        .join(relative)
-        .canonicalize()
-        .map_err(|_| "Directory unavailable")?;
-    if !dir.starts_with(&root) || !dir.is_dir() {
-        return Err("Directory is outside the working directory");
-    }
-    let mut entries = Vec::new();
-    let mut scanned = 0;
-    let mut truncated = false;
-    for item in fs::read_dir(&dir).map_err(|_| "Directory cannot be read")? {
-        if scanned == 2000 {
-            truncated = true;
-            break;
-        }
-        scanned += 1;
-        let Ok(item) = item else {
-            continue;
-        };
-        let path = item.path();
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        let symlink = meta.file_type().is_symlink();
-        let Ok(target) = path.canonicalize() else {
-            continue;
-        };
-        if !target.starts_with(&root) {
-            continue;
-        }
-        let Ok(name) = item.file_name().into_string() else {
-            continue;
-        };
-        let Ok(full) = path.strip_prefix(&root) else {
-            continue;
-        };
-        let Some(absolute) = path.to_str() else {
-            continue;
-        };
-        let Some(rel) = full.to_str() else {
-            continue;
-        };
-        entries.push((target.is_dir(),name.clone(),json!({"name":name,"path":absolute,"relative":rel,"directory":target.is_dir(),"symlink":symlink})));
-    }
-    entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    if entries.len() > 300 {
-        truncated = true;
-        entries.truncate(300);
-    }
-    let rel = dir
-        .strip_prefix(&root)
-        .map_err(|_| "Invalid directory")?
-        .to_str()
-        .ok_or("Unsupported directory name")?;
-    Ok(
-        json!({"root":root.to_str().ok_or("Unsupported root name")?,"path":rel,"pane":pane,"entries":entries.into_iter().map(|(_,_,v)|v).collect::<Vec<_>>(),"truncated":truncated}),
-    )
-}
-/// Folders that are rebuilt by tools and would drown real matches.
-const SEARCH_SKIP: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    ".build",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".next",
-    ".cache",
-];
-/// Bounded path search under the pane root: every word of `query` must appear in the
-/// relative path. Accepts an absolute path printed inside the root. Never follows symlinks.
-fn search(root: &Path, query: &str) -> Result<Value, &'static str> {
-    let root = root
-        .canonicalize()
-        .map_err(|_| "Working directory unavailable")?;
-    let root_text = root.to_str().ok_or("Unsupported root name")?;
-    let query = query.trim();
-    if query.is_empty() || query.len() > 300 {
-        return Err("Search needs between 1 and 300 characters");
-    }
-    let mut query = query.trim_start_matches("./").to_owned();
-    if let Some(rest) = query.strip_prefix(root_text) {
-        query = rest.trim_start_matches('/').to_owned();
-    } else if Path::new(&query).is_absolute() {
-        // Outside this root: keep the tail, which is what usually identifies the file.
-        let tail: Vec<_> = Path::new(&query)
-            .components()
-            .rev()
-            .take(2)
-            .filter_map(|c| c.as_os_str().to_str())
-            .collect();
-        query = tail.into_iter().rev().collect::<Vec<_>>().join("/");
-    }
-    let terms: Vec<String> = query
-        .to_lowercase()
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    let Some(last) = terms.last().cloned() else {
-        return Ok(json!({"root":root_text,"entries":[],"truncated":false}));
-    };
-    let deadline = Instant::now() + Duration::from_millis(1500);
-    let mut queue = std::collections::VecDeque::from([PathBuf::new()]);
-    let mut found = Vec::new();
-    let mut scanned = 0usize;
-    let mut truncated = false;
-    'walk: while let Some(rel_dir) = queue.pop_front() {
-        let Ok(items) = fs::read_dir(root.join(&rel_dir)) else {
-            continue;
-        };
-        for item in items.flatten() {
-            scanned += 1;
-            if scanned > 40_000 || Instant::now() > deadline {
-                truncated = true;
-                break 'walk;
-            }
-            let Ok(name) = item.file_name().into_string() else {
-                continue;
-            };
-            let Ok(meta) = fs::symlink_metadata(item.path()) else {
-                continue;
-            };
-            let symlink = meta.file_type().is_symlink();
-            let dir = meta.is_dir() || (symlink && item.path().is_dir());
-            let rel = rel_dir.join(&name);
-            let Some(rel_text) = rel.to_str() else {
-                continue;
-            };
-            if meta.is_dir() && !SEARCH_SKIP.contains(&name.as_str()) {
-                queue.push_back(rel.clone());
-            }
-            let lower = rel_text.to_lowercase();
-            if terms.iter().all(|t| lower.contains(t.as_str())) {
-                let rank = (!name.to_lowercase().contains(&last), rel_text.len());
-                let absolute = root.join(&rel);
-                found.push((rank, rel_text.to_owned(), json!({"name":name,"path":absolute.to_str().unwrap_or_default(),"relative":rel_text,"directory":dir,"symlink":symlink})));
-            }
-        }
-    }
-    found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    if found.len() > 100 {
-        truncated = true;
-        found.truncate(100);
-    }
-    Ok(json!({"root":root_text,"entries":found.into_iter().map(|(_,_,v)|v).collect::<Vec<_>>(),"truncated":truncated}))
 }
 fn credit_data(value: &Value, at: i64) -> Result<Value, &'static str> {
     let credits = value["data"]["total_credits"]
@@ -346,66 +142,6 @@ fn save_key(path: &Path, key: &str) -> Result<(), &'static str> {
     result
 }
 pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
-    if request.target.split('?').next() == Some("/fs/explorer") {
-        let Some(body) = request.data.as_ref().and_then(Value::as_object) else {
-            return error(StatusCode::BAD_REQUEST, "Expected explorer request");
-        };
-        let Some(session) = body.get("session").and_then(Value::as_str) else {
-            return error(StatusCode::BAD_REQUEST, "Session required");
-        };
-        let Some(pane) = body.get("pane").and_then(Value::as_str) else {
-            return error(StatusCode::BAD_REQUEST, "Pane required");
-        };
-        let path = match body.get("path") {
-            None => "",
-            Some(Value::String(v)) => v,
-            _ => return error(StatusCode::BAD_REQUEST, "Invalid path"),
-        };
-        let expected = match body.get("root") {
-            None => None,
-            Some(Value::String(v)) => Some(v.clone()),
-            _ => return error(StatusCode::BAD_REQUEST, "Invalid root"),
-        };
-        if path.len() > 4096 {
-            return error(StatusCode::BAD_REQUEST, "Path too long");
-        }
-        let query = match body.get("query") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(v)) => Some(v.clone()),
-            _ => return error(StatusCode::BAD_REQUEST, "Invalid search"),
-        };
-        // All sessions are listed so tmux's fuzzy target matching cannot select another session.
-        let _permit = gate()
-            .acquire_owned()
-            .await
-            .map_err(|_| super::Fault::Error(crate::HandlerError::Failure))?;
-        let rows=match native.options().tmux.run(&["list-panes","-a","-F","#{session_name}\t#{pane_id}\t#{window_active}\t#{pane_active}\t#{pane_current_path}"]).await{Ok(v) if v.ok=>v.stdout,_=>return error(StatusCode::BAD_REQUEST,"Unable to resolve session pane")};
-        let (pane, cwd) = match select_pane(&rows, session, pane) {
-            Ok(v) => v,
-            Err(e) => return error(StatusCode::BAD_REQUEST, e),
-        };
-        let path = path.to_owned();
-        let result = tokio::task::spawn_blocking(move || {
-            let _permit = _permit;
-            match query {
-                Some(query) => search(Path::new(&cwd), &query),
-                None => listing(Path::new(&cwd), &path, expected.as_deref(), &pane),
-            }
-        })
-        .await
-        .map_err(|_| super::Fault::Error(crate::HandlerError::Failure))?;
-        return match result {
-            Ok(v) => reply(StatusCode::OK, &v),
-            Err(e) => error(
-                if e.starts_with("Working directory changed") {
-                    StatusCode::CONFLICT
-                } else {
-                    StatusCode::BAD_REQUEST
-                },
-                e,
-            ),
-        };
-    }
     let mut cache = native.credits.0.lock().await;
     if request.method == Method::GET
         && let Some((at, value)) = &*cache
@@ -492,83 +228,6 @@ mod tests {
         p
     }
     #[test]
-    fn sidebar_confines_and_sorts() {
-        let root = temp();
-        fs::create_dir(root.join("z-dir")).unwrap();
-        fs::write(root.join("a-file"), "").unwrap();
-        symlink("z-dir", root.join("b-link")).unwrap();
-        symlink("/", root.join("escape")).unwrap();
-        let v = listing(&root, "", None, "%7").unwrap();
-        assert_eq!(v["entries"][0]["name"], "b-link");
-        assert_eq!(v["entries"][0]["symlink"], true);
-        assert_eq!(v["entries"][1]["name"], "z-dir");
-        assert_eq!(v["entries"][2]["name"], "a-file");
-        assert_eq!(v["entries"][0]["relative"], "b-link");
-        assert_eq!(
-            listing(&root, "b-link", None, "%7").unwrap()["path"],
-            "z-dir"
-        );
-        assert_eq!(v["entries"].as_array().unwrap().len(), 3);
-        assert!(listing(&root, "../", None, "%7").is_err());
-        assert!(listing(&root, "escape", None, "%7").is_err());
-        assert!(listing(&root, "", Some("/stale"), "%7").is_err());
-        assert!(listing(&root, "", Some(""), "%7").is_ok());
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn sidebar_limits() {
-        let root = temp();
-        for i in 0..2005 {
-            fs::write(root.join(format!("{i:04}")), "").unwrap();
-        }
-        let v = listing(&root, "", None, "%1").unwrap();
-        assert_eq!(v["entries"].as_array().unwrap().len(), 300);
-        assert_eq!(v["truncated"], true);
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn sidebar_search_finds_partial_paths_inside_the_pane_root() {
-        let root = temp();
-        fs::create_dir_all(root.join("src/ui")).unwrap();
-        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("src/ui/sidebar_browser.rs"), "").unwrap();
-        fs::write(root.join("src/ui/header.rs"), "").unwrap();
-        fs::write(root.join("node_modules/pkg/sidebar_browser.rs"), "").unwrap();
-        let names = |v: &Value| -> Vec<String> {
-            v["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|e| e["relative"].as_str().unwrap().to_owned())
-                .collect()
-        };
-        // Fragment of a path, several words, case-insensitive; dependency folders skipped.
-        let v = search(&root, "UI/sidebar").unwrap();
-        assert_eq!(names(&v), ["src/ui/sidebar_browser.rs"]);
-        assert_eq!(names(&search(&root, "ui browser").unwrap()), ["src/ui/sidebar_browser.rs"]);
-        // An absolute path the AI printed is matched relative to the root.
-        let absolute = root.join("src/ui/header.rs");
-        let v = search(&root, absolute.to_str().unwrap()).unwrap();
-        assert_eq!(names(&v), ["src/ui/header.rs"]);
-        assert_eq!(v["entries"][0]["path"], absolute.to_str().unwrap());
-        // Folders match too and sort before deeper files.
-        assert_eq!(names(&search(&root, "src/ui").unwrap())[0], "src/ui");
-        assert!(search(&root, "").is_err());
-        assert!(names(&search(&root, "nothing-here").unwrap()).is_empty());
-        fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn sidebar_exact_session_and_pane() {
-        let rows = "alpha\t%1\t1\t1\t/tmp/a\nbeta\t%2\t1\t1\t/tmp/b\nalpha\t%3\t0\t0\t/tmp/c\n";
-        assert_eq!(
-            select_pane(rows, "alpha", "%3").unwrap(),
-            ("%3".into(), "/tmp/c".into())
-        );
-        assert_eq!(select_pane(rows, "alpha", "").unwrap().0, "%1");
-        assert!(select_pane(rows, "alpha", "%2").is_err());
-        assert!(select_pane(rows, "alp", "").is_err());
-    }
-    #[test]
     fn sidebar_private_key_storage_and_no_fake_balances() {
         let root = temp();
         let path = key_path(&root);
@@ -600,12 +259,8 @@ mod tests {
                 Some(NativeRoute::Sidebar)
             );
         }
-        assert_eq!(
-            super::super::route(&Method::POST, "/fs/explorer"),
-            Some(NativeRoute::Sidebar)
-        );
         assert_ne!(
-            super::super::route(&Method::POST, "/fs/explorer/escape"),
+            super::super::route(&Method::POST, "/fs/explorer"),
             Some(NativeRoute::Sidebar)
         );
     }

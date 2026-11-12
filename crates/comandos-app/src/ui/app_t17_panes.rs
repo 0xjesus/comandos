@@ -91,6 +91,22 @@ impl App {
             if let (Some(app), Some(owner)) = (weak.upgrade(), d.upgrade()) {
                 owner.reposition(app.pane_focused(&owner));
                 app.pane_geo_soon(&owner);
+                // The pty resizes after RESIZE_QUIET_MS and tmux re-lays the
+                // panes right after: read the real geometry then, not in 2 s.
+                if let Some(old) = owner.settle.borrow_mut().take() {
+                    old.remove();
+                }
+                let weak = Rc::downgrade(&app);
+                let d = Rc::downgrade(&owner);
+                *owner.settle.borrow_mut() = Some(glib::timeout_add_local_once(
+                    Duration::from_millis(crate::term::settle::RESIZE_QUIET_MS + 140),
+                    move || {
+                        if let (Some(app), Some(owner)) = (weak.upgrade(), d.upgrade()) {
+                            owner.settle.borrow_mut().take();
+                            app.pane_geo_soon(&owner);
+                        }
+                    },
+                ));
             }
         });
         let weak = Rc::downgrade(self);
@@ -244,7 +260,7 @@ impl App {
             self.current_session().as_deref() == Some(owner.session.as_str())
         }
     }
-    fn refresh_visible_geometry(self: &Rc<Self>) {
+    pub(super) fn refresh_visible_geometry(self: &Rc<Self>) {
         for owner in self.t17.boxes.borrow().values() {
             if self.pane_visible(owner) {
                 self.pane_geo_soon(owner);
@@ -257,10 +273,18 @@ impl App {
             return;
         }
         let state = self.state.clone();
+        let home = self.cfg.home().to_path_buf();
         let ticket = self.t17.scope.ticket();
         let weak = Rc::downgrade(self);
         self.jobs.spawn(
-            move || state.read_pane_document("app-tab-models.json"),
+            move || {
+                state
+                    .read_pane_document("app-tab-models.json")
+                    .map(|mut models| {
+                        expect_models(&mut models, &home);
+                        models
+                    })
+            },
             move |result| {
                 let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) else {
                     return;
@@ -398,6 +422,17 @@ impl App {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let mut chips = String::new();
+        for pane in panes.iter().take(6) {
+            let field = |k| pane.get(k).and_then(Value::as_str).unwrap_or_default();
+            if CHIP_HARNESSES.contains(&field("harness")) {
+                self.want_chip(owner, field("pane"), field("harness"), field("hAcct"), CHIP_FRESH_SECONDS);
+                let key = chip_key(&owner.session, field("pane"));
+                if let Some((_, data)) = self.t17.chips.borrow().get(&key) {
+                    chips.push_str(&chip_digest(data));
+                }
+            }
+        }
         let theme = self.applied_theme.borrow();
         let values = theme.as_ref().map(|t| &t.values);
         let color = |key, fallback: &str| {
@@ -428,7 +463,7 @@ impl App {
             .unwrap_or(&owner.session)
             .to_string();
         let signature = format!(
-            "{title}|{}|{:?}|{fg}|{brand}",
+            "{title}|{chips}|{}|{:?}|{fg}|{brand}",
             panes
                 .iter()
                 .take(6)
@@ -489,46 +524,36 @@ impl App {
                 .get("harness")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if matches!(harness, "claude" | "codex" | "grok") {
-                let alias = pane
-                    .get("hAcct")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty() && *s != "unknown")
-                    .unwrap_or("…");
-                let button = card_button(
-                    "user",
-                    &format!(
-                        "{}: {alias}",
-                        if self.english { "Account" } else { "Cuenta" }
-                    ),
-                    if self.english {
-                        "Move this pane to another account, same conversation"
-                    } else {
-                        "Pasar este pane a otra cuenta sin perder la conversación"
-                    },
-                    &fg,
-                );
-                let weak = Rc::downgrade(self);
-                let d = Rc::downgrade(owner);
-                let id = id.to_string();
-                let harness = harness.to_string();
-                let alias = alias.to_string();
-                button.connect_clicked(move |b| {
-                    if let (Some(app), Some(owner)) = (weak.upgrade(), d.upgrade())
-                        && app.pane_current(&owner)
-                    {
-                        owner.term.widget().grab_focus();
-                        app.account_popover(b, &owner.session, &id, &harness, &alias);
-                    }
-                });
-                keys.pack_start(&button, false, false, 0);
-            }
-            let button = self.extension_button(owner, id, harness, &fg);
+            let alias = pane
+                .get("hAcct")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty() && *s != "unknown" && matches!(harness, "claude" | "codex" | "grok"));
+            let summary = self
+                .t17
+                .chips
+                .borrow()
+                .get(&chip_key(&owner.session, id))
+                .map(|(_, v)| v.clone())
+                .filter(|v| v["ok"] == true);
+            let button = chip_button(alias, summary.as_ref(), self.english, &fg);
+            button.set_valign(gtk::Align::Center);
+            let weak = Rc::downgrade(self);
+            let d = Rc::downgrade(owner);
+            let target = (id.to_string(), harness.to_string(), alias.unwrap_or_default().to_string());
+            button.connect_clicked(move |b| {
+                if let (Some(app), Some(owner)) = (weak.upgrade(), d.upgrade())
+                    && app.pane_current(&owner)
+                {
+                    owner.term.widget().grab_focus();
+                    app.chip_popover(b, &owner, &target.0, &target.1, &target.2);
+                }
+            });
             keys.pack_start(&button, false, false, 0);
             keys.set_halign(gtk::Align::Start);
             keys.set_valign(gtk::Align::Start);
             owner.widget.add_overlay(&keys);
             keys.show_all();
+            overlays::set_key_tier(keys.upcast_ref(), 'F');
             let width = keys.preferred_width().1;
             owner.pills.borrow_mut().push(PaneWidget {
                 pane: id.into(),
@@ -585,12 +610,6 @@ impl App {
                 }
             });
             pill.pack_start(&button, false, false, 0);
-            pill.pack_start(
-                &self.extension_button(owner, &record.geometry.id, "", &fg),
-                false,
-                false,
-                0,
-            );
             owner.widget.add_overlay(&pill);
             pill.show_all();
             owner.pills.borrow_mut().push(PaneWidget {
@@ -601,37 +620,6 @@ impl App {
             });
         }
         owner.reposition(self.pane_focused(owner));
-    }
-    fn extension_button(
-        self: &Rc<Self>,
-        owner: &Rc<PaneOverlay>,
-        pane: &str,
-        harness: &str,
-        fg: &str,
-    ) -> gtk::Button {
-        let button = card_button(
-            "ia-spark",
-            "MCPs · Skills",
-            if self.english {
-                "This pane's extensions"
-            } else {
-                "Extensiones de este panel"
-            },
-            fg,
-        );
-        let weak = Rc::downgrade(self);
-        let d = Rc::downgrade(owner);
-        let pane = pane.to_string();
-        let harness = harness.to_string();
-        button.connect_clicked(move |_| {
-            if let (Some(app), Some(owner)) = (weak.upgrade(), d.upgrade())
-                && app.pane_current(&owner)
-            {
-                owner.term.widget().grab_focus();
-                app.open_extension(&owner.session, &pane, &harness);
-            }
-        });
-        button
     }
     pub(super) fn paint_pane_indicators(&self, seconds: f64) {
         if !self.presence_visible.get() {
@@ -788,7 +776,11 @@ impl App {
                                 neighbor: drag.neighbor,
                                 size: size as u16,
                             });
-                            app.send_gutter_resize(&owner);
+                            // Only a guide moves while dragging: every tmux
+                            // resize makes each program redraw its whole pane,
+                            // so the size is applied once, on release.
+                            let _ = &app;
+                            owner.widget.queue_draw();
                         }
                     }
                 }
@@ -900,7 +892,7 @@ fn svg_image(name: &str, size: i32, color: &str) -> gtk::Widget {
 }
 /// A pane header as the app draws it, `width` px wide, for the `header_shot` bench:
 /// the same card, the same buttons and the same fitting as `place_pane_pills`.
-pub fn header_preview(pane: &Value, title: &str, account: &str, width: i32) -> gtk::Widget {
+pub fn header_preview(pane: &Value, title: &str, account: &str, summary: Option<&Value>, width: i32) -> gtk::Widget {
     let fg = "#ECECEC";
     let area = gtk::Overlay::new();
     let floor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -915,11 +907,11 @@ pub fn header_preview(pane: &Value, title: &str, account: &str, width: i32) -> g
     area.add_overlay(&card);
     let keys = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     keys.style_context().add_class("pane-card-keys");
-    keys.pack_start(&card_button("user", &format!("Cuenta: {account}"), "", fg), false, false, 0);
-    keys.pack_start(&card_button("ia-spark", "MCPs · Skills", "", fg), false, false, 0);
+    keys.pack_start(&chip_button(Some(account), summary, false, fg), false, false, 0);
     keys.set_halign(gtk::Align::Start);
     keys.set_valign(gtk::Align::Start);
     keys.show_all();
+    overlays::set_key_tier(keys.upcast_ref(), 'F');
     let full = keys.preferred_width().1;
     area.add_overlay(&keys);
     match overlays::fit_keys(keys.upcast_ref(), width, card_text, full) {
@@ -930,17 +922,6 @@ pub fn header_preview(pane: &Value, title: &str, account: &str, width: i32) -> g
         None => keys.hide(),
     }
     area.upcast()
-}
-fn card_button(icon: &str, text: &str, tooltip: &str, fg: &str) -> gtk::Button {
-    let button = gtk::Button::new();
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
-    content.pack_start(&svg_image(icon, 12, fg), false, false, 0);
-    content.pack_start(&gtk::Label::new(Some(text)), false, false, 0);
-    button.add(&content);
-    button.set_relief(gtk::ReliefStyle::None);
-    button.style_context().add_class("pill-btn");
-    button.set_tooltip_text(Some(tooltip));
-    button
 }
 fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
     let text = |name| p.get(name).and_then(Value::as_str).unwrap_or_default();
@@ -1031,7 +1012,7 @@ fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
     card.pack_start(&badge, false, false, 0);
     let model = gtk::Label::new(None);
     let esc = glib::markup_escape_text;
-    model.set_markup(&match state {"changing"=>format!("<span foreground=\"{fg}\" weight=\"bold\">{}</span>",esc(&format!("→ {}",if text("target").is_empty(){"…"}else{text("target")}))),"verified"=>format!("<span foreground=\"{fg}\" weight=\"bold\" font_family=\"Ubuntu Sans Mono\">{}</span>{}",esc(text("model")),if text("effort").is_empty(){String::new()}else{format!("<span foreground=\"#8A8F98\"> {}</span>",esc(text("effort")))}),_=>"<span foreground=\"#8A8F98\">…</span>".into()});
+    model.set_markup(&match state {"changing"=>format!("<span foreground=\"{fg}\" weight=\"bold\">{}</span>",esc(&format!("→ {}",if text("target").is_empty(){"…"}else{text("target")}))),"verified"=>format!("<span foreground=\"{fg}\" weight=\"bold\" font_family=\"Ubuntu Sans Mono\">{}</span>{}",esc(text("model")),if text("effort").is_empty(){String::new()}else{format!("<span foreground=\"#8A8F98\"> {}</span>",esc(text("effort")))}),_ if !text("expected").is_empty()=>format!("<span foreground=\"#8A8F98\" font_family=\"Ubuntu Sans Mono\">{}</span>",esc(text("expected"))),_=>"<span foreground=\"#8A8F98\">…</span>".into()});
     card.pack_start(&model, false, false, 0);
     let (state_color, symbol) = match state {
         "verified" => ("#4ADE80", "✓"),
@@ -1074,9 +1055,457 @@ fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
     tooltip.push_str(match state {
         "verified" => " · verificado en el proceso vivo",
         "changing" => " · cambio de motor en curso",
+        "detecting" if !text("expected").is_empty() => {
+            " · modelo con el que la cuenta abre sesiones; se confirma con la primera respuesta"
+        }
         "detecting" => " · detectando, aun sin confirmar",
         _ => "",
     });
     card.set_tooltip_text(Some(&tooltip));
     card
+}
+/// A Claude pane that has not answered yet gets `expected`: the model its
+/// account starts new sessions with. The header shows it as not confirmed
+/// instead of an empty label.
+fn expect_models(models: &mut Value, home: &std::path::Path) {
+    let mut defaults = BTreeMap::<String, String>::new();
+    let panes = models
+        .as_object_mut()
+        .into_iter()
+        .flat_map(|sessions| sessions.values_mut())
+        .filter_map(|session| session.get_mut("panes").and_then(Value::as_array_mut))
+        .flatten();
+    for pane in panes {
+        let field = |name: &str| pane.get(name).and_then(Value::as_str).unwrap_or("");
+        if field("state") != "detecting" || field("harness") != "claude" {
+            continue;
+        }
+        let account = field("hAcct").to_owned();
+        let expected = defaults
+            .entry(account)
+            .or_insert_with_key(|account| account_default_model(home, account))
+            .clone();
+        if !expected.is_empty()
+            && let Some(pane) = pane.as_object_mut()
+        {
+            pane.insert("expected".into(), json!(expected));
+        }
+    }
+}
+/// The `model` of the account's Claude Code settings, shortened like the
+/// confirmed labels (`claude-opus-5-5[1m]` reads `opus-5-5`).
+fn account_default_model(home: &std::path::Path, account: &str) -> String {
+    let dir = match account {
+        "main" => home.join(".claude"),
+        "" | "unknown" | "." | ".." => return String::new(),
+        name if name.contains('/') => return String::new(),
+        name => home.join(".claude-accounts").join(name),
+    };
+    std::fs::read(dir.join("settings.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|settings| {
+            let model = settings.get("model")?.as_str()?;
+            Some(model.split('[').next()?.trim().replace("claude-", ""))
+        })
+        .unwrap_or_default()
+}
+/// CLIs whose panes get the header chip.
+const CHIP_HARNESSES: &[&str] = &["claude", "codex", "grok", "opencode", "agy"];
+/// How long a chip summary stays fresh before the header asks the dashboard again. Each
+/// answer costs the dashboard seconds of work, so the list asks again when opened instead.
+const CHIP_FRESH_SECONDS: f64 = 600.0;
+/// Opening the list refreshes a summary older than this.
+const CHIP_OPEN_FRESH_SECONDS: f64 = 60.0;
+fn chip_key(session: &str, pane: &str) -> String {
+    format!("{session}|{pane}")
+}
+fn now_seconds() -> f64 {
+    glib::monotonic_time() as f64 / 1e6
+}
+/// What the chip draws from a summary: a new answer rebuilds the header only when it changes.
+fn chip_digest(data: &Value) -> String {
+    format!(
+        "{}/{}/{}/{}",
+        data["mcps"]["on"],
+        data["mcps"]["total"],
+        data["mcps"]["down"].as_array().map_or(0, Vec::len),
+        data["skills"]["on"]
+    )
+}
+/// The header chip (grill 7): account and extensions in one piece. Each part is named
+/// after the widths it shows at — `F` wide, `S` short, `D` just a dot — for `fit_keys`.
+fn chip_button(alias: Option<&str>, summary: Option<&Value>, english: bool, fg: &str) -> gtk::Button {
+    let button = gtk::Button::new();
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    let part = |widget: gtk::Widget, tiers: &str| {
+        widget.set_widget_name(&format!("tier-{tiers}"));
+        content.pack_start(&widget, false, false, 0);
+    };
+    let label = |markup: &str| {
+        let l = gtk::Label::new(None);
+        l.set_markup(markup);
+        l.upcast::<gtk::Widget>()
+    };
+    let esc = |t: &str| glib::markup_escape_text(t).to_string();
+    let dim = "#8A8F98";
+    let mut tip = String::new();
+    if let Some(alias) = alias {
+        part(svg_image("user", 12, fg), "F");
+        part(label(&format!("<span foreground=\"{fg}\">{}</span>", esc(alias))), "F");
+        let initial = alias.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+        let avatar = label(&format!("<span foreground=\"#CFC7FF\" weight=\"bold\">{}</span>", esc(&initial)));
+        avatar.style_context().add_class("chip-av");
+        part(avatar, "S");
+        tip = format!("{}: {alias}", if english { "Account" } else { "Cuenta" });
+    } else {
+        part(svg_image("ia-spark", 12, fg), "FS");
+    }
+    let mono = |t: String| format!("<span font_family=\"Ubuntu Sans Mono\" foreground=\"{fg}\">{t}</span>");
+    let sep = format!("<span foreground=\"{dim}\">·</span>");
+    match summary {
+        Some(data) => {
+            let count = |v: &Value| v.as_u64().unwrap_or(0);
+            let (on, total) = (count(&data["mcps"]["on"]), count(&data["mcps"]["total"]));
+            let skills = count(&data["skills"]["on"]);
+            let down = data["mcps"]["down"].as_array().map_or(0, Vec::len);
+            part(
+                label(&format!(
+                    "{sep} {} MCP {sep} {} skills",
+                    mono(format!("{on}/{total}")),
+                    mono(skills.to_string())
+                )),
+                "F",
+            );
+            part(label(&mono(format!("{on}/{total}"))), "S");
+            if down > 0 {
+                part(label(&format!("<span foreground=\"#F25F5C\" weight=\"bold\">⚠{down}</span>")), "FSD");
+            } else {
+                part(label("<span foreground=\"#4ADE80\">●</span>"), "D");
+            }
+            if !tip.is_empty() {
+                tip.push_str(" · ");
+            }
+            tip.push_str(&format!("{on}/{total} MCP · {skills} skills"));
+            if down > 0 {
+                tip.push_str(&if english { format!(" · {down} not connected") } else { format!(" · {down} sin conectar") });
+            }
+        }
+        None => {
+            part(label(&format!("{sep} <span foreground=\"{dim}\">MCPs · Skills</span>")), "F");
+            if alias.is_some() {
+                part(svg_image("ia-spark", 12, dim), "D");
+            }
+        }
+    }
+    button.add(&content);
+    button.set_relief(gtk::ReliefStyle::None);
+    button.style_context().add_class("pill-btn");
+    button.style_context().add_class("pane-chip");
+    // Flat like the card text beside it: the app's button themes add a frame that
+    // sticks out over the tile's top edge, so this widget's own rule wins over them.
+    let flat = gtk::CssProvider::new();
+    if flat
+        .load_from_data(
+            b"button{border:none;box-shadow:none;outline:none;background:none;background-image:none;min-height:16px;padding:2px 12px;border-radius:7px;}button:hover{background-color:rgba(148,148,148,0.18);}",
+        )
+        .is_ok()
+    {
+        button
+            .style_context()
+            .add_provider(&flat, gtk::STYLE_PROVIDER_PRIORITY_USER);
+    }
+    button.set_tooltip_text(Some(&tip));
+    button
+}
+impl App {
+    /// Asks the dashboard for a pane's chip summary when it has none or it went stale.
+    fn want_chip(self: &Rc<Self>, owner: &Rc<PaneOverlay>, pane: &str, harness: &str, account: &str, fresh: f64) {
+        let key = chip_key(&owner.session, pane);
+        let now = now_seconds();
+        if self
+            .t17
+            .chips
+            .borrow()
+            .get(&key)
+            .is_some_and(|(at, _)| now - at < fresh)
+            || !self.t17.chips_busy.borrow_mut().insert(key.clone())
+        {
+            return;
+        }
+        let path = format!(
+            "/pane-extensions?session={}&pane={}&harness={}&account={}&summary=1",
+            ui::webview::encode_query(&owner.session),
+            ui::webview::encode_query(pane),
+            ui::webview::encode_query(harness),
+            ui::webview::encode_query(account)
+        );
+        let client = self.dash.isolated();
+        let weak = Rc::downgrade(self);
+        let d = Rc::downgrade(owner);
+        self.jobs.spawn(
+            move || client.get(&path, Duration::from_secs(20)).ok(),
+            move |result| {
+                let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) else {
+                    return;
+                };
+                app.t17.chips_busy.borrow_mut().remove(&key);
+                let data = result.unwrap_or(Value::Null);
+                let changed = app
+                    .t17
+                    .chips
+                    .borrow()
+                    .get(&key)
+                    .is_none_or(|(_, old)| chip_digest(old) != chip_digest(&data));
+                app.t17.chips.borrow_mut().insert(key, (now_seconds(), data));
+                // A rebuild would take the open list's anchor away; the next pass picks it up.
+                if changed
+                    && app.t17.chip_open.borrow().is_none()
+                    && let Some(owner) = d.upgrade()
+                    && app.pane_visible(&owner)
+                {
+                    app.place_pane_pills(&owner);
+                }
+            },
+        );
+    }
+    /// The chip's list: Cuenta · MCPs · Skills, built from the cached summary. Nothing
+    /// web and no full extensions panel (Jesús, grill 7).
+    fn chip_popover(
+        self: &Rc<Self>,
+        chip: &gtk::Button,
+        owner: &Rc<PaneOverlay>,
+        pane: &str,
+        harness: &str,
+        alias: &str,
+    ) {
+        if let Some(old) = self.t17.chip_open.borrow_mut().take() {
+            old.popdown();
+        }
+        // The chip updates after the list closes: a rebuild would take its anchor away.
+        self.want_chip(owner, pane, harness, alias, CHIP_OPEN_FRESH_SECONDS);
+        let en = self.english;
+        let data = self
+            .t17
+            .chips
+            .borrow()
+            .get(&chip_key(&owner.session, pane))
+            .map(|(_, v)| v.clone())
+            .filter(|v| v["ok"] == true);
+        let pop = gtk::Popover::new(Some(chip));
+        pop.set_position(gtk::PositionType::Bottom);
+        pop.style_context().add_class("acct-pop");
+        pop.style_context().add_class("chip-pop");
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        outer.set_margin_top(12);
+        outer.set_margin_bottom(12);
+        outer.set_margin_start(12);
+        outer.set_margin_end(12);
+        let stack = gtk::Stack::new();
+        // Every tab the same height: switching tabs never moves or flips the list.
+        stack.set_vhomogeneous(true);
+        stack.set_size_request(340, -1);
+        let switcher = gtk::StackSwitcher::new();
+        switcher.set_stack(Some(&stack));
+        switcher.set_homogeneous(true);
+        // Separate tabs with air between them, not GTK's joined "linked" buttons.
+        switcher.style_context().remove_class("linked");
+        switcher.set_spacing(8);
+        switcher.set_margin_bottom(6);
+        outer.pack_start(&switcher, false, false, 0);
+        outer.pack_start(&stack, false, false, 0);
+        let title = |t: &str| {
+            let l = gtk::Label::new(Some(t));
+            l.style_context().add_class("acct-title");
+            l.set_halign(gtk::Align::Start);
+            l
+        };
+        let note = |t: &str| {
+            let l = gtk::Label::new(Some(t));
+            l.style_context().add_class("acct-note");
+            l.set_xalign(0.0);
+            l.set_line_wrap(true);
+            l.set_max_width_chars(40);
+            l
+        };
+        let row = |color: &str, name: &str, right: &str, bad: bool| {
+            let r = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            r.style_context().add_class("chip-row");
+            let dot = gtk::Label::new(None);
+            dot.set_markup(&format!("<span foreground=\"{color}\">●</span>"));
+            r.pack_start(&dot, false, false, 0);
+            let n = gtk::Label::new(Some(name));
+            n.style_context().add_class("chip-name");
+            n.set_xalign(0.0);
+            n.set_ellipsize(pango::EllipsizeMode::End);
+            r.pack_start(&n, true, true, 0);
+            let side = gtk::Label::new(Some(right));
+            side.style_context().add_class(if bad { "chip-bad" } else { "acct-dim" });
+            r.pack_end(&side, false, false, 0);
+            r
+        };
+        let uses = |n: u64| match (n, en) {
+            (0, _) => String::new(),
+            (1, true) => "1 use".into(),
+            (1, false) => "1 uso".into(),
+            (n, true) => format!("{n} uses"),
+            (n, false) => format!("{n} usos"),
+        };
+        let list = |v: &Value| v.as_array().cloned().unwrap_or_default();
+        // The whole breakdown, scrolling past ~16 rows instead of cutting the list.
+        let scrolled = |child: &gtk::Box| {
+            let sw = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
+            sw.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            sw.set_propagate_natural_height(true);
+            sw.set_max_content_height(320);
+            sw.add(child);
+            sw
+        };
+        let size = |t: u64| if t >= 1000 { format!("{:.1}k", t as f64 / 1000.0) } else { t.to_string() };
+        let session = owner.session.clone();
+        // Cuenta
+        let acct = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        acct.pack_start(&title(if en { "ACCOUNT" } else { "CUENTA" }), false, false, 0);
+        if alias.is_empty() {
+            acct.pack_start(
+                &note(if en { "This CLI does not switch accounts here." } else { "Este CLI no cambia de cuenta desde aquí." }),
+                false,
+                false,
+                0,
+            );
+        } else {
+            acct.pack_start(&row("#8B7CF6", alias, if en { "current" } else { "actual" }, false), false, false, 0);
+            let change = gtk::Button::with_label(if en { "Switch account…" } else { "Cambiar de cuenta…" });
+            change.style_context().add_class("acct-row");
+            let weak = Rc::downgrade(self);
+            let (chip1, p, s) = (chip.clone(), pop.clone(), session.clone());
+            let (pn, h, a) = (pane.to_string(), harness.to_string(), alias.to_string());
+            change.connect_clicked(move |_| {
+                p.popdown();
+                if let Some(app) = weak.upgrade() {
+                    app.account_popover(&chip1, &s, &pn, &h, &a, false);
+                }
+            });
+            acct.pack_start(&change, false, false, 0);
+            // Añadir, renombrar, volver a iniciar sesión o eliminar cuentas (12-nov).
+            let manage = gtk::Button::with_label(if en {
+                "Add, edit or delete accounts…"
+            } else {
+                "Añadir, editar o eliminar cuentas…"
+            });
+            manage.style_context().add_class("acct-row");
+            let weak = Rc::downgrade(self);
+            let (chip, p, s) = (chip.clone(), pop.clone(), session.clone());
+            let (pn, h, a) = (pane.to_string(), harness.to_string(), alias.to_string());
+            manage.connect_clicked(move |_| {
+                p.popdown();
+                if let Some(app) = weak.upgrade() {
+                    app.account_popover(&chip, &s, &pn, &h, &a, true);
+                }
+            });
+            acct.pack_start(&manage, false, false, 0);
+        }
+        stack.add_titled(&acct, "acct", if en { "Account" } else { "Cuenta" });
+        // MCPs
+        let mcps = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let down = data.as_ref().map_or(0, |d| list(&d["mcps"]["down"]).len());
+        match &data {
+            None => {
+                mcps.pack_start(&note(if en { "Reading…" } else { "Leyendo…" }), false, false, 0);
+            }
+            Some(d) => {
+                let up = list(&d["mcps"]["up"]);
+                mcps.pack_start(
+                    &title(&if en {
+                        format!("{} OF {} CONNECTED", d["mcps"]["on"], d["mcps"]["total"])
+                    } else {
+                        format!("{} DE {} CONECTADOS", d["mcps"]["on"], d["mcps"]["total"])
+                    }),
+                    false,
+                    false,
+                    0,
+                );
+                let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                for m in list(&d["mcps"]["down"]) {
+                    let why = m["why"].as_str().unwrap_or_default();
+                    rows.pack_start(&row("#F25F5C", m["name"].as_str().unwrap_or_default(), why, true), false, false, 0);
+                }
+                for m in &up {
+                    let calls = uses(m["calls"].as_u64().unwrap_or(0));
+                    rows.pack_start(&row("#4ADE80", m["name"].as_str().unwrap_or_default(), &calls, false), false, false, 0);
+                }
+                mcps.pack_start(&scrolled(&rows), false, false, 0);
+                if down > 0 {
+                    mcps.pack_start(
+                        &note(if en { "To reconnect: /mcp in the pane." } else { "Para reconectarlos: /mcp en el pane." }),
+                        false,
+                        false,
+                        0,
+                    );
+                }
+            }
+        }
+        let mcp_title = if down > 0 { format!("MCPs ⚠{down}") } else { "MCPs".into() };
+        stack.add_titled(&mcps, "mcp", &mcp_title);
+        // Skills
+        let skills = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        match &data {
+            None => {
+                skills.pack_start(&note(if en { "Reading…" } else { "Leyendo…" }), false, false, 0);
+            }
+            Some(d) => {
+                let k = d["skills"]["tokens"].as_u64().unwrap_or(0) / 1000;
+                skills.pack_start(
+                    &title(&if en {
+                        format!("{} ACTIVE · ~{k}K TOKENS", d["skills"]["on"])
+                    } else {
+                        format!("{} ACTIVAS · ~{k}K TOKENS", d["skills"]["on"])
+                    }),
+                    false,
+                    false,
+                    0,
+                );
+                let used = list(&d["skills"]["used"]);
+                if used.is_empty() {
+                    skills.pack_start(
+                        &note(if en { "None used in this conversation yet." } else { "Ninguna usada en esta conversación todavía." }),
+                        false,
+                        false,
+                        0,
+                    );
+                }
+                for s in &used {
+                    let calls = uses(s["calls"].as_u64().unwrap_or(0));
+                    skills.pack_start(&row("#3FC1C9", s["name"].as_str().unwrap_or_default(), &calls, false), false, false, 0);
+                }
+                skills.pack_start(&title(if en { "ALL · BY SIZE" } else { "TODAS · POR TAMAÑO" }), false, false, 0);
+                let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                for s in list(&d["skills"]["list"]) {
+                    let tokens = size(s["tokens"].as_u64().unwrap_or(0));
+                    rows.pack_start(&row("#5B6678", s["name"].as_str().unwrap_or_default(), &tokens, false), false, false, 0);
+                }
+                skills.pack_start(&scrolled(&rows), false, false, 0);
+                if d["complete"] == false {
+                    skills.pack_start(
+                        &note(if en { "Partial history: some may be missing." } else { "Historial parcial: puede faltar alguna." }),
+                        false,
+                        false,
+                        0,
+                    );
+                }
+            }
+        }
+        stack.add_titled(&skills, "sk", "Skills");
+        pop.add(&outer);
+        outer.show_all();
+        stack.set_visible_child_name(if down > 0 || alias.is_empty() { "mcp" } else { "acct" });
+        let weak = Rc::downgrade(self);
+        pop.connect_closed(move |_| {
+            if let Some(app) = weak.upgrade() {
+                app.t17.chip_open.borrow_mut().take();
+            }
+        });
+        *self.t17.chip_open.borrow_mut() = Some(pop.clone());
+        pop.popup();
+    }
 }

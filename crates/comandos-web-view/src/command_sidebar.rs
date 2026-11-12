@@ -1,4 +1,4 @@
-//! Original command rows, quota cards, chain runner and terminal tabs.
+//! Left sidebar shell: «Sesiones» feed, «Consumos» quota cards and the Servers sheet.
 use crate::escape::text as esc;
 use serde_json::{Value, json};
 pub fn at<'a>(v: &'a Value, k: &str) -> &'a Value {
@@ -30,294 +30,41 @@ pub fn pick(v: &Value, keys: &[&str], default: &str) -> String {
 pub fn arr(v: &Value) -> Vec<Value> {
     v.as_array().cloned().unwrap_or_default()
 }
-pub fn toggle_key(key: &str, composing: bool) -> bool {
-    !composing && ["Enter", " ", "Spacebar"].contains(&key)
+
+/// Toolbar: views (Sesiones, Consumos) and the Servers sheet button.
+pub fn tools_html() -> String {
+    r#"<div class="cs-tools" role="toolbar" aria-label="Barra lateral"><button type="button" data-flat class="tb" data-sidebar-view="sessions" role="tab" aria-selected="true"><span class="lb">Sesiones</span><b class="fs-n" hidden></b></button><button type="button" data-flat class="tb" data-sidebar-view="usage" role="tab" aria-selected="false"><span data-icon="chart" data-size="15"></span><span class="lb">Consumos</span></button><button type="button" data-flat class="tb cs-server-button" data-sheet="srv" aria-label="Servidores" title="Servidores"><span data-icon="server" data-size="15"></span></button></div>"#.into()
 }
-fn toggle_attrs(open: bool) -> String {
-    format!(" role=\"button\" tabindex=\"0\" aria-expanded=\"{open}\"")
+
+/// Sheet header: title and close button.
+pub fn head_html() -> String {
+    "<div class=\"cs-head\"><div class=\"sh-h\"><span class=\"sh-t\"></span><button type=\"button\" data-flat class=\"cls\" data-sheet-close title=\"Cerrar (Esc)\">Cerrar <kbd>Esc</kbd></button></div></div>".into()
 }
-pub fn hits(cmd: &Value, q: &str) -> bool {
-    let hay = [
-        vec![at(cmd, "text").clone(), at(cmd, "description").clone()],
-        arr(at(cmd, "args")),
-    ]
-    .concat()
-    .iter()
-    .map(txt)
-    .collect::<Vec<_>>()
-    .join(" ")
-    .to_lowercase();
-    q.to_lowercase()
-        .split_whitespace()
-        .all(|word| hay.contains(word))
-}
-pub fn row_html(cmd: &Value, opts: &Value) -> String {
-    let build = at(opts, "mode") == "build";
-    let attr = if build { "data-add" } else { "data-cmd" };
-    let kind = if at(opts, "kind") == "shell" {
-        "shell"
-    } else {
-        "pane"
-    };
-    let text = txt(at(cmd, "text"));
-    let fresh = arr(at(cmd, "newArgs"));
-    let mut chips = String::new();
-    for a in arr(at(cmd, "args")) {
-        let argument = txt(&a);
-        let with_arg = format!(
-            "{text}{}{argument}",
-            if text.ends_with(' ') { "" } else { " " }
-        );
-        let new = if fresh.contains(&a) {
-            format!(
-                " class=\"new\" aria-label=\"{} (nuevo)\" title=\"nuevo\"",
-                esc(&argument)
-            )
-        } else {
-            String::new()
-        };
-        chips.push_str(&format!(
-            "<button type=\"button\" data-flat{new} {attr}=\"{}\" data-kind=\"{kind}\">{}</button>",
-            esc(&with_arg),
-            esc(&argument)
-        ));
-    }
-    let add = if build {
-        format!(
-            "<button type=\"button\" data-flat class=\"add\" data-add=\"{}\" data-kind=\"{kind}\">+ cadena</button>",
-            esc(&text)
-        )
-    } else {
-        String::new()
-    };
-    let cls = pick(opts, &["cls"], "");
-    let dis = format!(
-        "{}{}",
-        if yes(at(opts, "dis")) { " dis" } else { "" },
-        if cls.is_empty() {
-            String::new()
-        } else {
-            format!(" {cls}")
-        }
-    );
-    let desc = if yes(at(cmd, "description")) {
-        let desc = esc(&txt(at(cmd, "description")));
-        format!("<small title=\"{desc}\">{desc}</small>")
-    } else {
-        String::new()
-    };
+
+/// Whole sidebar: toolbar, Servers sheet and the view area (Sessions feed or
+/// account usage), which takes all the remaining height.
+pub fn shell_html() -> String {
     format!(
-        "<div class=\"cmd{dis}\" {attr}=\"{}\" data-kind=\"{kind}\"{}><code>{}{}</code>{desc}{}{add}</div>",
-        esc(&text),
-        if hits(cmd, &txt(at(opts, "q"))) {
-            ""
-        } else {
-            " hidden"
-        },
-        esc(&text),
-        if text.ends_with(' ') {
-            "<em>…</em>"
-        } else {
-            ""
-        },
-        if chips.is_empty() {
-            String::new()
-        } else {
-            format!("<span class=\"opts\">{chips}</span>")
-        }
+        "{}<div class=\"sec-cmds cs-sheet\" role=\"dialog\" aria-label=\"Servidores\" hidden>{}<div class=\"cs-srv\"><div class=\"cs-srv-slot\"></div></div></div><div class=\"cs-empty-terms\"><div class=\"cs-feed\" role=\"region\" aria-label=\"Sesiones\"></div><div class=\"et-lim\" hidden><div class=\"cs-credits\"></div><div class=\"et-h\"><b>Uso de tus cuentas</b><small>% usado</small></div><div class=\"cs-limits\"></div></div></div>",
+        tools_html(),
+        head_html()
     )
 }
-pub fn icon(k: &str, size: &str) -> String {
-    let p = match k {
-        "book" => (7, 4),
-        "lens" => (8, 10),
-        "chain" => (2, 11),
-        "bolt" => (8, 0),
-        "fire" => (2, 4),
-        "cast" => (0, 21),
-        "spark" => (5, 0),
-        "bomb" => (12, 10),
-        _ => return String::new(),
-    };
-    format!(
-        "<i class=\"px ic {size}\" style=\"background-position:{}px {}px\"></i>",
-        -p.0 * 32,
-        -p.1 * 32
-    )
-}
-pub fn mono(id: &str) -> String {
-    let logo = logo(id);
-    if logo.is_empty() {
-        format!(
-            "<span class=\"mono logo-tile\">{}</span>",
-            esc(&id
-                .chars()
-                .next()
-                .unwrap_or('?')
-                .to_uppercase()
-                .collect::<String>())
-        )
-    } else {
-        format!(
-            "<span class=\"mono logo-tile\" data-cli=\"{}\">{logo}</span>",
-            esc(id)
-        )
+
+/// Views that exist; anything else falls back to the Sessions feed.
+pub fn view_name(name: &str) -> &'static str {
+    match name {
+        "usage" => "usage",
+        _ => "sessions",
     }
 }
-fn opened(o: &Value, key: &str) -> bool {
-    arr(at(o, "open")).iter().any(|v| v == key)
-}
-fn start_texts(cli: &Value) -> Vec<Value> {
-    let st = at(cli, "start");
-    let mut result = Vec::new();
-    for k in ["rows", "yolo", "shortcuts"] {
-        result.extend(arr(at(st, k)));
-    }
-    for sec in arr(at(st, "sections")) {
-        result.extend(arr(at(&sec, "items")));
-    }
-    result
-}
-fn commands(cli: &Value) -> Vec<Value> {
-    arr(at(cli, "groups"))
-        .iter()
-        .flat_map(|g| arr(at(g, "commands")))
-        .collect()
-}
-fn start_html(cli: &Value, o: &Value) -> String {
-    let st = at(cli, "start");
-    let dis = at(at(cli, "version"), "status") == "missing" || yes(at(o, "noTarget"));
-    let row = |cmd: &Value, cls: &str| {
-        row_html(
-            cmd,
-            &json!({"mode":at(o,"mode"),"kind":"shell","dis":dis,"q":at(o,"q"),"cls":cls}),
-        )
-    };
-    let mut top = String::new();
-    for (k, cls) in [("rows", "bin"), ("yolo", "y"), ("shortcuts", "y")] {
-        for cmd in arr(at(st, k)) {
-            top.push_str(&row(&cmd, cls));
-        }
-    }
-    let mut sections = String::new();
-    for sec in arr(at(st, "sections")) {
-        let key = format!("{}:help:{}", txt(at(cli, "id")), txt(at(&sec, "title")));
-        let open = opened(o, &key);
-        let items = arr(at(&sec, "items"));
-        let hidden = yes(at(o, "q")) && !items.iter().any(|c| hits(c, &txt(at(o, "q"))));
-        sections.push_str(&format!("<div class=\"hsec {}\"{}><div class=\"hsec-h\" data-toggle=\"{}\"{}><span class=\"t\">{}</span><small class=\"n\">{}</small><code class=\"src\">{}</code><span class=\"chev\">{}</span></div><div class=\"srows\">{}</div></div>",if open{"open"}else{"closed"},if hidden{" hidden"}else{""},esc(&key),toggle_attrs(open),esc(&txt(at(&sec,"title"))),items.len(),esc(&pick(st,&["command"],"")),if open{"▾"}else{"▸"},items.iter().map(|c|row(c,"")).collect::<String>()));
-    }
-    format!("<div class=\"start\"><div class=\"srows top\">{top}</div>{sections}</div>")
-}
-fn status_text(status: &str) -> &str {
-    match status {
-        "drift" => "sin verificar · el CLI confirma",
-        "missing" => "no instalado",
-        "unverified" => "sin verificar",
+
+/// Only the Servers sheet remains.
+pub fn sheet_name(name: &str) -> &'static str {
+    match name {
+        "srv" => "srv",
         _ => "",
     }
-}
-pub fn cli_html(cli: &Value, opts: &Value) -> String {
-    let build = at(opts, "mode") == "build";
-    let o = json!({"mode":if build{"build"}else{"run"},"open":at(opts,"open"),"q":txt(at(opts,"q")).trim(),"noCli":!build&&yes(at(opts,"noCli")),"noTarget":!build&&yes(at(opts,"noTarget"))});
-    let v = at(cli, "version");
-    let d = at(cli, "detected");
-    let detected = yes(at(d, "total"));
-    let raw = txt(at(v, "status"));
-    let st0 = if ["ok", "drift", "missing", "unverified"].contains(&raw.as_str()) {
-        raw.as_str()
-    } else {
-        "ok"
-    };
-    let st =
-        if ["drift", "unverified"].contains(&st0) && detected && at(d, "found") == at(d, "total") {
-            "ok"
-        } else {
-            st0
-        };
-    let id = txt(at(cli, "id"));
-    let open = opened(&o, &id);
-    let here = yes(at(opts, "here"));
-    let cls = [
-        "cs-cli",
-        if open { "open" } else { "" },
-        if here { "here" } else { "" },
-        if st != "ok" { st } else { "" },
-    ]
-    .into_iter()
-    .filter(|s| !s.is_empty())
-    .collect::<Vec<_>>()
-    .join(" ");
-    let ver = pick(
-        v,
-        &["installed"],
-        if st == "missing" { "no instalado" } else { "" },
-    );
-    let title = [
-        format!(
-            "catálogo v{}",
-            v.get("pinned")
-                .map(txt)
-                .unwrap_or_else(|| "undefined".into())
-        ),
-        status_text(st0).into(),
-        if detected {
-            format!(
-                "{} de {} comandos presentes en el binario",
-                txt(at(d, "found")),
-                txt(at(d, "total"))
-            )
-        } else {
-            String::new()
-        },
-    ]
-    .into_iter()
-    .filter(|s| !s.is_empty())
-    .collect::<Vec<_>>()
-    .join(" · ");
-    let badge = if here {
-        "<span class=\"badge\">en este pane</span>"
-    } else if st == "missing" {
-        "<span class=\"badge off\">no instalado</span>"
-    } else if st == "ok" {
-        "<span class=\"badge off\">instalado</span>"
-    } else {
-        "<span class=\"badge warn\">sin verificar</span>"
-    };
-    let cmds = commands(cli);
-    let empty = yes(at(&o, "q"))
-        && !start_texts(cli)
-            .iter()
-            .chain(cmds.iter())
-            .any(|c| hits(c, &txt(at(&o, "q"))));
-    let none = if cmds.is_empty() && detected {
-        format!(
-            "<div class=\"note\"{}>ninguno de los {} comandos del catálogo está en este binario</div>",
-            if yes(at(&o, "q")) { " hidden" } else { "" },
-            txt(at(d, "total"))
-        )
-    } else {
-        String::new()
-    };
-    format!(
-        "<div class=\"{cls}\" data-cli=\"{}\"{}><div class=\"cli-h\" data-toggle=\"{}\"{} title=\"{}\">{}<span class=\"nm\">{}</span><small class=\"ver\">{}</small>{badge}<span class=\"chev\">{}</span></div>{}<div class=\"cmds\">{}{none}</div></div>",
-        esc(&id),
-        if empty { " hidden" } else { "" },
-        esc(&id),
-        toggle_attrs(open),
-        esc(&title),
-        mono(&id),
-        esc(&pick(cli, &["label", "id"], "")),
-        esc(&ver),
-        if open { "▾" } else { "▸" },
-        start_html(cli, &o),
-        cmds.iter()
-            .map(|c| row_html(
-                c,
-                &json!({"mode":at(&o,"mode"),"kind":"pane","dis":at(&o,"noCli"),"q":at(&o,"q")})
-            ))
-            .collect::<String>()
-    )
 }
 
 pub fn acc_limits(a: &Value) -> Vec<Value> {
@@ -462,7 +209,7 @@ fn limit_detail(a: &Value, limits: &[Value], cur: &str, pending: bool) -> String
         String::new()
     };
     format!(
-        "<div class=\"det\"><div class=\"kv\">{html}</div><div class=\"acts\">{switch}<button type=\"button\" data-flat data-limit-action=\"analytics\" class=\"\">Ver en Analytics</button></div></div>"
+        "<div class=\"det\"><div class=\"kv\">{html}</div><div class=\"acts\">{switch}</div></div>"
     )
 }
 pub fn limits_html(accounts: &Value, cur: &str, opts: &Value) -> String {
@@ -557,234 +304,6 @@ pub fn limits_html(accounts: &Value, cur: &str, opts: &Value) -> String {
     format!("<div class=\"cs-lim\">{html}</div>")
 }
 
-pub fn same_target(a: &Value, b: &Value) -> bool {
-    yes(a) && yes(b) && at(a, "session") == at(b, "session") && at(a, "pane") == at(b, "pane")
-}
-pub fn here_cli(state: &Value, target: &Value) -> String {
-    if !yes(target)
-        || (yes(at(state, "catalogTarget")) && !same_target(at(state, "catalogTarget"), target))
-    {
-        String::new()
-    } else {
-        txt(at(state, "cliInPane"))
-    }
-}
-#[derive(Debug, PartialEq, Eq)]
-pub enum Admission {
-    Accepted,
-    Busy,
-    NoTarget,
-    Controls,
-    NoCli,
-}
-pub fn admit(typing: bool, target: &Value, text: &str, kind: &str, here: &str) -> Admission {
-    if typing {
-        return Admission::Busy;
-    }
-    if !yes(at(target, "session")) || !yes(at(target, "pane")) {
-        return Admission::NoTarget;
-    }
-    if text.is_empty() || has_control(text) {
-        return Admission::Controls;
-    }
-    if kind == "pane" && here.is_empty() {
-        return Admission::NoCli;
-    }
-    Admission::Accepted
-}
-pub fn has_control(s: &str) -> bool {
-    s.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
-}
-pub fn launch_cli(catalog: &Value, text: &str) -> String {
-    let mut remaining = text;
-    while let Some(space) = remaining.find(char::is_whitespace) {
-        let word = remaining.get(..space).unwrap_or_default();
-        let assignment = word.split_once('=').is_some_and(|(key, value)| {
-            !key.is_empty()
-                && !value.is_empty()
-                && key.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
-        });
-        if !assignment {
-            break;
-        }
-        remaining = remaining
-            .get(space..)
-            .unwrap_or_default()
-            .trim_start_matches(char::is_whitespace);
-    }
-    let exe = remaining.split(' ').next().unwrap_or_default();
-    arr(at(catalog, "clis"))
-        .iter()
-        .find(|c| at(c, "binary") == exe)
-        .map(|c| txt(at(c, "id")))
-        .unwrap_or_default()
-}
-pub fn short_term(s: &str) -> String {
-    let p = s.split('-').collect::<Vec<_>>();
-    if p.len() == 7
-        && p.first() == Some(&"T")
-        && p.iter()
-            .skip(1)
-            .zip([4, 2, 2, 2, 2, 2])
-            .all(|(s, n)| s.len() == n && s.bytes().all(|b| b.is_ascii_digit()))
-    {
-        format!(
-            "{}:{}",
-            p.get(4).copied().unwrap_or_default(),
-            p.get(5).copied().unwrap_or_default()
-        )
-    } else {
-        s.into()
-    }
-}
-pub fn terminal_selected(t: &Value, x: &Value) -> bool {
-    yes(t)
-        && if yes(at(t, "paneKey")) && yes(at(x, "paneKey")) {
-            at(t, "paneKey") == at(x, "paneKey")
-        } else {
-            same_target(t, x)
-        }
-}
-pub fn term_tabs(list: &Value, target: &Value, current: &str, arm: &str) -> Value {
-    json!(arr(list).iter().map(|x|{let label=pick(x,&["label","tabId"],"");let id=txt(at(x,"tabId"));let selected=terminal_selected(target,x);json!({"id":id,"label":format!("{}{}",short_term(&label),if selected{" · destino"}else{""}),"title":label,"on":at(x,"tabId")==current,"sel":selected,"closing":arm==id})}).collect::<Vec<_>>())
-}
-pub fn terms_html(list: &Value, target: &Value, current: &str, arm: &str) -> String {
-    arr(list).iter().map(|x|{let id=txt(at(x,"tabId"));let on=at(x,"tabId")==current;let selected=terminal_selected(target,x);let armed=arm==id;let label=pick(x,&["label","tabId"],"");let short=short_term(&label);let cls=format!("{}{}",if on{" on"}else{""},if selected{" sel"}else{""});format!("<span class=\"tw{cls}\"><button type=\"button\" data-flat class=\"t{cls}\" data-focus-term=\"{}\" title=\"{}\"><span class=\"dot\" aria-hidden=\"true\"></span>{}{}</button><button type=\"button\" data-flat class=\"tx{}\" data-close-term=\"{}\" aria-label=\"Cerrar {}\" title=\"{}\">{}</button></span>",esc(&id),esc(&label),esc(&short),if selected{" · destino"}else{""},if armed{" armed"}else{""},esc(&id),esc(&short),if armed{"Otro clic la cierra"}else{"Cerrar esta terminal"},if armed{"¿Cerrar?"}else{"✕"})}).collect()
-}
-pub const CHEVRON: &str = "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M6 9l6 6 6-6\"/></svg>";
-pub fn toggle_html(hidden: bool, has_terms: bool) -> String {
-    if !has_terms {
-        return String::new();
-    }
-    let label = if hidden {
-        "Mostrar las terminales"
-    } else {
-        "Esconder las terminales"
-    };
-    format!(
-        "<button type=\"button\" data-flat class=\"tog\" data-terms-toggle aria-pressed=\"{}\" aria-label=\"{label}\" title=\"{label}\">{CHEVRON}</button>",
-        !hidden
-    )
-}
-pub fn saved_html(chains: &Value) -> String {
-    let items=arr(chains).iter().map(|c|if yes(at(c,"error")){format!("<div class=\"cs-saved-item it error\"><span class=\"nm\">{}</span><small>{}</small></div>",esc(&pick(c,&["name","slug"],"")),esc(&txt(at(c,"error"))))}else{format!("<div class=\"cs-saved-item it\" data-run=\"{}\"><span class=\"nm\">{}</span><small>{} pasos</small><button type=\"button\" data-flat class=\"run\">{}Correr</button></div>",esc(&txt(at(c,"slug"))),esc(&pick(c,&["name","slug"],"")),arr(at(c,"steps")).len(),icon("cast","s20"))}).collect::<String>();
-    let add = format!(
-        "<button type=\"button\" data-flat class=\"cs-chains chains-btn\" data-open-builder>{}Nueva cadena</button>",
-        icon("chain", "s20")
-    );
-    if items.is_empty() {
-        format!(
-            "<div class=\"cs-empty-chains\"><b>Aún no hay cadenas guardadas</b>Una cadena escribe varios pasos seguidos en un pane, por ejemplo «/compact» y luego «continúa».{add}</div>"
-        )
-    } else {
-        format!(
-            "<div class=\"cs-saved saved open\">{items}</div><div class=\"cs-chain-add\">{add}</div>"
-        )
-    }
-}
-pub fn runner_html(run: &Value) -> String {
-    if !yes(run) {
-        return String::new();
-    }
-    let steps = arr(at(run, "steps"));
-    let step = at(run, "step").as_u64().unwrap_or(0) as usize;
-    let done = step >= steps.len();
-    let step_html=steps.iter().enumerate().map(|(i,s)|format!("<div class=\"step{}{}\" data-kind=\"{}\"><span class=\"k\">{}</span><code>{}</code></div>",if i<step{" done"}else{""},if i==step{" cur"}else{""},esc(&txt(at(s,"kind"))),esc(&txt(at(s,"kind"))),esc(&txt(at(s,"text"))))).collect::<String>();
-    let target = at(run, "target");
-    let title = pick(
-        target,
-        &["title"],
-        &format!("{} {}", txt(at(target, "session")), txt(at(target, "pane"))),
-    );
-    let error = if yes(at(run, "error")) {
-        format!("<div class=\"r-err\">{}</div>", esc(&txt(at(run, "error"))))
-    } else {
-        String::new()
-    };
-    let actions = if done {
-        String::new()
-    } else {
-        format!(
-            "<div class=\"acts\"><button type=\"button\" data-flat class=\"cs-next primary\" data-run-next>{}{}</button><small>Se escribe sin Enter; tú das Enter.</small></div>",
-            icon("cast", "s20"),
-            if step == 0 {
-                "Escribir paso 1"
-            } else {
-                "Siguiente"
-            }
-        )
-    };
-    format!(
-        "<div class=\"cs-runner runner{}\"><div class=\"r-h\">{}{}<small>{}</small><span class=\"right\"><button type=\"button\" data-flat class=\"ghost\" data-run-stop>{}</button></span></div><div class=\"r-t\">en {}</div><div class=\"steps\">{step_html}</div>{error}{actions}</div>",
-        if done { " done" } else { "" },
-        if done {
-            "<i class=\"px chest\"></i>"
-        } else {
-            "<i class=\"px hour sm\"></i>"
-        },
-        esc(&txt(at(run, "name"))),
-        if done {
-            "completa".into()
-        } else {
-            format!("paso {} de {}", step + 1, steps.len())
-        },
-        if done { "Cerrar" } else { "Parar" },
-        esc(&title)
-    )
-}
-pub fn catalog_pill(catalog: &Value, here: &str) -> String {
-    let cli = arr(at(catalog, "clis"))
-        .into_iter()
-        .find(|c| at(c, "id") == here);
-    let bad = cli.as_ref().is_some_and(|c| {
-        let status = at(at(c, "version"), "status");
-        let d = at(c, "detected");
-        status != "ok"
-            && status != "missing"
-            && !(yes(at(d, "total")) && at(d, "found") == at(d, "total"))
-    });
-    if bad {
-        format!(
-            "<span class=\"pill warn\">{}cambio de versión</span>",
-            icon("bomb", "s20")
-        )
-    } else {
-        format!(
-            "<span class=\"pill\">{}catálogo ok</span>",
-            icon("spark", "s20")
-        )
-    }
-}
-pub fn tools_html() -> String {
-    r#"<div class="cs-tools" role="toolbar" aria-label="Barra lateral"><button type="button" data-flat class="tb" data-sidebar-view="files" role="tab" aria-selected="true"><span data-icon="folder" data-size="15"></span><span class="lb">Archivos</span></button><button type="button" data-flat class="tb" data-sidebar-view="usage" role="tab" aria-selected="false"><span data-icon="chart" data-size="15"></span><span class="lb">Consumos</span></button><button type="button" data-flat class="tb" data-sidebar-view="sessions" role="tab" aria-selected="false" hidden><span class="lb">Sesiones</span><b class="fs-n" hidden></b></button><details class="cs-more"><summary title="Herramientas" aria-label="Herramientas">⋯</summary><div><button data-flat data-sheet="cmds">Comandos</button><button data-flat data-sheet="chains">Cadenas <small class="n"></small></button></div></details><button type="button" data-flat class="tb cs-server-button" data-sheet="srv" aria-label="Servidores" title="Servidores"><span data-icon="server" data-size="15"></span></button></div>"#.into()
-}
-pub fn head_html(title: &str, pill: &str, q: &str) -> String {
-    format!(
-        "<div class=\"cs-head\"><div class=\"sh-h\"><span class=\"sh-t\"></span><button type=\"button\" data-flat class=\"cls\" data-sheet-close title=\"Cerrar (Esc)\">Cerrar <kbd>Esc</kbd></button></div><div class=\"cs-dest\">destino: <span class=\"cs-target\">{}</span><span class=\"cs-pill\">{pill}</span></div><div class=\"search\">{}<input class=\"cs-search\" type=\"search\" placeholder=\"Buscar en todos los CLI…\" value=\"{}\"></div></div>",
-        esc(title),
-        icon("lens", ""),
-        esc(q)
-    )
-}
-pub fn shell_html(head: &str, body: &str, chains: &str) -> String {
-    format!(
-        "{}<div class=\"sec-cmds cs-sheet\" role=\"dialog\" aria-label=\"Comandos, cadenas y servidores\">{head}<div class=\"cs-body\">{body}</div><div class=\"cs-chains-body\">{chains}</div><div class=\"cs-srv\"><div class=\"cs-srv-slot\"></div></div></div><div class=\"cs-empty-terms\"><div class=\"cs-explorer\"></div><div class=\"cs-feed\" role=\"region\" aria-label=\"Sesiones\" hidden></div><div class=\"et-lim\" hidden><div class=\"cs-credits\"></div><div class=\"et-h\"><b>Uso de tus cuentas</b><small>% usado</small></div><div class=\"cs-limits\"></div></div><div class=\"et-foot\"><span class=\"et-t\"></span><button type=\"button\" data-flat class=\"et-go\"></button></div></div><div class=\"cs-footer\"><span>ComandOS</span></div><div class=\"sec-terms\"><div class=\"cs-terms tt\" role=\"group\" aria-label=\"Terminales de la barra\"><button type=\"button\" data-flat class=\"arr\" data-tscroll=\"-1\" aria-label=\"Terminales anteriores\" hidden>‹</button><div class=\"tabs\"></div><button type=\"button\" data-flat class=\"arr\" data-tscroll=\"1\" aria-label=\"Más terminales\" hidden>›</button><button type=\"button\" data-flat class=\"t plus\" data-new-term aria-label=\"Nueva terminal\" title=\"Nueva terminal\">+</button><div class=\"tog-slot\"></div></div><div class=\"mini\"></div></div>",
-        tools_html()
-    )
-}
-pub fn empty_terms(
-    count: usize,
-    hidden: bool,
-) -> Option<(&'static str, &'static str, &'static str)> {
-    if count == 0 {
-        Some(("Sin terminales en la barra", "+ Nueva terminal", "new"))
-    } else if hidden {
-        Some(("", "Mostrar terminal", "toggle"))
-    } else {
-        None
-    }
-}
-
 pub fn logo(id: &str) -> &'static str {
     match id {
         "claude" => {
@@ -846,66 +365,61 @@ fn fixed(n: f64, places: usize) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     #[test]
-    fn original_renderer_contracts() {
-        let cases: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/command-sidebar.json")).unwrap();
-        for case in cases.as_array().unwrap() {
-            let args = at(case, "args");
-            let arg = |n| args.get(n).unwrap_or(&Value::Null);
-            let got = match at(case, "name").as_str().unwrap() {
-                "rowHTML" => row_html(arg(0), arg(1)),
-                "cliHTML" => cli_html(arg(0), arg(1)),
-                "limitsHTML" => limits_html(arg(0), &txt(arg(1)), arg(2)),
-                name => panic!("unknown renderer {name}"),
-            };
-            assert_eq!(
-                got,
-                txt(at(case, "expected")),
-                "{}: {}",
-                txt(at(case, "name")),
-                args
-            );
+    fn shell_keeps_sessions_usage_and_servers_only() {
+        let html = shell_html();
+        for kept in [
+            "data-sidebar-view=\"sessions\"",
+            "data-sidebar-view=\"usage\"",
+            "Consumos",
+            "data-sheet=\"srv\"",
+            "cs-srv-slot",
+            "cs-feed",
+            "cs-limits",
+            "cs-credits",
+            "Uso de tus cuentas",
+        ] {
+            assert!(html.contains(kept), "{kept}");
+        }
+        for gone in [
+            "data-sidebar-view=\"files\"",
+            "Archivos",
+            "cs-explorer",
+            "cs-more",
+            "data-sheet=\"cmds\"",
+            "data-sheet=\"chains\"",
+            "cs-footer",
+            "sec-terms",
+            "cs-terms",
+            "class=\"mini\"",
+            "et-foot",
+            "cs-search",
+        ] {
+            assert!(!html.contains(gone), "{gone}");
         }
     }
     #[test]
-    fn input_admission_serializes_typing_and_never_allows_enter() {
-        let t = json!({"session":"demo","pane":"%2"});
-        assert_eq!(admit(true, &t, "/model", "pane", "codex"), Admission::Busy);
-        assert_eq!(
-            admit(false, &Value::Null, "codex", "shell", ""),
-            Admission::NoTarget
-        );
-        for text in ["", "a\nb", "\r", "x\u{7f}", "a\u{0}"] {
-            assert_eq!(admit(false, &t, text, "shell", ""), Admission::Controls);
-        }
-        assert_eq!(admit(false, &t, "/model", "pane", ""), Admission::NoCli);
-        assert_eq!(
-            admit(false, &t, "codex --help", "shell", ""),
-            Admission::Accepted
-        );
-        assert_eq!(
-            admit(false, &t, "/model ", "pane", "codex"),
-            Admission::Accepted
-        );
+    fn removed_views_and_sheets_fall_back() {
+        assert_eq!(view_name("usage"), "usage");
+        assert_eq!(view_name("files"), "sessions");
+        assert_eq!(view_name(""), "sessions");
+        assert_eq!(sheet_name("srv"), "srv");
+        assert_eq!(sheet_name("cmds"), "");
+        assert_eq!(sheet_name("chains"), "");
     }
     #[test]
-    fn catalog_cli_is_only_valid_for_requested_target() {
-        let state = json!({"catalogTarget":{"session":"demo","pane":"%2"},"cliInPane":"codex"});
-        assert_eq!(
-            here_cli(&state, &json!({"session":"demo","pane":"%2"})),
-            "codex"
+    fn quota_cards_never_link_to_the_retired_analytics_modal() {
+        let html = limits_html(
+            &json!([{"id":"claude:main","provider":"claude","cli":"Claude","alias":"main","week":20}]),
+            "claude:other",
+            &json!({"openId":"claude:main"}),
         );
-        assert_eq!(here_cli(&state, &json!({"session":"demo","pane":"%9"})), "");
-        assert_eq!(here_cli(&state, &Value::Null), "");
-        let cat =
-            json!({"clis":[{"id":"codex","binary":"codex"},{"id":"claude","binary":"claude"}]});
-        assert_eq!(launch_cli(&cat, "FOO=x BAR=y codex --help"), "codex");
-        assert_eq!(launch_cli(&cat, "foo=x codex --help"), "");
-        assert_eq!(launch_cli(&cat, "/codex"), "");
+        assert!(html.contains("data-limit-action=\"switch\""));
+        assert!(!html.contains("analytics"));
+        assert!(!html.contains("Analytics"));
     }
     #[test]
     fn led_measurements_do_not_coerce_strings_or_invent_quotas() {
@@ -950,63 +464,5 @@ mod tests {
             &json!({"id":"claude:main","provider":"claude","measured":{"tokens":200}}),
             "claude:other"
         ));
-    }
-    #[test]
-    fn terminal_tabs_keep_native_data_and_stable_pane_identity() {
-        let list = json!([{"tabId":"q1","paneKey":"term-q1","session":"q1","pane":"%7","label":"T-2026-10-01-09-15-00"}]);
-        let t = json!({"session":"different","pane":"%9","paneKey":"term-q1"});
-        assert_eq!(
-            term_tabs(&list, &t, "q1", "q1"),
-            json!([{"id":"q1","label":"09:15 · destino","title":"T-2026-10-01-09-15-00","on":true,"sel":true,"closing":true}])
-        );
-        let html = terms_html(&list, &t, "q1", "q1");
-        assert!(html.contains("¿Cerrar?"));
-        assert!(html.contains("Otro clic la cierra"));
-        assert!(html.contains("class=\"tw on sel\""));
-        assert_eq!(short_term("Terminal <14:32>"), "Terminal <14:32>");
-        assert_eq!(short_term("T-2026-10-01-9-15-00"), "T-2026-10-01-9-15-00");
-        assert_eq!(
-            empty_terms(0, true),
-            Some(("Sin terminales en la barra", "+ Nueva terminal", "new"))
-        );
-        assert_eq!(
-            empty_terms(1, true),
-            Some(("", "Mostrar terminal", "toggle"))
-        );
-        assert!(empty_terms(1, false).is_none());
-    }
-    #[test]
-    fn runner_renders_error_current_step_and_done_without_automatic_advance() {
-        let mut run = json!({"name":"<chain>","step":0,"steps":[{"kind":"shell","text":"codex"},{"kind":"pane","text":"/model"}],"target":{"session":"demo","pane":"%2"},"error":"pane gone"});
-        let first = runner_html(&run);
-        assert!(first.contains("paso 1 de 2"));
-        assert!(first.contains("Escribir paso 1"));
-        assert!(first.contains("en demo %2"));
-        assert!(first.contains("pane gone"));
-        if let Some(o) = run.as_object_mut() {
-            o.insert("step".into(), json!(2));
-        }
-        let done = runner_html(&run);
-        assert!(done.contains("runner done"));
-        assert!(done.contains("completa"));
-        assert!(!done.contains("data-run-next"));
-        let broken = saved_html(&json!([{"slug":"bad","name":"Bad","error":"Paso inválido"}]));
-        assert!(broken.contains("Paso inválido"));
-        assert!(!broken.contains("data-run="));
-    }
-    #[test]
-    fn keyboard_and_search_respect_composition_and_all_query_words() {
-        for key in ["Enter", " ", "Spacebar"] {
-            assert!(toggle_key(key, false));
-            assert!(!toggle_key(key, true));
-        }
-        assert!(!toggle_key("a", false));
-        let cmd = json!({"text":"/model ","description":"change model","args":["claude-fable"]});
-        assert!(hits(&cmd, " CLAUDE   FABLE "));
-        assert!(!hits(&cmd, "claude missing"));
-        let html = row_html(&cmd, &json!({"q":"missing","mode":"build"}));
-        assert!(html.contains(" hidden"));
-        assert!(html.contains("data-add="));
-        assert!(!html.contains("data-cmd="));
     }
 }

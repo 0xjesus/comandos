@@ -8,39 +8,19 @@
   "id": "barra-de-comandos",
   "exports": [
     "isQuickTermSession",
-    "SBT",
-    "selectSidebarTerm",
-    "sidebarTermTarget",
-    "sbTermFrames",
-    "sbNativeMsg",
-    "sidebarTermMount",
-    "sidebarKillTerm",
     "activePaneTarget",
-    "quickTermEntries",
     "openTabAnywhere",
-    "sidebarQuickTerminal",
     "quickTerminalInstance",
-    "CS",
-    "refreshCommandSidebar",
-    "CS_CLIS",
+    "mountCommandSidebar",
+    "commandSidebar",
     "SB_LIMITS",
     "sidebarLimitsCur",
     "sidebarLimitsPaint",
-    "sidebarLimits",
-    "syncCommandSidebar",
-    "mountCommandSidebar",
-    "mountChainPage",
-    "mountChainBuilder",
-    "sidebarTermAction",
-    "sidebarTermFocused",
-    "sidebarQuickTerm",
-    "commandSidebar",
-    "chainBuilder"
+    "sidebarLimits"
   ],
   "deps": [
     "app-combinada",
     "command-sidebar",
-    "chain-builder",
     "quick-terminal"
   ]
 }

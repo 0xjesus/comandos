@@ -38,7 +38,6 @@ pub fn bundle(manifest: &Manifest, web_dir: &Path) -> Result<NativePage, String>
         "/comandos_web_content_bg.wasm",
         "/workspace.css",
         "/buttons.css",
-        "/analytics.css",
         "/manifest.webmanifest",
         "/icon-192.png",
         "/icon-512.png",
@@ -97,13 +96,6 @@ pub fn admit(
             return Err(format!("native component not selected on: {id}"));
         }
         for dep in &e.deps {
-            // The legacy renderer/controller metadata is mutually atomic for
-            // rollback. Native mount_render only publishes its factory; mount
-            // of the controller is the actual consumer, so register it last.
-            // Both remain mandatory members of the compiled 48-component page.
-            if id == "analytics-render" && dep == "analytics" {
-                continue;
-            }
             visit(dep, entries, sel, visiting, visited, ids)?;
         }
         visiting.remove(id);

@@ -189,6 +189,7 @@
   /* Menú «Cuenta» (grill 2-oct): cada cuenta con 5 h, semana y semana por modelo. */
   #pane-chrome .pc-acct { position:absolute; z-index:6; width:300px; max-width:calc(100% - 16px); box-sizing:border-box; pointer-events:auto;
     background:var(--term-panel); border:1px solid var(--term-line2); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,.55); padding:8px; font:13px var(--sans); color:var(--term-text); }
+  #pane-chrome .pc-acct { max-height:72vh; overflow-y:auto; }
   #pane-chrome .pc-acct h4 { margin:2px 6px 8px; font:700 10px var(--mono); letter-spacing:.12em; color:var(--term-dim); }
   #pane-chrome .pc-acct .acc { display:grid; grid-template-columns:1fr auto; gap:4px 10px; width:100%; text-align:left; padding:9px 10px; border-radius:9px;
     border:1px solid transparent; background:none; color:var(--term-text); cursor:pointer; font:13px var(--sans); }
@@ -203,6 +204,14 @@
   #pane-chrome .pc-acct .bar i.full { background:#f87171; }
   #pane-chrome .pc-acct .foot { margin:8px 6px 2px; font-size:12px; color:var(--term-dim); }
   #pane-chrome .pc-acct .msg { margin:8px 6px 2px; font-size:12px; color:var(--term-text); }
+  #pane-chrome .pc-acct .acm { display:grid; gap:6px; padding:9px 10px; border-radius:9px; border:1px solid var(--term-line); margin:0 0 6px; }
+  #pane-chrome .pc-acct .acm > span { font-size:12px; color:var(--term-dim); overflow-wrap:anywhere; }
+  #pane-chrome .pc-acct .acm-row { display:flex; gap:6px; flex-wrap:wrap; }
+  #pane-chrome .pc-acct .acm input { flex:1 1 120px; min-width:0; padding:7px 8px; border-radius:7px; border:1px solid var(--term-line2); background:var(--term-panel2); color:var(--term-text); font:13px var(--mono); }
+  #pane-chrome .pc-acct .acm button, #pane-chrome .pc-acct .acm-back { padding:7px 10px; min-height:34px; border-radius:7px; border:1px solid var(--term-line2); background:var(--term-panel2); color:var(--term-text); font:600 12px var(--sans); cursor:pointer; }
+  #pane-chrome .pc-acct .acm button.danger { color:#f87171; border-color:color-mix(in srgb, #f87171 45%, transparent); }
+  #pane-chrome .pc-acct .acm button:disabled, #pane-chrome .pc-acct .acm-back:disabled { opacity:.5; cursor:not-allowed; }
+  #pane-chrome .pc-acct .acm-back { width:100%; margin-top:6px; }
   #pane-chrome .pc-acct .msg.err { color:#f87171; }
   #pane-chrome .ai-dot { display:block; flex:none; position:relative; }
   #pane-chrome .ai-dot::before { content:""; position:absolute; inset:calc(50% - 4px); width:8px; height:8px; border-radius:50%; background:var(--ai-c); }

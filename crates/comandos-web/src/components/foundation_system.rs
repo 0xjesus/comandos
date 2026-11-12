@@ -84,14 +84,6 @@ mod web {
     fn notice_error(e: JsValue) -> Result<(), JsValue> {
         invoke(&global("toast"), &[get(&e, "message"), true.into()]).map(|_| ())
     }
-    fn render_notices() -> Result<(), JsValue> {
-        let instance = get(&global("ComandosNotices"), "instance");
-        let render = get(&instance, "render");
-        if !render.is_null() && !render.is_undefined() {
-            call(&instance, "render", &[])?;
-        }
-        Ok(())
-    }
     fn load_conf() -> JsValue {
         let fetched = invoke(&global("api"), &["/conf".into()]);
         promise(async move {
@@ -102,7 +94,6 @@ mod web {
                     "DESKTOP_POPUPS",
                     &(get(&conf, "DESKTOP_NOTIFY") != JsValue::from_str("0")).into(),
                 )?;
-                render_notices()?;
                 for b in all(&doc(), ".cfg[data-key]") {
                     let key = string(&get(&get(&b, "dataset"), "key"));
                     let enabled = get(&conf, &key) != JsValue::from_str("0");
@@ -272,7 +263,6 @@ mod web {
                                 == JsValue::from_str("DESKTOP_NOTIFY")
                             {
                                 set(&js_sys::global(), "DESKTOP_POPUPS", &enabled.into())?;
-                                render_notices()?;
                             }
                             classes(&el, "on", enabled);
                             bool_attr(&el, "aria-checked", enabled);
@@ -312,19 +302,8 @@ mod web {
         )
         .map(|_| ())
     }
-    fn shown(el: &JsValue, panel: &str) -> bool {
-        if panel == "pomo" {
-            !on(el, "hidden")
-        } else {
-            on(el, "open")
-        }
-    }
-    fn shut(el: &JsValue, panel: &str) {
-        if panel == "pomo" {
-            classes(el, "hidden", true);
-        } else {
-            classes(el, "open", false);
-        }
+    fn shown(el: &JsValue) -> bool {
+        on(el, "open")
     }
     fn observe(el: JsValue, f: JsValue) -> Result<(), JsValue> {
         let args = Array::new();
@@ -351,13 +330,6 @@ mod web {
             return Ok(());
         }
         match panel.as_str() {
-            "usage" => {
-                invoke(
-                    &global("openAnalytics"),
-                    &[or(get(&request, "tab"), "".into())],
-                )?;
-            }
-            "pomo" => click("#btn-pomo")?,
             "servers" => {
                 invoke(&global("toggleSshManager"), &[])?;
             }
@@ -378,7 +350,7 @@ mod web {
         observe(
             el,
             function(move |_| {
-                if !shown(&watched, &panel) {
+                if !shown(&watched) {
                     let _ = native_message(from_json(&serde_json::json!({"chainModal":"close"}))?);
                 }
                 Ok(JsValue::UNDEFINED)
@@ -395,10 +367,6 @@ mod web {
         if !truthy(&invoke(&global("inApp"), &[])?) || truthy(&global("ONLY_PANEL")) {
             return Ok(());
         }
-        let args = Array::new();
-        args.push(&get(&global("location"), "search"));
-        let params = Reflect::construct(&global("URLSearchParams").dyn_into::<Function>()?, &args)?;
-        let anwin = truthy(&call(&params, "has", &["anwin".into()])?);
         let panels = js_sys::Object::entries(&global("CENTER_PANELS").into());
         for row in panels.iter() {
             let pair = Array::from(&row);
@@ -411,14 +379,7 @@ mod web {
             observe(
                 el,
                 function(move |_| {
-                    if !shown(&watched, &panel) {
-                        return Ok(JsValue::UNDEFINED);
-                    }
-                    if panel == "usage" && anwin {
-                        shut(&watched, &panel);
-                        native_message(from_json(
-                            &serde_json::json!({"headerAction":"analytics"}),
-                        )?)?;
+                    if !shown(&watched) {
                         return Ok(JsValue::UNDEFINED);
                     }
                     let tab = if panel == "settings" {
@@ -443,7 +404,7 @@ mod web {
                     );
                     if saved.is_ok() {
                         native_message(from_json(&serde_json::json!({"headerAction":"chains"}))?)?;
-                        shut(&watched, &panel);
+                        classes(&watched, "open", false);
                     }
                     Ok(JsValue::UNDEFINED)
                 }),

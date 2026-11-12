@@ -14,7 +14,6 @@
       "script:workspace-dock.js",
       "script:quick-terminal.js",
       "script:command-sidebar.js",
-      "script:chain-builder.js",
       "region:prelude",
       "region:i18n",
       "region:app-nativa",
@@ -44,18 +43,14 @@
       "region:snippets",
       "region:funciones-de-ui-globales",
       "region:analytics",
-      "script:analytics-render.js",
-      "script:analytics.js",
       "script:extensions.js",
       "script:workspace.js",
       "script:work-marks.js",
       "script:ui-sounds.js",
-      "script:pomodoro.js",
       "script:vendor/markdown-it-15.0.2.umd.min.js",
       "script:vendor/purify-3.4.16.min.js",
       "script:news-reader.js",
       "script:push-settings.js",
-      "script:notifications.js",
       "region:tail"
     ],
     "term.html": [
@@ -281,47 +276,6 @@
       "message_types": [],
       "intervals_ms": [],
       "strings": 543,
-      "warnings": []
-    },
-    {
-      "id": "script:chain-builder.js",
-      "kind": "script",
-      "component": "chain-builder",
-      "source": "dash/chain-builder.js",
-      "pages": [
-        "index.html"
-      ],
-      "script_index": null,
-      "marker_start": null,
-      "marker_end": null,
-      "sha256": "2fb0e5aaaeae4af5941d03e5cf187837cda0a093e881fd2f21c4e6274a1d962f",
-      "lines": 287,
-      "line_start": 1,
-      "defines": [
-        "ComandosChainBuilder"
-      ],
-      "define_kinds": {
-        "ComandosChainBuilder": "window"
-      },
-      "uses_globals": [
-        "ComandosCommandSidebar"
-      ],
-      "mutates_globals": [],
-      "parent_refs": [],
-      "patches": [],
-      "child_refs": [],
-      "child_writes": [],
-      "child_dom_access": false,
-      "fallbacks": [],
-      "dom_ids": [],
-      "routes": [
-        "/chains"
-      ],
-      "storage_keys": [],
-      "post_messages": [],
-      "message_types": [],
-      "intervals_ms": [],
-      "strings": 136,
       "warnings": []
     },
     {
@@ -2686,82 +2640,6 @@
       "warnings": []
     },
     {
-      "id": "script:analytics-render.js",
-      "kind": "script",
-      "component": "analytics-render",
-      "source": "dash/analytics-render.js",
-      "pages": [
-        "index.html"
-      ],
-      "script_index": null,
-      "marker_start": null,
-      "marker_end": null,
-      "sha256": "f3025e42ef03795c768f2cebd55aed6b0230fbee2fe2eb0d6aeca04dc95a83fa",
-      "lines": 195,
-      "line_start": 1,
-      "defines": [
-        "AnalyticsRender"
-      ],
-      "define_kinds": {
-        "AnalyticsRender": "window"
-      },
-      "uses_globals": [],
-      "mutates_globals": [],
-      "parent_refs": [],
-      "patches": [],
-      "child_refs": [],
-      "child_writes": [],
-      "child_dom_access": false,
-      "fallbacks": [],
-      "dom_ids": [],
-      "routes": [],
-      "storage_keys": [],
-      "post_messages": [],
-      "message_types": [],
-      "intervals_ms": [],
-      "strings": 346,
-      "warnings": []
-    },
-    {
-      "id": "script:analytics.js",
-      "kind": "script",
-      "component": "analytics",
-      "source": "dash/analytics.js",
-      "pages": [
-        "index.html"
-      ],
-      "script_index": null,
-      "marker_start": null,
-      "marker_end": null,
-      "sha256": "d76f554af3e4abeffd3560d935c8d605f3460807b0bac34740bb912350604851",
-      "lines": 135,
-      "line_start": 1,
-      "defines": [
-        "Analytics"
-      ],
-      "define_kinds": {
-        "Analytics": "window"
-      },
-      "uses_globals": [
-        "AnalyticsRender"
-      ],
-      "mutates_globals": [],
-      "parent_refs": [],
-      "patches": [],
-      "child_refs": [],
-      "child_writes": [],
-      "child_dom_access": false,
-      "fallbacks": [],
-      "dom_ids": [],
-      "routes": [],
-      "storage_keys": [],
-      "post_messages": [],
-      "message_types": [],
-      "intervals_ms": [],
-      "strings": 82,
-      "warnings": []
-    },
-    {
       "id": "script:extensions.js",
       "kind": "script",
       "component": "extensions",
@@ -2990,65 +2868,6 @@
       "warnings": []
     },
     {
-      "id": "script:pomodoro.js",
-      "kind": "script",
-      "component": "pomodoro",
-      "source": "dash/pomodoro.js",
-      "pages": [
-        "index.html"
-      ],
-      "script_index": null,
-      "marker_start": null,
-      "marker_end": null,
-      "sha256": "a292fab7863afb507620d80010f9d6527d483fbc9a87b495199b04c847ecee84",
-      "lines": 662,
-      "line_start": 1,
-      "defines": [
-        "ComandosPomodoro",
-        "ComandosPomodoroProgress",
-        "pomoRender"
-      ],
-      "define_kinds": {
-        "ComandosPomodoro": "window",
-        "ComandosPomodoroProgress": "window",
-        "pomoRender": "window"
-      },
-      "uses_globals": [
-        "S",
-        "authToken",
-        "mdEsc",
-        "openAnalyticsTab",
-        "pickSel",
-        "svg",
-        "tf",
-        "toast",
-        "uiSounds"
-      ],
-      "mutates_globals": [],
-      "parent_refs": [],
-      "patches": [],
-      "child_refs": [],
-      "child_writes": [],
-      "child_dom_access": false,
-      "fallbacks": [],
-      "dom_ids": [
-        "btn-pomo",
-        "pomo-panel"
-      ],
-      "routes": [],
-      "storage_keys": [
-        "comandos.deviceId"
-      ],
-      "post_messages": [],
-      "message_types": [],
-      "intervals_ms": [
-        1000,
-        110
-      ],
-      "strings": 522,
-      "warnings": []
-    },
-    {
       "id": "script:vendor/markdown-it-15.0.2.umd.min.js",
       "kind": "script",
       "component": "vendor-markdown-it",
@@ -3222,48 +3041,6 @@
       ],
       "intervals_ms": [],
       "strings": 96,
-      "warnings": []
-    },
-    {
-      "id": "script:notifications.js",
-      "kind": "script",
-      "component": "notifications",
-      "source": "dash/notifications.js",
-      "pages": [
-        "index.html"
-      ],
-      "script_index": null,
-      "marker_start": null,
-      "marker_end": null,
-      "sha256": "5d0413b2f96eb6e794d5c3c87d64c4ffbb584bc45a50535a99804d39c23e2db7",
-      "lines": 852,
-      "line_start": 1,
-      "defines": [
-        "ComandosNotices"
-      ],
-      "define_kinds": {
-        "ComandosNotices": "window"
-      },
-      "uses_globals": [
-        "uiSounds"
-      ],
-      "mutates_globals": [],
-      "parent_refs": [],
-      "patches": [],
-      "child_refs": [],
-      "child_writes": [],
-      "child_dom_access": false,
-      "fallbacks": [],
-      "dom_ids": [
-        "panes",
-        "notice-settings"
-      ],
-      "routes": [],
-      "storage_keys": [],
-      "post_messages": [],
-      "message_types": [],
-      "intervals_ms": [],
-      "strings": 382,
       "warnings": []
     },
     {
@@ -3623,12 +3400,6 @@
     {
       "level": 0,
       "units": [
-        "script:analytics-render.js"
-      ]
-    },
-    {
-      "level": 0,
-      "units": [
         "script:extensions.js"
       ]
     },
@@ -3671,25 +3442,7 @@
     {
       "level": 1,
       "units": [
-        "script:chain-builder.js"
-      ]
-    },
-    {
-      "level": 1,
-      "units": [
         "region:i18n"
-      ]
-    },
-    {
-      "level": 1,
-      "units": [
-        "script:analytics.js"
-      ]
-    },
-    {
-      "level": 1,
-      "units": [
-        "script:notifications.js"
       ]
     },
     {
@@ -3755,12 +3508,6 @@
       "level": 3,
       "units": [
         "region:funciones-de-ui-globales"
-      ]
-    },
-    {
-      "level": 3,
-      "units": [
-        "script:pomodoro.js"
       ]
     },
     {

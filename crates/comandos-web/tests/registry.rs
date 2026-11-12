@@ -104,8 +104,17 @@ fn inventory_components_are_unique() {
             panic!("{c}: {prev} y {}", u["id"]);
         }
     }
-    assert_eq!(seen.get("analytics"), Some(&"script:analytics.js"));
     assert_eq!(seen.get("analytics-inline"), Some(&"region:analytics"));
+    // Retired modules (Analytics, Pomodoro, notices drawer, Cadenas) stay out.
+    for gone in [
+        "analytics",
+        "analytics-render",
+        "pomodoro",
+        "notifications",
+        "chain-builder",
+    ] {
+        assert!(!seen.contains_key(gone), "{gone}");
+    }
 }
 
 #[test]

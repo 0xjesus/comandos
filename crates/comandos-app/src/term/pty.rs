@@ -170,6 +170,16 @@ impl PtySession {
     pub fn raw_fd(&self) -> i32 {
         self.pty.as_raw_fd()
     }
+    /// Waits up to `timeout` for output to read.
+    pub fn wait_readable(&self, timeout: Duration) -> bool {
+        use rustix::event::{PollFd, PollFlags, Timespec, poll};
+        let Ok(timeout) = Timespec::try_from(timeout) else {
+            return false;
+        };
+        let mut fds = [PollFd::new(&self.pty, PollFlags::IN)];
+        matches!(poll(&mut fds, Some(&timeout)), Ok(n) if n > 0)
+            && fds[0].revents().contains(PollFlags::IN)
+    }
     pub fn pid(&self) -> u32 {
         self.pid
     }

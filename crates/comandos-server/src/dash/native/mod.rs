@@ -1042,7 +1042,7 @@ impl Native {
             NativeRoute::Terminal(route) => terminal::answer(self, route, request).await,
             NativeRoute::PaneType => typing::answer(self, request).await,
             NativeRoute::ModelStatus => operations::answer(self, request).await,
-            NativeRoute::State => states::answer(self).await,
+            NativeRoute::State => states::answer(self, &request.target).await,
             NativeRoute::QuickTerminal => quick::answer(self, request).await,
             NativeRoute::Usage(route) => usage::answer(self, route, request).await,
             NativeRoute::Retired => {

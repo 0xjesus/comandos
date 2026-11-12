@@ -47,7 +47,7 @@ body.app #view-panel.on #content{display:flex;flex-direction:column;flex:1 1 aut
 @media(pointer:coarse){.sc-btn{min-height:44px}}
 @media(max-width:560px){.sc-grid,.sc-extensions{grid-template-columns:1fr}.sc-modal{padding:8px}.sc-panel{padding:14px;max-height:94dvh}.session-config{padding:12px}}
 
-body.app #btn-pomo,body.app #btn-notif,body.app #btn-settings{min-width:40px;min-height:40px}
+body.app #btn-settings{min-width:40px;min-height:40px}
 
 
 /* ---- Shared workspace: whole tabs docked in a tree (workspace-dock.js) ---- */
@@ -134,96 +134,6 @@ body.ws-dragging .termpane{pointer-events:none}
 .wm-item.on::after{content:"";margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--brand)}
 .wm-sep{height:1px;margin:4px 6px;background:var(--line)}
 @media (pointer:fine){.wm-item{min-height:34px}}
-/* ---- Pomodoro 1.0: Regla de tiempo, estilos pixel y audio opcional ------------
-   El reloj de arena es decorativo; el número manda. Sprites a escala entera. */
-#pomo-panel.pm-v1{width:min(560px,calc(100vw - 16px));max-width:none;gap:12px;padding:16px;container-type:inline-size;container-name:pomodoro}
-body.only-panel #pomo-panel.pm-v1{width:100%!important}
-#pomo-panel .pm-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-#pomo-panel .pm-kicker{font:700 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
-#pomo-panel .pm-context strong{display:block;font-size:13px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#pomo-panel .pm-modes,#pomo-panel .pm-presets,#pomo-panel .pm-actions,#pomo-panel .pm-audio{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-#pomo-panel button{font:700 11px var(--mono);min-height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--line2);background:none;color:var(--dim);cursor:pointer}
-#pomo-panel button:hover:not(:disabled){color:var(--text);border-color:var(--text)}
-#pomo-panel button.on,#pomo-panel button[aria-pressed="true"]{color:var(--brand);border-color:var(--brand);background:color-mix(in srgb,var(--brand) 10%,transparent)}
-#pomo-panel button.primary{background:var(--brand);border-color:var(--brand);color:var(--panel)}
-#pomo-panel button:disabled{opacity:.55;cursor:default}
-#pomo-panel .pm-row-clock{display:grid;grid-template-columns:auto minmax(150px,1fr);gap:12px 18px;align-items:center}
-#pomo-panel .pm-row-clock>.pm-actions{grid-column:1/-1}
-#pomo-panel .pm-ruler-clock{display:flex;align-items:center;gap:8px}
-#pomo-panel .pm-time{font:800 30px var(--mono);font-variant-numeric:tabular-nums;letter-spacing:.02em;line-height:1.05}
-#pomo-panel.break .pm-time{color:var(--done)}
-#pomo-panel .pm-ruler-clock small{font:11px var(--mono);color:var(--dim)}
-#pomo-panel .pm-ruler-assembly{min-width:0}
-#pomo-panel .pm-ruler{appearance:none;-webkit-appearance:none;width:100%;height:9px;margin:10px 0 6px;border:1px solid var(--line2);border-radius:3px;cursor:ew-resize;touch-action:none;
-  background:linear-gradient(to right,var(--brand) 0%,var(--brand) var(--pm-ruler-fill,27%),var(--bg) var(--pm-ruler-fill,27%),var(--bg) 100%)}
-#pomo-panel .pm-ruler::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:22px;height:30px;border-radius:3px;border:2px solid var(--text);cursor:grab;
-  background:repeating-linear-gradient(90deg,var(--brand) 0,var(--brand) 3px,var(--panel) 3px,var(--panel) 5px)}
-#pomo-panel .pm-ruler::-moz-range-thumb{width:18px;height:26px;border-radius:3px;border:2px solid var(--text);background:var(--brand);cursor:grab}
-#pomo-panel .pm-ruler:focus-visible{outline:2px solid var(--brand);outline-offset:4px}
-#pomo-panel .pm-ruler-labels{display:flex;justify-content:space-between;font:10px var(--mono);color:var(--faint,var(--dim))}
-#pomo-panel .pm-ruler-caption{font-size:11px;color:var(--dim);margin-top:6px}
-#pomo-panel .pm-presets label{display:flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--dim)}
-#pomo-panel .pm-presets input{width:64px;min-height:34px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:700 13px var(--mono);padding:0 8px}
-#pomo-panel .pm-banner{border:1px solid var(--done);color:var(--done);border-radius:10px;padding:8px 12px;font-size:13px}
-#pomo-panel .pm-error{border:1px solid #ff6b6b;color:#ff9b9b;border-radius:10px;padding:8px 12px;font-size:13px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-#pomo-panel .pm-audio label{display:flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--dim)}
-#pomo-panel .pm-sound-options summary{font:11px var(--mono);color:var(--dim);cursor:pointer;min-height:28px}
-#pomo-panel .pm-sound-options[open]{display:flex;flex-wrap:wrap;gap:6px}
-#pomo-panel .pm-art-controls{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;border-top:1px solid var(--line);padding-top:10px}
-#pomo-panel .pm-art-controls label{display:flex;gap:6px;align-items:center;font:11px var(--mono);color:var(--dim)}
-#pomo-panel .pm-art-controls select{min-height:34px;border-radius:9px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:13px var(--mono)}
-#pomo-panel .pm-art-controls small{flex-basis:100%;font-size:10px;color:var(--dim)}
-#pomo-panel .pm-art-controls a{color:inherit}
-#pomo-panel .pm-art-samples{display:flex;gap:4px;align-items:center}
-@container pomodoro (max-width:430px){
-  #pomo-panel .pm-row-clock{grid-template-columns:1fr}
-  #pomo-panel .pm-ruler-clock{justify-content:center}
-  #pomo-panel .pm-actions button,#pomo-panel .pm-presets button{flex:1 1 auto;min-height:44px}
-  #pomo-panel .pm-ruler::-webkit-slider-thumb{width:28px;height:36px}
-}
-/* Sprites: original frames, integer scale, fixed slots (layout never jumps). */
-.pm-asset{--pixel-scale:1;position:relative;display:inline-block;width:32px;height:32px;flex:none;overflow:visible;image-rendering:pixelated;vertical-align:middle;animation:pm-asset-breathe 4s steps(3,end) infinite}
-.pm-pixel{display:block;width:calc(var(--native)*1px);height:calc(var(--native)*1px);background-repeat:no-repeat;image-rendering:pixelated;transform-origin:0 0;transform:scale(calc(var(--pixel-scale)*var(--pixel-multiplier)));pointer-events:none}
-.pm-framed{animation:none}
-.pm-framed>.pm-pixel{animation:pm-pixel-frames 1.2s steps(var(--frames),end) infinite}
-.pm-asset.pm-variable{width:40px;height:40px;animation:none}
-.pm-variable>.pm-pixel{position:absolute;left:50%;top:50%;width:calc(var(--frame-width)*1px);height:calc(var(--frame-height)*1px);transform-origin:center;transform:translate(-50%,-50%) scale(var(--pixel-scale));animation-duration:var(--strip-duration)!important}
-.pm-asset-clock.pm-variable{--pixel-scale:2.5;width:84px;height:84px}
-.pm-art-samples .pm-asset{--pixel-scale:1;width:40px;height:40px}
-.pm-motion-chest>.pm-pixel{animation-name:pm-chest-frames;animation-timing-function:steps(1,end)}
-#btn-pomo .pm-asset-clock.pm-header-clock{--pixel-scale:1;width:32px;height:32px;margin:0;animation:none}   /* nuestro reloj (comandos/hourglass.png) a 1:1: píxel nítido */
-/* Reloj de Davitheoles: el cuadro lo pinta pomodoro.js según el bloque (arena = tiempo real). */
-.pm-framed.pm-motion-progress>.pm-pixel{animation:none!important}
-/* En pausa el reloj conserva sus colores (latón y ámbar): la pausa la dice el texto «En pausa», no un gris que lo hacía parecer otro reloj. */
-@keyframes pm-pixel-frames{from{background-position-x:0}to{background-position-x:var(--strip-end)}}
-@keyframes pm-asset-breathe{50%{transform:translateY(-2px);filter:brightness(1.12)}}
-@keyframes pm-chest-frames{0%,12%{background-position-x:0}18%{background-position-x:-40px}27%{background-position-x:-80px}36%{background-position-x:-120px}45%,72%{background-position-x:-160px}81%{background-position-x:-120px}87%{background-position-x:-80px}93%{background-position-x:-40px}99%,100%{background-position-x:0}}
-html.pm-page-hidden .pm-asset,html.pm-page-hidden .pm-pixel{animation-play-state:paused!important}
-@media (prefers-reduced-motion:reduce){.pm-asset,.pm-pixel{animation:none!important}}
-#pomo-panel .pm-link{border:none;min-height:30px;padding:0;color:var(--dim);font:11px var(--mono);text-align:left}
-/* Progreso personal (política v1): nivel, XP, meta diaria y logros */
-.pm-milestone{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 14px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 12px}
-.pm-mini-level{display:flex;align-items:center;gap:8px}
-.pm-mini-level>div{display:flex;flex-direction:column;gap:2px}
-.pm-mini-level small,.pm-mini-track p{font:11px var(--mono);color:var(--dim)}
-.pm-mini-track p{display:flex;justify-content:space-between;gap:8px;margin:4px 0}
-.pm-progress{position:relative;height:7px;border-radius:4px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
-.pm-progress>span{position:relative;display:block;height:100%;background:var(--brand);overflow:hidden}
-.pm-progress.goal>span{background:var(--done)}
-.pm-progress>span:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 20%,#ffffff55 50%,transparent 80%);transform:translateX(-100%);animation:pm-xp-shine 4s ease-in-out infinite}
-@keyframes pm-xp-shine{55%,100%{transform:translateX(100%)}}
-#pomo-panel .pm-banner{display:flex;align-items:center;gap:10px}
-.pm-game{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:12px;padding:12px}
-.pm-game-level{display:flex;align-items:center;gap:10px}
-.pm-game-level h4{margin:2px 0 0;font-size:15px}
-.pm-game-level .pm-asset.pm-variable{--pixel-scale:2;width:80px;height:80px}
-.pm-game>small{font:11px var(--mono);color:var(--dim)}
-.pm-badges{display:flex;flex-wrap:wrap;gap:8px}
-.pm-badges>span{display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 10px;border:1px solid var(--line);border-radius:10px;font-size:13px}
-.pm-badges .locked .pm-asset{filter:grayscale(1);opacity:.55}
-.pm-goal-head{display:flex;align-items:center;gap:8px;font-size:13px}
-@container pomodoro (max-width:430px){.pm-milestone{grid-template-columns:1fr}}
-@media (prefers-reduced-motion:reduce){.pm-progress>span:after{animation:none}}
 /* ---- N5 lector de novedades: edición continua B, terminal opcional a la izquierda ---- */
 #news-reader{position:fixed;inset:0;z-index:11000;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:var(--sans);--read-size:16px}
 #news-reader[hidden]{display:none}
@@ -472,114 +382,10 @@ html[data-only-panel="news"] body.only-panel #news-reader[hidden]{display:none!i
   #news-reader .nr-slot{flex-basis:132px}
 }
 
-/* ===== N2 · Avisos: franja inferior por proyecto + aviso flotante de llegada =====
-   (dash/notifications.js). La franja vive bajo la terminal; el flotante se
-   apoya sobre ella, dentro del área de trabajo, y se ve aunque esté colapsada.
-   Monocromo + un acento por estado: atención, error, uso. */
-#notices{position:relative;z-index:6;min-width:0;flex:none;background:var(--panel);border-top:1px solid var(--line2);font-family:var(--sans);color:var(--text)}
-/* Cajón cerrado: no ocupa alto; los flotantes siguen anclados al mismo sitio. */
-#notices.nt-hidden{border-top:0;background:transparent}
-#notices.nt-hidden .nt-strip{display:none}
+/* Fila inferior de #panes (antes la franja de avisos): queda vacía, alto 0. */
 body.app #panes{grid-template-rows:auto minmax(0,1fr) auto}
-body.app #notices{grid-column:1;grid-row:3}
 @media (min-width:748px){
   body.app.split #panes{grid-template-rows:auto minmax(0,1fr) auto;grid-template-areas:"panel split tabs" "panel split term" "panel split notices"}
-  body.app.split #notices{grid-area:notices}
-}
-#notices .nt-icon{width:15px;height:15px;flex:none}
-#notices button{font:inherit;color:inherit;cursor:pointer}
-#notices button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-.nt-head{display:flex;align-items:center;gap:8px;min-height:40px;padding:3px 10px;min-width:0}
-.nt-toggle{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:6px 4px;min-height:36px;font-size:13px;font-weight:600;flex:none}
-.nt-toggle>.nt-icon:last-child{transition:transform .15s;opacity:.7}
-.nt-strip.collapsed .nt-toggle>.nt-icon:last-child{transform:rotate(180deg)}
-.nt-count{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--brand);color:var(--on-brand,#000);font:700 10px/18px var(--mono);text-align:center}
-.nt-meta{font:11px var(--mono);color:var(--dim);white-space:nowrap;flex:none}
-.nt-filters{display:flex;gap:4px;overflow-x:auto;min-width:0;flex:1;scrollbar-width:none}
-.nt-filters::-webkit-scrollbar{display:none}
-.nt-filters button{flex:none;min-height:30px;padding:3px 9px;border:1px solid var(--line);border-radius:99px;background:none;font-size:11px;color:var(--dim);white-space:nowrap}
-.nt-filters button.on{border-color:var(--brand);color:var(--text)}
-.nt-strip.collapsed .nt-meta{flex:1}
-.nt-read-all{flex:none;margin-left:auto;min-height:30px;padding:3px 10px;border:1px solid var(--line2);border-radius:8px;background:none;font-size:11px}
-.nt-read-all:disabled{opacity:.45;cursor:default}
-.nt-body{height:var(--nt-h,260px);display:flex;flex-direction:column;border-top:1px solid var(--line);min-height:0}
-/* Cajón de avisos: se jala desde la agarradera; doble clic maximiza. */
-.nt-grip{height:12px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;touch-action:none;outline-offset:-2px}
-.nt-grip::before{content:"";width:44px;height:4px;border-radius:2px;background:var(--line2);transition:background .15s}
-.nt-grip:hover::before,.nt-grip:focus-visible::before{background:var(--brand)}
-.nt-icon-btn{flex:none;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:8px;background:none;color:var(--dim)}
-.nt-icon-btn:hover{color:var(--text)}
-.nt-read-all+.nt-icon-btn{margin-left:0}
-.nt-excerpt{font-size:11px;color:var(--muted,var(--dim));line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-.nt-status{padding:6px 12px;font-size:11px;color:var(--dim)}
-.nt-groups{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 14px;padding:0 12px 6px;overscroll-behavior:contain}
-.nt-group{min-width:0}
-.nt-group-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;background:var(--panel);padding:7px 0 5px;border-bottom:1px solid var(--line2)}
-.nt-group-head h3{margin:0;font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nt-group-meta{font:10px var(--mono);color:var(--dim);white-space:nowrap}
-.nt-group-meta em,.nt-row small em{font-style:normal;color:var(--waiting)}
-.nt-group-read{margin-left:auto;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:0;background:none;color:var(--dim);border-radius:6px}
-.nt-group-read:hover{color:var(--text)}
-.nt-row{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--line);min-width:0}
-.nt-row.read{opacity:.62}
-.nt-row.pending{opacity:1}
-.nt-open{display:flex;align-items:center;gap:9px;flex:1;min-width:0;min-height:44px;padding:5px 2px;border:0;background:none;text-align:left}
-.nt-type{width:24px;height:24px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--dim);background:color-mix(in srgb,var(--text) 6%,transparent)}
-.cat-attention .nt-type{color:var(--waiting);background:color-mix(in srgb,var(--waiting) 14%,transparent)}
-.cat-error .nt-type{color:var(--err);background:color-mix(in srgb,var(--err) 14%,transparent)}
-.cat-usage .nt-type{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
-.nt-copy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
-.nt-copy strong{font-size:11px;font-weight:550;overflow-wrap:anywhere}
-.nt-copy small{font-size:10px;color:var(--dim);overflow-wrap:anywhere}
-.nt-open time{font:10px var(--mono);color:var(--faint);white-space:nowrap;flex:none}
-.nt-read{width:34px;height:34px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;background:none;color:var(--faint);border-radius:6px}
-.nt-read:disabled{cursor:default}
-.nt-dot{display:block;width:8px;height:8px;border-radius:50%;background:var(--brand)}
-.nt-empty{display:flex;align-items:center;gap:10px;padding:14px 14px;color:var(--dim);font-size:11px}
-.nt-empty p{margin:0}
-.nt-gone{margin:8px 12px 2px;padding:9px 11px;border:1px solid var(--line2);border-left:3px solid var(--warn);border-radius:8px;font-size:11px}
-.nt-gone p{margin:4px 0;color:var(--dim);overflow-wrap:anywhere}
-.nt-gone small{display:block;color:var(--faint);margin-bottom:6px}
-.nt-gone button{min-height:32px;padding:3px 10px;border:1px solid var(--line2);border-radius:7px;background:none;font-size:11px}
-.nt-foot{padding:4px 12px;border-top:1px solid var(--line);font-size:10px;color:var(--faint);flex:none}
-/* Aviso flotante: uno a la vez, sobre la franja, dentro del área de trabajo. */
-.nt-float-slot{position:absolute;right:12px;bottom:calc(100% + 10px);width:min(360px,calc(100% - 24px));pointer-events:none;z-index:7}
-.nt-float{pointer-events:auto;display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid var(--line2);border-left:3px solid var(--brand);border-radius:10px;background:var(--panel2);box-shadow:var(--shadow,0 10px 30px #0008);animation:nt-float-in .18s ease-out;max-height:40vh;overflow:auto}
-.nt-float.cat-attention{border-left-color:var(--waiting)}
-.nt-float.cat-error{border-left-color:var(--err)}
-.nt-float.cat-usage{border-left-color:var(--warn)}
-.nt-float-open{display:flex;flex-direction:column;align-items:flex-start;gap:3px;flex:1;min-width:0;padding:0;border:0;background:none;text-align:left;line-height:1.35}
-.nt-float-origin{font-size:10px;color:var(--dim);overflow-wrap:anywhere}
-.nt-float-open strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}
-.nt-float-open b{display:inline-flex;align-items:center;gap:5px;margin-top:3px;font-size:11px;font-weight:600;color:var(--brand)}
-.nt-float-open em{font-style:normal;font-size:11px;color:var(--warn);margin-top:3px}
-.nt-float-close{flex:none;width:34px;height:34px;margin:-6px -6px 0 0;display:inline-flex;align-items:center;justify-content:center;border:0;background:none;color:var(--dim);border-radius:7px}
-.nt-float-close:hover{color:var(--text)}
-@keyframes nt-float-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){.nt-float{animation:none}.nt-toggle>.nt-icon:last-child{transition:none}}
-/* Ajustes > Notificaciones: modo por tipo, volumen, silencio y preview. */
-.nt-settings{display:flex;flex-direction:column;gap:8px}
-.nt-set-line{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.nt-set-mute{display:inline-flex;align-items:center;gap:6px;font-size:13px}
-.nt-set-vol{display:flex;align-items:center;gap:10px;font-size:13px}
-.nt-set-vol input{flex:1;max-width:260px}
-.nt-set-rows{display:flex;flex-direction:column;gap:4px}
-.nt-set-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line)}
-.nt-set-type{display:inline-flex;align-items:center;gap:7px;font-size:13px;min-width:0}
-.nt-set-type .nt-icon{width:14px;height:14px;color:var(--dim)}
-.nt-set-row select{min-height:32px;background:var(--panel2);color:var(--text);border:1px solid var(--line2);border-radius:7px;padding:2px 6px;font-size:13px}
-/* Celular: la franja desliza en horizontal, un proyecto por página. */
-@media (max-width:560px){
-  .nt-head{flex-wrap:wrap;padding:3px 8px;gap:4px 8px}
-  .nt-filters{order:3;flex-basis:100%}
-  .nt-grip{height:20px}
-  .nt-icon-btn{width:40px;height:40px}
-  .nt-groups{display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;gap:10px;padding:0 8px 6px;overscroll-behavior-x:contain}
-  .nt-group{flex:0 0 calc(100% - 28px);scroll-snap-align:start;overflow-y:auto;max-height:100%}
-  .nt-float-slot{right:8px;width:calc(100% - 16px)}
-  .nt-read,.nt-group-read,.nt-filters button,.nt-read-all{min-height:40px;min-width:40px}
-  .nt-set-row{grid-template-columns:1fr auto;}
-  .nt-set-row .nt-set-type{grid-column:1/-1}
 }
 
 /* ===== Botones de la cabecera (grill 29-sep): un solo tamaño (--hdr-key) y
@@ -589,8 +395,6 @@ header .hdr-btn.hdr-btn,.demo-key{box-sizing:border-box;width:auto;height:var(--
   transition:transform .06s ease,box-shadow .06s ease,filter .15s,color .15s,background .15s;-webkit-tap-highlight-color:transparent;user-select:none}
 header .hdr-btn [data-icon],header .hdr-btn .ico,.demo-key .ico{width:17px!important;height:17px!important}
 header .hdr-btn .hdr-lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-header #btn-pomo .pm-asset-clock.pm-header-clock{margin:0}
-header .hdr-btn .nbadge{position:absolute;top:-7px;right:-8px;z-index:2}
 /* Cabecera «Ordenada» (H1): ☰ · contadores · Terminal · + Nueva sesión | resto.
    Envuelve en vez de desbordar (columna angosta de la app y del remoto); el
    orden es el del DOM, sin los «order» de la cabecera anterior. */
@@ -613,19 +417,12 @@ header.hdr-ordered :is(#btn-switch,#btn-snippets){display:inline-flex!important}
 :is(body.inapp,body.app) header.hdr-ordered .hdr-right,:is(body.inapp,body.app) header.hdr-ordered .hdr-primary{display:contents}
 :is(body.inapp,body.app) header.hdr-ordered :is(.counts,#btn-servers,#btn-terminal,#btn-newsess){display:none!important}
 :is(body.inapp,body.app.split) header.hdr-ordered :is(#btn-menu,.counts,#btn-terminal,#btn-newsess,#btn-switch,#btn-snippets,#btn-servers){display:none!important}
-/* celular y tablet vertical: el Pomodoro también solo con su icono, para que la fila quepa */
-body.app:not(.split):not(.inapp) header.hdr-ordered #btn-pomo{flex:0 1 var(--hdr-tool);width:var(--hdr-tool);min-width:28px;padding:0}
-body.app:not(.split):not(.inapp) header.hdr-ordered #btn-pomo .pomo-mini{display:none}
 :is(body.inapp,body.app) header.hdr-ordered .hdr-btn{flex:0 1 var(--hdr-tool);width:var(--hdr-tool);min-width:28px;height:var(--hdr-tool);padding:0}
-:is(body.inapp,body.app) header.hdr-ordered #btn-pomo{margin-left:auto;flex:0 0 auto;width:auto;padding:0 8px;order:1}
-:is(body.inapp,body.app) header.hdr-ordered #btn-pomo .pomo-mini{font-size:10px;margin-left:5px}
 :is(body.inapp,body.app) header.hdr-ordered #clock{order:2;flex:none;font:600 12px/1 var(--mono);letter-spacing:.3px;color:var(--dim);padding:0 2px;font-variant-numeric:tabular-nums}
 :is(body.inapp,body.app) header.hdr-ordered #btn-settings{order:3}
-/* Columna angosta: el Pomodoro solo con su icono; las teclas se encogen antes de partir la fila. */
+/* Columna angosta: las teclas se encogen antes de partir la fila. */
 @container sidebar (max-width:340px){
   :is(body.inapp,body.app) header.hdr-ordered{gap:3px;padding:6px}
-  :is(body.inapp,body.app) header.hdr-ordered #btn-pomo .pomo-mini{display:none}
-  :is(body.inapp,body.app) header.hdr-ordered #btn-pomo{flex:0 1 var(--hdr-tool);width:var(--hdr-tool);padding:0}
 }
 #servers-panel{flex:none;width:100%;max-width:1360px;margin:0 auto;box-sizing:border-box;padding-top:8px;border-bottom:1px solid var(--line)}
 @container sidebar (max-width:760px){#view-panel #servers-panel #ssh-bar{padding-left:12px;padding-right:12px}}
@@ -669,22 +466,14 @@ html[data-btn-style="pixel"] header .hdr-btn:active,.btn-style-card .btn-style-d
 html[data-btn-style="pixel"] header .hdr-btn.on,.btn-style-card .btn-style-demo[data-btn-style="pixel"]>.demo-key.demo-key.on{--face:#2f8f52;color:#f0fff5}
 html[data-btn-style="consola"] header .hdr-btn,.btn-style-card .btn-style-demo[data-btn-style="consola"]>.demo-key.demo-key{--face:#56627a;--edge:#262d3b;border:0;border-radius:12px;color:#fff;background:linear-gradient(180deg,color-mix(in srgb,var(--face) 80%,#fff 20%),var(--face));box-shadow:0 5px 0 var(--edge),0 8px 12px rgba(0,0,0,.4),inset 0 2px 0 rgba(255,255,255,.3);transform:translateY(-2px);margin-bottom:5px}
 html[data-btn-style="consola"] header .hdr-btn:active,.btn-style-card .btn-style-demo[data-btn-style="consola"]>.demo-key.demo-key:active{transform:translateY(3px);box-shadow:0 1px 0 var(--edge),0 2px 4px rgba(0,0,0,.4),inset 0 2px 0 rgba(255,255,255,.2)}
-html[data-btn-style="consola"] header #btn-pomo{--face:#e8a21a;--edge:#7d560a}
-html[data-btn-style="consola"] header #btn-notif{--face:#e2485a;--edge:#7c1b27}
 html[data-btn-style="consola"] header #btn-news{--face:#7c4dff;--edge:#3a1f8c}
 html[data-btn-style="consola"] header #btn-remote{--face:#22a35a;--edge:#0f5a2f}
-html[data-btn-style="consola"] header #btn-usage{--face:#2f7de0;--edge:#133f78}
 html[data-btn-style="consola"] header #btn-servers{--face:#0e9aa7;--edge:#07484e}
 html[data-btn-style="consola"] header #btn-terminal{--face:#3b4a5e;--edge:#161e29}
 html[data-btn-style="consola"] header #btn-newsess{--face:#e0671f;--edge:#6e2e08}
 html[data-btn-style="consola"] header #btn-menu{--face:#6b7385;--edge:#2b303b}
 .btn-style-card .btn-style-demo[data-btn-style="consola"]>.demo-key.demo-key.on{--face:#22a35a;--edge:#0f5a2f}
-html[data-btn-style="consola"] header #btn-pomo{color:#1c1300}
 @media (prefers-reduced-motion:reduce){header .hdr-btn,.demo-key{transition:none}}
-/* Pomodoro: dónde sonará el final (grill 30-sep). */
-.pm-where{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 4px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);font-size:13px;color:var(--dim)}
-.pm-where b{color:var(--text)}
-.pm-where .pm-link{background:none;border:0;color:var(--brand);text-decoration:underline;cursor:pointer;padding:0;font:inherit}
 /* ===== Estado de la IA: punto de color + sticker tuyo (1-oct, sin monitos) ===== */
 .ai-icon{display:block;flex:none;position:relative}
 .ai-dot{border-radius:50%}
@@ -720,93 +509,39 @@ button.wm-suggest{font:600 10px var(--sans);padding:2px 7px;border-radius:999px;
    paleta, radios, tamaños y píldoras. Los botones van planos (data-flat) como allí. */
 /* La barra y el modal siguen el tema de la app. Noche (sin data-theme) conserva los
    valores exactos del mockup aprobado; el resto los deriva de los tokens del tema. */
-#command-sidebar{--led-text:#D6E0EA;--led-dim:#8FA0B4;--led-faint:#5C6B80;--led-brand:#4CE07A;--led-warn:#FFAE1A;--led-bad:#FF7580;--led-line:#25384F;--led-ink:#0A0D13;--led-card-top:#121b26;--led-card-bottom:#0c131c}
-#command-sidebar,.chain-only{--cs-panel:var(--panel2);--cs-panel2:var(--panel);--cs-line:var(--line);--cs-line2:color-mix(in srgb,var(--line) 62%,var(--panel2));--cs-text:var(--text);--cs-dim:var(--dim);--cs-brand:var(--brand);--cs-on-brand:var(--on-brand);--cs-green:var(--ok);--cs-amber:var(--warn);--cs-red:var(--err);--cs-deep:var(--bg);
+#command-sidebar{--cs-panel:var(--panel2);--cs-panel2:var(--panel);--cs-line:var(--line);--cs-line2:color-mix(in srgb,var(--line) 62%,var(--panel2));--cs-text:var(--text);--cs-dim:var(--dim);--cs-brand:var(--brand);--cs-on-brand:var(--on-brand);--cs-green:var(--ok);--cs-amber:var(--warn);--cs-red:var(--err);--cs-deep:var(--bg);
   --cs-btn:color-mix(in srgb,var(--text) 6%,var(--panel2));--cs-btn2:color-mix(in srgb,var(--text) 11%,var(--panel2));--cs-btnline:color-mix(in srgb,var(--text) 17%,var(--panel2));--cs-btnline2:color-mix(in srgb,var(--text) 26%,var(--panel2));
   --cs-hover:color-mix(in srgb,var(--text) 5%,var(--panel2));--cs-press:color-mix(in srgb,var(--text) 9%,var(--panel2));
   --cs-brandline:color-mix(in srgb,var(--brand) 48%,var(--panel2));--cs-brandbg:color-mix(in srgb,var(--brand) 13%,var(--panel2));--cs-brandbg2:color-mix(in srgb,var(--brand) 20%,var(--panel2));--cs-brandhi:color-mix(in srgb,var(--brand) 82%,var(--text));
   --cs-amberline:color-mix(in srgb,var(--warn) 45%,var(--panel2));--cs-yolo:color-mix(in srgb,var(--brand) 7%,var(--panel2));--cs-yolo2:color-mix(in srgb,var(--brand) 12%,var(--panel2));
   --cs-greenline:color-mix(in srgb,var(--ok) 40%,var(--panel2));--cs-greenbg:color-mix(in srgb,var(--ok) 8%,var(--panel2));--cs-redline:color-mix(in srgb,var(--err) 45%,var(--panel2));
   --cs-r:12px;--cs-mono:var(--mono);--cs-ui:var(--sans);color:var(--cs-text);font:13px/1.45 var(--cs-ui)}
-:root:not([data-theme]) :is(#command-sidebar,.chain-only){--cs-panel:#171b24;--cs-panel2:#121722;--cs-line:#2a303e;--cs-line2:#1e2330;--cs-text:#eaf0fb;--cs-dim:#949db0;--cs-brand:#ad9cff;--cs-on-brand:#0a0d13;--cs-green:#8aceac;--cs-amber:#e6ba75;--cs-red:#e08a8a;--cs-deep:#0c0f16;
+:root:not([data-theme]) #command-sidebar{--cs-panel:#171b24;--cs-panel2:#121722;--cs-line:#2a303e;--cs-line2:#1e2330;--cs-text:#eaf0fb;--cs-dim:#949db0;--cs-brand:#ad9cff;--cs-on-brand:#0a0d13;--cs-green:#8aceac;--cs-amber:#e6ba75;--cs-red:#e08a8a;--cs-deep:#0c0f16;
   --cs-btn:#1c2130;--cs-btn2:#242b3d;--cs-btnline:#303748;--cs-btnline2:#3d465c;--cs-hover:#1d2333;--cs-press:#232a3d;
   --cs-brandline:#4a3f7a;--cs-brandbg:#221f3a;--cs-brandbg2:#2b2748;--cs-brandhi:#bfb2ff;--cs-amberline:#6a5530;--cs-yolo:#1a1622;--cs-yolo2:#221c2d;
   --cs-greenline:#2f5a44;--cs-greenbg:#16221d;--cs-redline:#6a3a3a}
 #command-sidebar{display:flex;flex-direction:column;min-width:0;box-sizing:border-box;background:var(--cs-panel2);padding:0}
 #command-sidebar [hidden]{display:none!important}
-:is(#command-sidebar,.chain-only) [data-icon]{display:inline-flex;flex:none;vertical-align:middle}
-/* sprites pixel del mockup (verbatim: .px, .ic s20/s24, reloj propio y cofre) */
-:is(#command-sidebar,.chain-only) .px{image-rendering:pixelated;image-rendering:crisp-edges;display:inline-block;flex:none}
-:is(#command-sidebar,.chain-only) .ic{width:32px;height:32px;background:url(/assets/pixel-packs/shikashi/icons.png) no-repeat;background-size:512px 867px}
-:is(#command-sidebar,.chain-only) .ic.s24{width:24px;height:24px;transform:scale(.75);transform-origin:top left;margin-right:-8px;margin-bottom:-8px}
-:is(#command-sidebar,.chain-only) .ic.s20{transform:scale(.625);transform-origin:center;width:20px;height:20px}
-#command-sidebar .hour{width:32px;height:32px;background:url(/assets/pomodoro/comandos/hourglass.png) 0 0 no-repeat;animation:cs-hour 2.4s steps(27) infinite}
-@keyframes cs-hour{to{background-position-x:-864px}}
-#command-sidebar .hour.sm{transform:scale(.6);transform-origin:center}
-#command-sidebar .chest{width:40px;height:25px;background:url(/assets/pixel-packs/karsiori-chests/golden.png) 0 0 no-repeat;animation:cs-chest 2.4s steps(1,end) infinite}
-@keyframes cs-chest{0%,12%{background-position-x:0}18%{background-position-x:-40px}27%{background-position-x:-80px}36%{background-position-x:-120px}45%,80%{background-position-x:-160px}87%{background-position-x:-80px}100%{background-position-x:0}}
-@media (prefers-reduced-motion:reduce){#command-sidebar :is(.hour,.chest){animation:none}}
-/* botones planos del mockup (button base + .pill/.ghost/.primary) */
-#command-sidebar button[data-flat],.chain-only button[data-flat]{font:inherit;cursor:pointer;background:var(--cs-btn);color:var(--cs-text);border:1px solid var(--cs-btnline);border-radius:10px;padding:8px 12px;min-height:36px;display:inline-flex;align-items:center;gap:8px;box-shadow:none;transform:none;line-height:1.45}
-#command-sidebar button[data-flat]:hover,.chain-only button[data-flat]:hover{background:var(--cs-btn2);border-color:var(--cs-btnline2)}
-#command-sidebar button[data-flat].pill,.chain-only button[data-flat].pill{border-radius:999px;min-height:30px;padding:4px 12px;font-size:13px}
-#command-sidebar button[data-flat].ghost,.chain-only button[data-flat].ghost{background:transparent;border-color:transparent;color:var(--cs-dim)}
-#command-sidebar button[data-flat].ghost:hover,.chain-only button[data-flat].ghost:hover{color:var(--cs-text);background:var(--cs-btn)}
-#command-sidebar button[data-flat].primary,.chain-only button[data-flat].primary{background:var(--cs-brand);color:var(--cs-on-brand);border-color:var(--cs-brand);font-weight:700;min-height:44px}
-#command-sidebar button[data-flat].primary:hover,.chain-only button[data-flat].primary:hover{background:var(--cs-brandhi)}
-/* cabecera: libro, título con destino, píldora de catálogo, botón Cadenas */
+#command-sidebar [data-icon]{display:inline-flex;flex:none;vertical-align:middle}
+/* botones planos del mockup (button base) */
+#command-sidebar button[data-flat]{font:inherit;cursor:pointer;background:var(--cs-btn);color:var(--cs-text);border:1px solid var(--cs-btnline);border-radius:10px;padding:8px 12px;min-height:36px;display:inline-flex;align-items:center;gap:8px;box-shadow:none;transform:none;line-height:1.45}
+#command-sidebar button[data-flat]:hover{background:var(--cs-btn2);border-color:var(--cs-btnline2)}
+/* cabecera de la hoja (Servidores) */
 #command-sidebar .cs-head{flex:none;background:var(--cs-panel2)}
-#command-sidebar .sb-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--cs-line);min-width:0}
-#command-sidebar .sb-head{position:relative}
-#command-sidebar .sb-head h2{font-size:13px;font-weight:700;margin:0;flex:1;min-width:0;white-space:nowrap;overflow:hidden}
-#command-sidebar .sb-head small{display:block;color:var(--cs-dim);font-size:11px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#command-sidebar .cs-pill{flex:none;display:inline-flex}
-#command-sidebar .cs-pill .pill{min-width:0;overflow:hidden}
-#command-sidebar .pill{background:transparent;font-size:11px;min-height:24px;padding:3px 9px;box-sizing:border-box;border-radius:999px;border:1px solid var(--cs-greenline);color:var(--cs-green);display:inline-flex;gap:5px;align-items:center;white-space:nowrap}
-#command-sidebar .pill.warn{border-color:var(--cs-amberline);color:var(--cs-amber)}
-#command-sidebar button[data-flat].chains-btn,.chain-only button[data-flat].chains-btn{min-height:32px;padding:0 12px 0 8px;font-size:13px;border-radius:999px;white-space:nowrap;flex:none;gap:6px;background:var(--cs-brandbg);border-color:var(--cs-brandline);color:var(--cs-brand);font-weight:600}
-#command-sidebar button[data-flat].chains-btn:hover,.chain-only button[data-flat].chains-btn:hover{background:var(--cs-brandbg2)}
-#command-sidebar .search{padding:8px 10px;position:relative}
-#command-sidebar .search .ic{position:absolute;left:16px;top:12px;pointer-events:none}
-#command-sidebar .cs-search{width:100%;box-sizing:border-box;min-height:36px;padding:10px 12px 10px 36px;border:1px solid var(--cs-line);border-radius:10px;background:var(--cs-panel2);color:var(--cs-text);font:inherit}
-#command-sidebar .cs-search::placeholder{color:var(--cs-dim)}
-#command-sidebar .cs-search:focus{outline:none;border-color:var(--cs-brand)}
-/* Pila (ronda 5 A, .lado): comandos arriba con scroll propio, separador de altura,
-   terminales rápidas abajo (pestañas .tt + terminal .mini). Valores del mockup. */
+/* Columna: herramientas arriba y archivos/sesiones con el resto del alto. */
 #side-top:has(> #command-sidebar){display:flex;flex-direction:column}
 #side-top > #command-sidebar{flex:1 1 auto;min-height:0}
 #view-panel #command-sidebar{padding:0}
 #command-sidebar{height:100%;overflow:hidden}
-#command-sidebar .sec-cmds{display:flex;flex-direction:column;flex:1 1 60%;min-height:0}
-#command-sidebar .sec-terms{display:flex;flex-direction:column;flex:1 1 0%;min-height:0}
-#command-sidebar .mini{flex:1;min-height:0;overflow:hidden;background:var(--cs-deep);position:relative}
-#command-sidebar .mini .sb-term{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:var(--cs-deep)}
-#command-sidebar.no-terms .sec-cmds{flex:1 1 auto}
-#command-sidebar.no-terms .sec-terms{flex:none}
-#command-sidebar.no-terms .mini{display:none}
-/* «▾» en la fila de pestañas esconde las terminales; quedan sus pestañas para volver */
-#command-sidebar.terms-hidden .sec-cmds{flex:1 1 auto}
-#command-sidebar.terms-hidden .sec-terms{flex:none}
-#command-sidebar.terms-hidden .mini{display:none}
-body.ws-dragging #command-sidebar .sb-term{pointer-events:none}
-/* Teléfono: la terminal del panel trae su barra de teclas y su cuadro de texto, así que se queda
-   con la mayor parte de la columna; los archivos de arriba hacen scroll en lo que queda
-   (command_sidebar.rs les pone flex en línea: de ahí el !important). Solo en el navegador: el panel
-   de la app de escritorio también mide menos de 600 px, pero su terminal es nativa y va debajo. */
-@media (max-width:600px){
-  html:not([data-native-side-term]) #command-sidebar:not(.no-terms):not(.terms-hidden) .cs-empty-terms{flex:0 1 24%!important;min-height:120px!important}
-  html:not([data-native-side-term]) #command-sidebar:not(.no-terms):not(.terms-hidden) .sec-terms{flex:1 1 76%;min-height:300px}
-}
-/* Barra de herramientas (grill 1-oct, diseño 1): fila Comandos · Cadenas · Servidores; su
-   panel flota encima de la terminal, que siempre se queda con la columna. */
+#command-sidebar .sec-cmds{display:flex;flex-direction:column;min-height:0}
+/* Barra de herramientas: Archivos · Sesiones · Servidores; la hoja de Servidores
+   flota encima de la columna. */
 #command-sidebar{position:relative}
 #command-sidebar .cs-tools{order:0;flex:none;display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--cs-line);background:var(--cs-panel2);min-width:0}
 #command-sidebar .cs-tools button[data-flat].tb{flex:1 1 auto;min-width:0;min-height:0;height:30px;padding:0 6px;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--cs-dim);font-size:12px;font-weight:600}
 #command-sidebar .cs-tools button[data-flat].tb:hover{color:var(--cs-text);background:var(--cs-hover)}
 #command-sidebar .cs-tools button[data-flat].tb.on{color:var(--cs-brand);border-color:color-mix(in srgb,var(--cs-brand) 45%,var(--cs-line));background:color-mix(in srgb,var(--cs-brand) 11%,var(--cs-panel))}
 #command-sidebar .cs-tools .tb .lb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#command-sidebar .cs-tools .tb .n{font:400 10px/1 var(--mono);color:var(--cs-dim)}
-#command-sidebar .cs-tools .tb .n:empty{display:none}
 #command-sidebar .cs-tools .tb .sic{display:inline-flex;flex:none}
 @container sidebar (max-width:340px){
   #command-sidebar .cs-tools{gap:2px;padding:6px}
@@ -819,266 +554,92 @@ body.ws-dragging #command-sidebar .sb-term{pointer-events:none}
 #command-sidebar .cs-head button[data-flat].cls{flex:none;min-height:0;height:26px;padding:0 6px;display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--cs-dim);font-size:11px;white-space:nowrap}
 #command-sidebar .cs-head button[data-flat].cls:hover{color:var(--cs-text)}
 #command-sidebar .cs-head .cls kbd{font:10px/1.4 var(--mono);border:1px solid var(--cs-line);border-radius:4px;padding:0 4px}
-#command-sidebar .cs-dest{display:flex;align-items:center;gap:8px;padding:0 12px 8px;font-size:11px;color:var(--cs-dim);min-width:0}
-#command-sidebar .cs-dest .cs-target{color:var(--cs-text);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#command-sidebar .cs-dest .cs-pill{margin-left:auto;flex:none}
-#command-sidebar:not([data-panel="cmds"]) .cs-head :is(.cs-dest,.search),#command-sidebar:not([data-panel="cmds"]) .cs-body{display:none}
-#command-sidebar:not([data-panel="chains"]) .cs-chains-body,#command-sidebar:not([data-panel="srv"]) .cs-srv{display:none}
-#command-sidebar .cs-chains-body,#command-sidebar .cs-srv{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:0 10px 10px}
-#command-sidebar .cs-chain-add{display:flex;justify-content:flex-end}
-#command-sidebar .cs-empty-chains{margin-top:4px;padding:18px 14px;border:1px dashed var(--cs-line);border-radius:var(--cs-r);text-align:center;font-size:12px;line-height:1.5;color:var(--cs-dim);display:flex;flex-direction:column;align-items:center;gap:4px}
-#command-sidebar .cs-empty-chains b{color:var(--cs-text);font-size:13px}
-#command-sidebar .cs-empty-chains .chains-btn{margin-top:8px}
+#command-sidebar:not([data-panel="srv"]) .cs-srv{display:none}
+#command-sidebar .cs-srv{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:0 10px 10px}
 #command-sidebar .cs-srv #servers-panel{border-bottom:0;padding-top:0}
-/* columna sin terminal que mostrar: la tarjeta llena el hueco (la cabecera de pestañas queda arriba) */
-#command-sidebar .sec-terms{order:2}
 #command-sidebar .cs-empty-terms{order:3;flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+/* Tipografías del explorador de archivos. */
+@font-face{font-family:"Ubuntu Sans Mono";font-style:normal;font-weight:400 700;font-display:swap;src:url("assets/fonts/UbuntuSansMono/UbuntuSansMono-latin.woff2") format("woff2")}
+#command-sidebar .cs-empty-terms{--faint:color-mix(in srgb,var(--cs-dim) 62%,var(--cs-panel2))}
 #command-sidebar .cs-empty-terms .et-lim{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:10px 10px 8px}
 #command-sidebar .cs-empty-terms .et-h{display:flex;align-items:baseline;gap:8px;margin:0 2px 8px;min-width:0}
 #command-sidebar .cs-empty-terms .et-h b{font:700 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--cs-dim)}
 #command-sidebar .cs-empty-terms .et-h small{font-size:11px;color:var(--cs-dim);opacity:.75;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#command-sidebar .cs-limits .wait{font-size:12px;color:var(--cs-dim);padding:12px 2px}
-#command-sidebar .cs-empty-terms .et-foot{flex:none;display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--cs-line);font-size:11px;color:var(--cs-dim)}
-#command-sidebar .cs-empty-terms button[data-flat].et-go{margin-left:auto;min-height:0;height:26px;padding:0 12px;border-radius:8px;border:1px solid var(--cs-brand);background:color-mix(in srgb,var(--cs-brand) 11%,transparent);color:var(--cs-brand);font-weight:600;font-size:11px}
-#command-sidebar .cs-empty-terms .et-t:empty{display:none}
-@media (max-width:600px){#command-sidebar .cs-empty-terms .et-foot{padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}#command-sidebar .cs-empty-terms button[data-flat].et-go{flex:1;margin-left:0;height:44px;border-radius:12px;font-size:14px}}
-/* Medidor LED: dimensiones y dibujo del diseño aprobado. */
-@font-face{font-family:"Ubuntu Sans";font-style:normal;font-weight:100 800;font-display:swap;src:url("assets/fonts/UbuntuSans/UbuntuSans-latin.woff2") format("woff2")}
-@font-face{font-family:"Ubuntu Sans Mono";font-style:normal;font-weight:400 700;font-display:swap;src:url("assets/fonts/UbuntuSansMono/UbuntuSansMono-latin.woff2") format("woff2")}
-#command-sidebar .cs-empty-terms .et-lim{padding:0}
-#command-sidebar .cs-empty-terms .et-h{margin:0;padding:12px 12px 8px}
-#command-sidebar .cs-empty-terms .et-h small{margin-left:auto;color:var(--led-faint);opacity:1}
-#command-sidebar .cs-lim{--text:var(--led-text);--dim:var(--led-dim);--faint:var(--led-faint);--brand:var(--led-brand);--warn:var(--led-warn);--bad:var(--led-bad);--line2:var(--led-line);--mono:"Ubuntu Sans Mono",ui-monospace,monospace;display:flex;flex-direction:column;gap:9px;padding:0 10px 12px;color:var(--text)}
-#command-sidebar .cs-lim .card{box-sizing:border-box;font:400 13.3333px/normal "Ubuntu Sans",system-ui,sans-serif;color:var(--text);text-align:left;gap:normal}
+#command-sidebar .cs-limits .wait{font:400 12px/1.4 var(--cs-mono);color:var(--cs-dim);padding:12px 16px}
+/* Consumos (diseño aprobado, nov-2026): saldo de OpenRouter grande y en color de marca,
+   etiqueta de sección espaciada y una tarjeta por cuenta (logo 22px, nombre + chip,
+   alias atenuado, % grande a la derecha; medidores etiqueta | barra 6px | valor y el
+   reinicio debajo). Solo tokens del tema (--cs-*): sigue los 9 temas. */
+#command-sidebar .cs-empty-terms .et-lim{padding:0 0 18px}
+#command-sidebar .cs-empty-terms .et-h{margin:0;padding:6px 16px 10px;align-items:center}
+#command-sidebar .cs-empty-terms .et-h b{font:600 10.5px/1 var(--cs-mono);letter-spacing:.16em;color:var(--cs-dim)}
+#command-sidebar .cs-empty-terms .et-h small{margin-left:auto;font:400 10.5px/1 var(--cs-mono);color:var(--faint);opacity:1}
+#command-sidebar .cs-lim{--text:var(--cs-text);--dim:var(--cs-dim);--brand:var(--cs-brand);--warn:var(--cs-amber);--bad:var(--cs-red);--ok:var(--cs-green);--line2:var(--cs-line);--mono:var(--cs-mono);display:flex;flex-direction:column;gap:10px;padding:0 14px;color:var(--text)}
+#command-sidebar .cs-lim .card{box-sizing:border-box;width:100%;display:block;position:relative;overflow:hidden;cursor:pointer;padding:12px;border-radius:10px;border:1px solid var(--cs-line);background:var(--cs-panel);box-shadow:none;font:400 12px/1.4 var(--mono);color:var(--text);text-align:left;gap:normal;font-variant-numeric:tabular-nums;transition:border-color .15s ease}
 #command-sidebar .cs-lim .card *{box-sizing:content-box}
-#command-sidebar .cs-lim button[data-flat].usage-toggle{display:block;width:100%;min-width:0;min-height:0;padding:0;border:0;border-radius:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;box-shadow:none;transform:none}
-#command-sidebar .cs-lim .usage-toggle:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-#command-sidebar .cs-lim .free-head{display:flex;align-items:center;gap:9px}
-#command-sidebar .cs-lim .det .acts button[data-flat]{min-height:0;font-family:inherit;cursor:pointer;text-align:left;box-shadow:none;transform:none;box-sizing:content-box;line-height:normal;gap:normal}
-#command-sidebar .cs-lim .kv b{overflow-wrap:anywhere}
-#command-sidebar .cs-lim .logo{width:24px;height:24px;border-radius:7px;background:var(--led-ink);border:1px solid #ffffff14;display:grid;place-items:center;flex:none}
-#command-sidebar .cs-lim .logo svg{width:15px;height:15px}
-#command-sidebar .cs-lim .nm{display:flex;flex-direction:column;min-width:0}
-#command-sidebar .cs-lim .nm b{font-size:13px;font-weight:600;line-height:1.1}
-#command-sidebar .cs-lim .nm small{font:10.5px var(--mono);color:var(--dim)}
-#command-sidebar .cs-lim .pane{font:600 9.5px var(--mono);color:var(--brand);border:1px solid color-mix(in srgb,var(--brand) 45%,var(--line2));border-radius:999px;padding:1px 6px;white-space:nowrap}
-#command-sidebar .cs-lim .warn{color:var(--warn)}
-#command-sidebar .cs-lim .bad{color:var(--bad)}
-#command-sidebar .cs-lim .card{width:100%;display:block;border-radius:16px;position:relative;overflow:hidden;cursor:pointer;transition:transform .15s ease,border-color .15s ease}
-#command-sidebar .cs-lim .card:hover{transform:translateY(-1px)}
-#command-sidebar .cs-lim .det{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #ffffff1c;font-size:11.5px;color:var(--dim);gap:8px;flex-direction:column}
+#command-sidebar .cs-lim .card:hover{border-color:var(--cs-btnline2)}
+#command-sidebar .cs-lim .card.cur{border-color:var(--cs-brandline)}
+#command-sidebar .cs-lim button[data-flat].usage-toggle{display:grid;gap:10px;width:100%;min-width:0;min-height:0;padding:0;border:0;border-radius:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;box-shadow:none;transform:none}
+#command-sidebar .cs-lim button[data-flat].usage-toggle:hover{background:none;border:0}
+#command-sidebar .cs-lim .usage-toggle:focus-visible{outline:2px solid var(--brand);outline-offset:4px;border-radius:6px}
+/* cabecera de la tarjeta: logo | nombre + chip | % (o «sin cuota»); el alias debajo */
+#command-sidebar .cs-lim :is(.row1,.free-head){display:grid;grid-template-columns:22px auto auto minmax(0,1fr);column-gap:9px;row-gap:2px;align-items:center;min-width:0}
+#command-sidebar .cs-lim span.logo{grid-row:1/3;grid-column:1;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;background:color-mix(in srgb,var(--ac) 14%,var(--cs-panel2));border:0;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ac) 28%,transparent);color:var(--text);font:700 11px/1 var(--mono)}
+#command-sidebar .cs-lim span.logo svg{width:14px;height:14px;border:0;border-radius:3px;background:none;box-shadow:none}
+#command-sidebar .cs-lim .nm{display:contents}
+#command-sidebar .cs-lim .nm b{grid-row:1;grid-column:2;font:600 13px/1.25 var(--mono);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#command-sidebar .cs-lim .nm small{grid-row:2;grid-column:2/4;font:400 11px/1.3 var(--mono);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#command-sidebar .cs-lim :is(.pane,.free .tag){font:600 9.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;padding:3px 7px;border:0;border-radius:5px;background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+#command-sidebar .cs-lim .pane{grid-row:1;grid-column:3;justify-self:start}
+#command-sidebar .cs-lim .free .tag{grid-row:1/3;grid-column:4;justify-self:end;margin:0}
+#command-sidebar .cs-lim .row1 .big{grid-row:1/3;grid-column:4;justify-self:end;font:600 17px/1 var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+#command-sidebar .cs-lim .big.warn,#command-sidebar .cs-lim .meter-value.warn{color:var(--warn)}
+#command-sidebar .cs-lim .big.bad,#command-sidebar .cs-lim .meter-value.bad{color:var(--bad)}
+/* medidor: etiqueta | barra fina | valor; el reinicio, pequeño y tenue, bajo la barra */
+#command-sidebar .cs-lim .meter{display:grid;grid-template-columns:62px minmax(0,1fr) 38px;column-gap:8px;row-gap:3px;align-items:center;margin:0}
+#command-sidebar .cs-lim .meter .meter-name{font:400 11px/1.3 var(--mono);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#command-sidebar .cs-lim .seg{display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--cs-line)}
+#command-sidebar .cs-lim .seg i{flex:1 1 0;height:6px;background:none;border-radius:0}
+#command-sidebar .cs-lim .seg i.on{background:var(--lc);box-shadow:1px 0 0 var(--lc)}
+#command-sidebar .cs-lim .meter .meter-value{font:500 11px/1.3 var(--mono);text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+#command-sidebar .cs-lim .meter .r{grid-column:2/4;font:400 10.5px/1.3 var(--mono);color:var(--faint)}
+/* sin cuota (OpenCode): tres cifras pequeñas, etiqueta arriba y valor abajo */
+#command-sidebar .cs-lim .free .fr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0}
+#command-sidebar .cs-lim .free .fr span{display:flex;flex-direction:column-reverse;justify-content:flex-end;gap:2px;min-width:0;padding:0;border:0;background:none;font:400 10.5px/1.3 var(--mono);color:var(--dim)}
+#command-sidebar .cs-lim .free .fr span b{display:block;font:600 14px/1.2 var(--mono);color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* detalle al abrir la tarjeta */
+#command-sidebar .cs-lim .det{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--cs-line);font:400 11.5px/1.4 var(--mono);color:var(--dim);gap:10px;flex-direction:column}
 #command-sidebar .cs-lim .card.open .det{display:flex}
-#command-sidebar .cs-lim .det .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
-#command-sidebar .cs-lim .det .kv b{color:var(--text);font-weight:500;font-family:var(--mono);font-size:11px}
+#command-sidebar .cs-lim .det .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+#command-sidebar .cs-lim .det .kv b{color:var(--text);font-weight:500;font-family:var(--mono);font-size:11px;overflow-wrap:anywhere}
 #command-sidebar .cs-lim .det .acts{display:flex;gap:6px;flex-wrap:wrap}
-#command-sidebar .cs-lim .det .acts button{height:28px;padding:0 11px;border-radius:8px;display:inline-flex;align-items:center;font-size:11.5px;font-weight:600;border:1px solid var(--line2);color:var(--text);background:#ffffff08}
-#command-sidebar .cs-lim .det .acts button.pri{background:var(--ac);border-color:var(--ac);color:var(--led-ink)}
-#command-sidebar .cs-lim .card{padding:11px 12px 12px;background:linear-gradient(180deg,var(--led-card-top),var(--led-card-bottom));border:1px solid #ffffff10;box-shadow:inset 0 1px 0 #ffffff0d}
-#command-sidebar .cs-lim .card.cur{border-color:color-mix(in srgb,var(--brand) 45%,transparent)}
-#command-sidebar .cs-lim .row1{display:flex;align-items:center;gap:9px;margin-bottom:9px}
-#command-sidebar .cs-lim .row1 .big{margin-left:auto;font:700 18px/1 var(--mono)}
-#command-sidebar .cs-lim .meter{display:grid;grid-template-columns:54px 1fr 32px;gap:8px;align-items:center;margin-top:5px}
-#command-sidebar .cs-lim .meter span{font:600 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
-#command-sidebar .cs-lim .meter b{font:600 11px var(--mono);text-align:right}
-#command-sidebar .cs-lim .seg{display:grid;grid-template-columns:repeat(20,1fr);gap:2px;height:12px}
-#command-sidebar .cs-lim .seg i{border-radius:2px;background:#ffffff0c}
-#command-sidebar .cs-lim .seg i.on{background:var(--lc);box-shadow:0 0 6px color-mix(in srgb,var(--lc) 70%,transparent)}
-#command-sidebar .cs-lim .meter .r{grid-column:2/4;font:9.5px var(--mono);color:var(--faint);margin-top:-3px}
-#command-sidebar .cs-lim .free .fr{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
-#command-sidebar .cs-lim .free .fr span{flex:1;min-width:70px;padding:7px 8px;border-radius:9px;background:#ffffff07;border:1px solid #ffffff10;font-size:10px;color:var(--dim)}
-#command-sidebar .cs-lim .free .fr span b{display:block;font:600 13px var(--mono);color:var(--text)}
-#command-sidebar .cs-lim .free .tag{margin-left:auto;font:600 10px var(--mono);color:var(--ac);border:1px solid color-mix(in srgb,var(--ac) 45%,transparent);border-radius:999px;padding:2px 7px}
+#command-sidebar .cs-lim .det .acts button[data-flat]{min-height:0;height:30px;padding:0 12px;border-radius:8px;display:inline-flex;align-items:center;font:600 11.5px/1 var(--mono);cursor:pointer;text-align:left;box-shadow:none;transform:none;box-sizing:content-box;gap:normal;border:1px solid var(--cs-btnline);color:var(--text);background:var(--cs-btn)}
+#command-sidebar .cs-lim .det .acts button[data-flat]:hover{background:var(--cs-btn2);border-color:var(--cs-btnline2)}
+#command-sidebar .cs-lim .det .acts button[data-flat].pri{background:var(--cs-brand);border-color:var(--cs-brand);color:var(--cs-on-brand)}
 @media (prefers-reduced-motion:reduce){#command-sidebar .cs-lim .card{transition:none}#command-sidebar .cs-lim .card:hover{transform:none}}
-#command-sidebar .sec-terms .cs-terms{cursor:default}
-/* cuerpo: tarjetas apiladas */
-#command-sidebar .cs-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:0 10px 10px;min-width:0}
-#command-sidebar.typing .cs-body{cursor:progress}
-#command-sidebar .cs-saved,:is(#command-sidebar,.chain-only) .cs-cli{flex:none;border:1px solid var(--cs-line);border-radius:var(--cs-r);background:var(--cs-panel);overflow:hidden;min-width:0}
-:is(#command-sidebar,.chain-only) .cli-h{display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;font-weight:600;font-size:13px;user-select:none;min-width:0}
-:is(#command-sidebar,.chain-only) .cli-h:hover{background:var(--cs-hover)}
-:is(#command-sidebar,.chain-only) .cli-h .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:is(#command-sidebar,.chain-only) .cli-h small{color:var(--cs-dim);font-weight:400;font-size:11px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
-:is(#command-sidebar,.chain-only) .cli-h .badge{margin-left:auto;font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid var(--cs-brandline);color:var(--cs-brand);white-space:nowrap;flex:none}
-:is(#command-sidebar,.chain-only) .cli-h .badge.off{border-color:var(--cs-line);color:var(--cs-dim)}
-:is(#command-sidebar,.chain-only) .cli-h .badge.warn{border-color:var(--cs-amberline);color:var(--cs-amber)}
-:is(#command-sidebar,.chain-only) .chev{color:var(--cs-dim);font-size:10px;margin-left:6px;flex:none}
-:is(#command-sidebar,.chain-only) .cli-h .chev{margin-left:6px}
-:is(#command-sidebar,.chain-only) .mono{width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font:700 13px var(--cs-ui);flex:none}
-:is(#command-sidebar,.chain-only) .logo-tile{background:var(--cs-panel2);color:var(--cs-text);box-shadow:inset 0 0 0 1px var(--cs-line)}
-:is(#command-sidebar,.chain-only) .logo-tile .logo{width:17px;height:17px;display:block;flex:none}
-:is(#command-sidebar,.chain-only) .cs-cli.here{border-color:var(--cs-brandline)}
-:is(#command-sidebar,.chain-only) .cs-cli.missing .nm{color:var(--cs-dim)}
-/* Plegado por CSS; mientras se busca (.searching) se muestra todo lo que coincide. */
-:is(#command-sidebar:not(.searching),.chain-only) .cs-cli:not(.open)>:not(.cli-h),#command-sidebar .cs-saved:not(.open)>:not(.cli-h){display:none}
-:is(#command-sidebar:not(.searching),.chain-only) .hsec.closed>.srows{display:none}
-/* arranques de `<cli> --help`: filas de dos líneas; las que el CLI describe como
-   saltarse permisos, en ámbar sobre el violeta oscuro del bloque yolo del mockup */
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd.bin code{color:var(--cs-text)}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd.y{background:var(--cs-yolo)}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd.y:hover{background:var(--cs-yolo2)}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd.y code{color:var(--cs-amber)}
-:is(#command-sidebar,.chain-only) .hsec{border-top:1px solid var(--cs-line2)}
-:is(#command-sidebar,.chain-only) .hsec-h{display:flex;align-items:center;gap:6px;padding:7px 10px;font:11px var(--cs-ui);color:var(--cs-dim);text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none;min-width:0}
-:is(#command-sidebar,.chain-only) .hsec-h .n{font:10px var(--cs-mono);letter-spacing:0}
-:is(#command-sidebar,.chain-only) .hsec-h .src{margin-left:auto;font:10px var(--cs-mono);text-transform:none;letter-spacing:0;color:var(--cs-dim);opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-:is(#command-sidebar,.chain-only) .hsec-h .chev{font-size:10px}
-:is(#command-sidebar,.chain-only) .hsec-h:hover{color:var(--cs-text)}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows){border-top:1px solid var(--cs-line2)}
-:is(#command-sidebar,.chain-only) .cmds .note{display:block;padding:6px 10px 8px;font-size:11px;color:var(--cs-dim)}
-/* fila de dos líneas (ronda 7 A): comando, explicación, chips */
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd{display:grid;grid-template-columns:1fr auto;gap:0 6px;padding:6px 10px;cursor:pointer;border-top:1px solid var(--cs-line2);position:relative;min-width:0}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd:first-child{border-top:0}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd:hover{background:var(--cs-hover)}
-:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd:active{background:var(--cs-press)}
-:is(#command-sidebar,.chain-only) .cmd code{font:13px var(--cs-mono);color:var(--cs-text);overflow-wrap:anywhere;min-width:0}
-:is(#command-sidebar,.chain-only) .cmd code em{color:var(--cs-dim);font-style:normal}
-:is(#command-sidebar,.chain-only) .cmd small{grid-column:1;color:var(--cs-dim);font-size:11px;line-height:1.3;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-:is(#command-sidebar,.chain-only) .cmd .opts{grid-column:1/-1;display:flex;flex-direction:row;flex-wrap:wrap;gap:3px;margin-top:3px;min-width:0}
-:is(#command-sidebar,.chain-only) .cmd .opts button[data-flat]{min-height:22px;padding:1px 7px;font:11px var(--cs-ui);border-radius:999px;background:var(--cs-panel2);color:var(--cs-text);border-color:var(--cs-btnline);text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:is(#command-sidebar,.chain-only) .cmd .opts button[data-flat]:hover{background:var(--cs-btn2);border-color:var(--cs-btnline2)}
-:is(#command-sidebar,.chain-only) .cmd .opts button[data-flat].new{border-color:var(--cs-amberline)}
-:is(#command-sidebar,.chain-only) .cmd .opts button[data-flat].new::after{content:"nuevo";margin-left:6px;font:600 10px var(--cs-mono);text-transform:uppercase;color:var(--cs-amber)}
-#command-sidebar .cmd.dis{opacity:.45;pointer-events:none}
-/* cadenas guardadas (ronda 8 A) */
-#command-sidebar .cs-saved-item{display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid var(--cs-line2);font-size:13px;min-width:0}
-#command-sidebar .cs-saved-item .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#command-sidebar .cs-saved-item small{color:var(--cs-dim);font-size:11px;min-width:0;overflow-wrap:anywhere}
-#command-sidebar .cs-saved-item button[data-flat].run{margin-left:auto;min-height:26px;padding:2px 10px;font-size:11px;border-radius:999px;flex:none}
-#command-sidebar .cs-saved-item.error small{color:var(--cs-amber)}
-#command-sidebar .cs-empty{padding:8px 12px;border-top:1px solid var(--cs-line2);color:var(--cs-dim);font-size:13px}
-/* cadena corriendo: tarjeta fija bajo la cabecera (ronda 8 A) */
-#command-sidebar .cs-runner{border:1px solid var(--cs-brandline);border-radius:var(--cs-r);background:var(--cs-yolo);padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0;flex:none}
-#command-sidebar .cs-runner.done{border-color:var(--cs-greenline);background:var(--cs-greenbg)}
-#command-sidebar .cs-runner .r-h{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}
-#command-sidebar .cs-runner .r-h b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#command-sidebar .cs-runner .r-h small{color:var(--cs-dim);font-weight:400}
-#command-sidebar .cs-runner .r-h .right{margin-left:auto;display:flex;gap:6px;align-items:center;flex:none}
-#command-sidebar .cs-runner .r-h button[data-flat]{min-height:26px;padding:2px 10px;font-size:13px}
-#command-sidebar .cs-runner .r-t{font:11px var(--cs-mono);color:var(--cs-dim);overflow-wrap:anywhere}
-#command-sidebar .cs-runner .steps{display:flex;flex-direction:column;gap:3px}
-#command-sidebar .cs-runner .step{display:flex;align-items:baseline;gap:6px;min-width:0;font:13px var(--cs-mono);color:var(--cs-dim);overflow-wrap:anywhere}
-#command-sidebar .cs-runner .step.cur{color:var(--cs-text);font-weight:600}
-#command-sidebar .cs-runner .step.done{text-decoration:line-through}
-#command-sidebar .cs-runner .step .k{font:10px var(--cs-mono);color:var(--cs-dim);text-transform:uppercase;letter-spacing:.04em;flex:none;min-width:36px}
-#command-sidebar .cs-runner .r-err{font-size:13px;color:var(--cs-amber);overflow-wrap:anywhere}
-#command-sidebar .cs-runner .acts{display:flex;gap:8px;align-items:center;min-width:0}
-#command-sidebar .cs-runner .acts .cs-next{min-height:40px;flex:1;justify-content:center}
-#command-sidebar .cs-runner .acts small{color:var(--cs-dim);font-size:11px}
-/* Una sola cabecera de terminales = asa de altura (se arrastra fuera de los botones).
-   Píldoras con flechas (grill ronda 2, 1-oct): píldoras redondas en una pista que se
-   desplaza; ‹ › redondas solo si no caben; el borde se desvanece donde hay más. */
-#command-sidebar .cs-terms{display:flex;align-items:center;gap:6px;min-height:42px;padding:0 0 0 10px;border-top:1px solid var(--cs-line);border-bottom:1px solid var(--cs-line);background:var(--cs-panel);flex:none;cursor:row-resize;touch-action:pan-x;user-select:none;-webkit-user-select:none}
-#command-sidebar .cs-terms button{cursor:pointer}
-#command-sidebar.terms-dragging .cs-terms{border-top-color:var(--cs-brand)}
-#command-sidebar.terms-hidden .cs-terms{cursor:default}
-#command-sidebar .cs-terms .tabs{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:6px 0;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 calc(100% - 18px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 calc(100% - 18px),transparent 100%)}
-#command-sidebar .cs-terms .tabs::-webkit-scrollbar{display:none}
-#command-sidebar .cs-terms .tabs.at-start{-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 18px),transparent 100%);mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 18px),transparent 100%)}
-#command-sidebar .cs-terms .tabs.at-end{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 100%);mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 100%)}
-#command-sidebar .cs-terms .tabs.at-start.at-end{-webkit-mask-image:none;mask-image:none}
-/* píldora = .tw con su punto + nombre (.t) y su ✕ (.tx); la ✕ pide «¿Cerrar?» antes */
-#command-sidebar .cs-terms .tw{flex:none;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 0;border-radius:999px;background:var(--cs-btn);border:1px solid var(--cs-line);color:var(--cs-dim);transition:background-color .15s,color .15s,border-color .15s}
-#command-sidebar .cs-terms .tw:hover{color:var(--cs-text);border-color:var(--cs-btnline)}
-#command-sidebar .cs-terms .tw.on{background:color-mix(in srgb,var(--cs-brand) 16%,var(--cs-btn));border-color:color-mix(in srgb,var(--cs-brand) 60%,transparent);color:var(--cs-text)}
-#command-sidebar .cs-terms .tw button[data-flat].t{display:flex;align-items:center;gap:7px;min-height:0;height:100%;padding:0 2px 0 11px;border:0;border-radius:999px 0 0 999px;background:transparent;box-shadow:none;color:inherit;font-size:12px;line-height:1;white-space:nowrap}
-#command-sidebar .cs-terms .tw button[data-flat].t:hover{background:transparent;color:inherit}
-#command-sidebar .cs-terms .tw.sel button[data-flat].t{font-weight:600}
-#command-sidebar .cs-terms .tw .dot{width:6px;height:6px;border-radius:50%;background:var(--cs-dim);opacity:.7;flex:none}
-#command-sidebar .cs-terms .tw.on .dot{background:var(--cs-brand);opacity:1;box-shadow:0 0 0 3px color-mix(in srgb,var(--cs-brand) 25%,transparent)}
-#command-sidebar .cs-terms .tw button[data-flat].tx{display:grid;place-items:center;flex:none;height:20px;min-width:20px;min-height:0;padding:0;border:0;border-radius:999px;background:transparent;color:var(--cs-dim);font-size:10px;line-height:1;opacity:.55;transition:opacity .15s,background-color .15s,color .15s}
-#command-sidebar .cs-terms .tw:hover button[data-flat].tx,#command-sidebar .cs-terms .tw.on button[data-flat].tx{opacity:1}
-#command-sidebar .cs-terms .tw button[data-flat].tx:hover{background:var(--cs-btnline);color:var(--cs-text)}
-#command-sidebar .cs-terms .tw button[data-flat].tx.armed{opacity:1;padding:0 8px;font-size:11px;font-weight:600;color:var(--cs-red);background:color-mix(in srgb,var(--cs-red) 22%,transparent)}
-@media(pointer:coarse){#command-sidebar .cs-terms .tw button[data-flat].tx{opacity:1;min-width:26px}}
-/* flechas y «+»: círculos */
-#command-sidebar .cs-terms button[data-flat].arr{flex:none;display:grid;place-items:center;width:26px;height:26px;min-height:0;padding:0;border-radius:50%;background:var(--cs-btn);border:1px solid var(--cs-btnline);color:var(--cs-text);font-size:14px;line-height:1;transition:opacity .15s,border-color .15s,color .15s}
-#command-sidebar .cs-terms button[data-flat].arr:hover:not([disabled]){border-color:var(--cs-brand);color:var(--cs-brand)}
-#command-sidebar .cs-terms button[data-flat].arr[disabled]{opacity:.25;cursor:default}
-#command-sidebar .cs-terms button[data-flat].arr[hidden]{display:none}
-#command-sidebar .cs-terms button[data-flat].t.plus{flex:none;display:grid;place-items:center;width:28px;height:28px;min-height:0;padding:0;border-radius:50%;border:1px dashed color-mix(in srgb,var(--cs-brand) 45%,transparent);background:transparent;color:var(--cs-brand);font-size:16px;font-weight:700;line-height:1;box-shadow:none}
-#command-sidebar .cs-terms button[data-flat].t.plus:hover{background:color-mix(in srgb,var(--cs-brand) 12%,transparent)}
-/* Persiana (grill 1-oct): el chevron vive en su propio hueco a la derecha y gira al
-   esconder. Sin rayas: Jesús las descartó. */
-#command-sidebar .cs-terms .tog-slot{align-self:stretch;flex:none;display:flex;border-left:1px solid var(--cs-line)}
-#command-sidebar .cs-terms .tog-slot:empty{display:none}
-#command-sidebar .cs-terms button[data-flat].tog{width:40px;min-height:0;padding:0;border:0;border-radius:0;display:grid;place-items:center;color:var(--cs-dim);background:transparent}
-#command-sidebar .cs-terms button[data-flat].tog:hover{color:var(--cs-text);background:var(--cs-hover)}
-#command-sidebar .cs-terms button[data-flat].tog svg{transition:transform .35s cubic-bezier(.5,1.6,.4,1)}
-#command-sidebar.terms-hidden .cs-terms button[data-flat].tog svg{transform:rotate(180deg)}
-@media (prefers-reduced-motion:reduce){#command-sidebar .cs-terms button[data-flat].tog svg{transition:none}#command-sidebar .cs-terms .tabs{scroll-behavior:auto}}
-@media(pointer:coarse){:is(#command-sidebar,.chain-only) :is(.cmds,.srows) .cmd{padding-block:10px}:is(#command-sidebar,.chain-only) .cmd .opts button[data-flat]}
-/* Constructor de cadenas (dash/chain-builder.js): .backdrop[data-mclose] > .modal.chain-only.
-   Estilos 1:1 del modal aprobado del mockup (?round=cli: cabecera con libro, búsqueda y
-   «escribe en»; tablero de CLI a lo ancho con comandos en tres columnas; barra de ranuras
-   tipo inventario). .modal global (index.html) es una capa fixed oculta: aquí se neutraliza. */
-.backdrop[data-mclose]{position:fixed;inset:0;z-index:12000;display:flex;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;background:rgba(6,8,14,.72);animation:cb-fade .15s}
-@keyframes cb-fade{from{opacity:0}}
-@keyframes cb-pop{from{opacity:0;transform:scale(.985)}}
-.backdrop[data-mclose] > .modal.chain-only{position:relative;inset:auto;z-index:auto;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;overflow:hidden;padding:0;-webkit-user-select:text;user-select:text;width:min(1040px,100%);height:min(700px,100%);min-height:0;box-sizing:border-box;background:var(--cs-panel2);color:var(--cs-text);border:1px solid var(--cs-btnline2);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.7);animation:cb-pop .18s ease-out}
-.chain-only [hidden]{display:none!important}
-.chain-only .m-head{display:flex;align-items:center;gap:12px;flex:none;padding:8px 14px;border-bottom:1px solid var(--cs-line);min-width:0}
-.chain-only .m-head h2{margin:0;font-size:14px;font-weight:700;white-space:nowrap}
-.chain-only .m-head .search{position:relative;flex:1;max-width:340px;margin-left:12px;min-width:0}
-.chain-only .m-head .search .hic{position:absolute;left:10px;top:11px;width:14px;height:14px;pointer-events:none;color:var(--cs-dim)}   /* lupa propia (.hic): la clase .ic es la del sprite pixel de 32 px */
-.chain-only .m-head .m-q{width:100%;box-sizing:border-box;min-height:36px;padding:6px 10px 6px 32px;border:1px solid var(--cs-line);border-radius:10px;background:var(--cs-panel2);color:var(--cs-text);font:inherit}
-.chain-only .m-head .m-q::placeholder{color:var(--cs-dim)}
-.chain-only .m-head .m-q:focus,.chain-only .m-name:focus{outline:none;border-color:var(--cs-brand)}
-.chain-only .m-head .target{display:flex;gap:6px;margin-left:auto;align-items:center;min-width:0;flex:none}
-.chain-only .m-head .target>span:first-child{font-size:11px;color:var(--cs-dim);white-space:nowrap}
-.chain-only .m-head .target .pill{font-size:13px;min-height:28px;padding:4px 12px;border-radius:999px;border:1px solid var(--cs-brand);background:var(--cs-brand);color:var(--cs-on-brand);font-weight:700;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.chain-only .m-head button[data-flat].x{min-height:36px;width:36px;justify-content:center;padding:0;border-radius:10px}
-/* tablero: CLIs a lo ancho, comandos en tres columnas como tarjetas */
-.chain-only .cb-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
-.chain-only .cb-body > .cs-cli{flex:none}
-.chain-only .cs-cli .cli-h{padding:9px 12px}
-.chain-only :is(.cmds,.srows){columns:3;column-gap:8px;padding:6px 8px 8px;border-top:0}
-.chain-only :is(.cmds,.srows) .cmd{break-inside:avoid;border:1px solid var(--cs-line2);border-radius:10px;margin-bottom:6px;background:var(--cs-panel2);padding:7px 116px 7px 10px;display:block}   /* reserva «+ cadena» (≈76 px) + ⠿ + aire: el botón no tapa el texto */
-.chain-only :is(.cmds,.srows) .cmd:first-child{border-top:1px solid var(--cs-line2)}
-.chain-only :is(.cmds,.srows) .cmd:hover{background:var(--cs-hover)}
-.chain-only .cmd code{display:block}
-.chain-only .cmd small{display:-webkit-box}
-.chain-only .cmd .opts{display:flex}
-.chain-only .cmd button[data-flat].add{display:inline-flex;position:absolute;right:30px;top:7px;min-height:24px;padding:0 7px;font-size:11px;border-radius:8px;gap:4px}
-.chain-only .cmd::after{content:"⠿";position:absolute;right:10px;top:8px;color:var(--cs-btnline2);font-size:14px}
-.chain-only .cmd.dis{opacity:.6}
-.chain-only .cb-empty{padding:8px 4px;color:var(--cs-dim);font-size:13px}
-.chain-only .cb-msg:empty{display:none}
-.chain-only .m-error{margin:0 14px 8px;padding:7px 10px;border:1px solid var(--cs-redline);border-radius:8px;color:var(--cs-red);font-size:13px;overflow-wrap:anywhere}
-/* barra de ranuras (hotbar) */
-.chain-only .hotbar{flex:none;border-top:1px solid var(--cs-line);background:var(--cs-panel);padding:6px 12px;display:flex;align-items:center;gap:8px;min-width:0}
-.chain-only .hotbar .hb-t{font-weight:600;display:flex;gap:8px;align-items:center;white-space:nowrap;flex:none}
-.chain-only .slots{display:flex;gap:8px;flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;padding:4px 2px;scrollbar-width:thin}
-.chain-only .slots .slot,.chain-only .slots .step{width:92px;height:48px;flex:none;box-sizing:border-box;border:2px dashed var(--cs-line);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font:11px var(--cs-mono);color:var(--cs-dim);cursor:grab;background:var(--cs-panel2);position:relative;overflow:hidden}
-.chain-only .slots .step{border-style:solid;border-color:var(--cs-btnline2);color:var(--cs-text);padding:2px 6px;text-align:center}
-.chain-only .slots .step.dragging{opacity:.45}
-.chain-only .slots .step.over{border-color:var(--cs-green)}
-.chain-only .slots .step .k{font:700 10px var(--cs-ui);color:var(--cs-brand);text-transform:none;letter-spacing:0;white-space:nowrap}
-.chain-only .slots .step .k b{font-weight:700}
-.chain-only .slots .step[data-kind=shell] .k{color:var(--cs-amber)}
-.chain-only .slots .step .grab{display:none}
-.chain-only .slots .step code{font:11px var(--cs-mono);color:var(--cs-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.chain-only .slots .step .ctl{display:none;position:absolute;inset:auto 0 0 0;justify-content:center;gap:2px;background:color-mix(in srgb,var(--cs-panel2) 92%,transparent);padding:1px}
-.chain-only .slots .step:hover .ctl,.chain-only .slots .step:focus-within .ctl{display:flex}
-.chain-only .slots .step .ctl button[data-flat]{min-height:18px;min-width:22px;padding:0 4px;font-size:10px;border-radius:6px}
-.chain-only .hotbar .m-name{width:130px;min-height:32px;padding:4px 8px;box-sizing:border-box;border:1px solid var(--cs-line);border-radius:10px;background:var(--cs-panel2);color:var(--cs-text);font:inherit;flex:none}
-.chain-only .hotbar button[data-flat]{min-height:32px;padding:4px 10px;flex:none}
-.chain-only .hotbar button[data-flat].primary{min-height:32px}
-.chain-only .m-foot{flex:none;display:flex;align-items:center;gap:10px;padding:6px 14px;border-top:1px solid var(--cs-line);font-size:11px;color:var(--cs-dim);min-width:0}
-.chain-only .m-foot b{color:var(--cs-text)}
-.chain-only .m-foot .cb-count{white-space:nowrap}
-.chain-only .m-foot .right{margin-left:auto;display:flex;gap:8px;flex:none}
-.chain-only .m-foot button[data-flat].ghost{min-height:28px;padding:2px 10px}
-@media (max-width:899px){
-  .backdrop[data-mclose]{padding:0}
-  .backdrop[data-mclose] > .modal.chain-only{width:100%;height:100%;border-radius:0;border-width:0}
-  .chain-only .m-head{flex-wrap:wrap;gap:8px}
-  .chain-only .m-head .search{max-width:none;width:100%;margin:0}
-  .chain-only .m-head .target{margin-left:0;width:100%}
-  .chain-only :is(.cmds,.srows){columns:1}
-  .chain-only .hotbar{flex-wrap:wrap}
-  .chain-only .hotbar .slots{flex-basis:100%}
-}
-@media(pointer:coarse){.chain-only .cmd button[data-flat].add{min-height:32px}.chain-only .slots .step .ctl{display:flex}.chain-only .slots .step .ctl button[data-flat]{min-height:22px}}
+/* Consumos · saldo de OpenRouter: sin caja; «OpenRouter · disponible», la cifra grande en
+   color de marca y Comprado / Consumido pequeños debajo (diseño aprobado, nov-2026). */
+#command-sidebar .cs-credits{padding:16px 16px 18px;margin:0;border:0;border-radius:0;background:none;font-family:var(--cs-mono);font-variant-numeric:tabular-nums}
+#command-sidebar .cs-credits:empty{display:none}
+#command-sidebar .sf-credit-head{display:flex;align-items:center;gap:8px;min-height:24px}
+#command-sidebar .sf-credit-head strong{font:400 11px/1.3 var(--cs-mono);color:var(--cs-dim)}
+#command-sidebar .cs-credits:has(.sf-credit-numbers) .sf-credit-head strong::after{content:" · disponible"}
+#command-sidebar .cs-credits .sf-credit-head button[data-flat]{margin-left:auto;min-height:0;width:24px;height:24px;padding:0;justify-content:center;border-radius:6px;border-color:transparent;background:transparent;color:var(--cs-dim);font-size:13px;line-height:1}
+#command-sidebar .cs-credits .sf-credit-head button[data-flat]:hover{background:var(--cs-btn);border-color:var(--cs-btnline);color:var(--cs-text)}
+#command-sidebar .sf-credit-numbers{display:grid;grid-template-columns:auto auto minmax(0,1fr);column-gap:24px;row-gap:10px;padding-top:2px}
+#command-sidebar .sf-credit-numbers>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+#command-sidebar .sf-credit-numbers>div:first-child{grid-column:1/-1}
+#command-sidebar .cs-credits:has(.sf-credit-numbers) .sf-credit-numbers>div:first-child small{display:none}
+#command-sidebar .sf-credit-numbers strong{font:600 26px/1.15 var(--cs-mono);color:var(--cs-brand);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+#command-sidebar .sf-credit-numbers small{display:block;margin:0;font:400 11px/1.3 var(--cs-mono);color:var(--cs-dim)}
+#command-sidebar .sf-credit-numbers b{font:600 14px/1.25 var(--cs-mono);color:var(--cs-text);font-variant-numeric:tabular-nums}
+#command-sidebar .cs-credits p,#command-sidebar .cs-credits details small{color:var(--cs-dim);font-size:11px;line-height:1.5}
+#command-sidebar .cs-credits p{margin:6px 0 0}
+#command-sidebar .cs-credits label,#command-sidebar .cs-credits details>small{display:block;margin:8px 0}
+#command-sidebar .cs-credits input{box-sizing:border-box;width:100%;min-width:0;margin:6px 0;padding:8px;color:var(--cs-text);background:var(--cs-panel2);border:1px solid var(--cs-line);border-radius:5px}
+#command-sidebar .cs-credits summary{cursor:pointer;font-size:12px;color:var(--cs-brand);margin-top:8px}
+#command-sidebar .et-lim[hidden]{display:none!important}
+#command-sidebar .cs-credits button{min-height:28px;padding:4px 9px;background:var(--cs-panel2);border:1px solid var(--cs-line);border-radius:5px;font-size:11px;color:var(--cs-text)}
 
 /* Remoto: Terminal · Nueva sesión · Ordenar a la derecha de las pestañas,
    como teclas de 32 px con el mismo canto que la cabecera. */
@@ -1107,78 +668,14 @@ body.app.split:not(.inapp) #tab-left[aria-pressed="true"]{color:var(--brand)}
 }
 
 /* Modales en medio (2-oct, Jesús): en el remoto partido los .modal, el asistente de sesión nueva (+),
-   Uso de skills y MCPs / Perfiles (.sc-modal) y el Pomodoro se abren sobre TODA la ventana, centrados,
+   Uso de skills y MCPs / Perfiles (.sc-modal) se abren sobre TODA la ventana, centrados,
    nunca dentro de la columna izquierda. (En la app de escritorio van a la ventana centrada de la app.) */
 
-/* Approved sidebar A: files first, secondary tools, static controls. */
+/* Sidebar: Sessions feed below a toolbar with the Servers button. */
 #command-sidebar .cs-tools{position:relative;align-items:center;gap:4px;padding:7px 8px;background:var(--cs-panel)}
 #command-sidebar .cs-tools button[data-flat].tb{height:34px;border-radius:6px}
 #command-sidebar .cs-tools .cs-server-button{flex:0 0 32px!important}
-#command-sidebar .cs-more{position:relative;flex:none;color:var(--cs-dim)}
-#command-sidebar .cs-more summary{list-style:none;display:grid;place-items:center;width:30px;height:34px;cursor:pointer;font-size:22px;border-radius:6px}
-#command-sidebar .cs-more summary::-webkit-details-marker{display:none}
-#command-sidebar .cs-more summary:hover{background:var(--cs-hover);color:var(--cs-text)}
-#command-sidebar .cs-more>div{position:absolute;right:0;top:39px;z-index:15;min-width:160px;padding:5px;background:var(--cs-panel2);border:1px solid var(--cs-line);border-radius:8px;box-shadow:0 8px 20px #0006}
-#command-sidebar .cs-more button{display:block;width:100%;min-height:36px;text-align:left;background:transparent;border:0;padding:8px 12px;color:var(--cs-text)}
-#command-sidebar .cs-more button:hover{background:var(--cs-hover)}
-#command-sidebar .cs-explorer{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:hidden;color:var(--cs-text);font:12px/1.5 "Ubuntu Sans",system-ui,sans-serif}
-#command-sidebar .cs-explorer[hidden],#command-sidebar .et-lim[hidden]{display:none!important}
-#command-sidebar .sf-heading{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 0;gap:8px}
-#command-sidebar .sf-heading strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
-#command-sidebar .sf-heading button{display:grid;place-items:center;min-height:28px;min-width:28px;padding:4px;border:0;background:transparent;color:var(--cs-dim)}
-#command-sidebar .sf-root{padding:3px 12px 10px;color:var(--cs-dim);font:10px/1.5 var(--mono);overflow-wrap:anywhere;max-height:60px;overflow:auto;user-select:text}
-#command-sidebar .sf-tree{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;padding:4px 0}
-#command-sidebar button.sf-row{display:flex;align-items:center;gap:7px;min-height:29px;width:100%;border:0;border-radius:0;padding-top:3px;padding-bottom:3px;padding-right:10px;text-align:left;background:transparent;color:var(--cs-text);box-shadow:none;font:12px/1.5 "Ubuntu Sans",system-ui,sans-serif;transform:none;transition:none}
-#command-sidebar button.sf-row:hover,#command-sidebar button.sf-row.selected{background:var(--cs-hover)}
-#command-sidebar button.sf-row:focus-visible{outline:1px solid var(--cs-brand);outline-offset:-1px}
-#command-sidebar .sf-caret{width:9px;flex:none;color:var(--cs-dim)}
-#command-sidebar .sf-type{display:inline-grid;place-items:center;width:16px;flex:none;font:700 9px/16px var(--mono)}
-#command-sidebar .sf-row svg{flex:none;color:var(--cs-brand)}
-#command-sidebar .sf-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#command-sidebar .sf-selection{flex:none;padding:9px 12px;border-top:1px solid var(--cs-line)}
-#command-sidebar .sf-selection code{display:block;font:10px/1.5 var(--mono);overflow-wrap:anywhere;user-select:text;max-height:60px;overflow:auto}
-#command-sidebar .sf-selection>div{display:flex;gap:8px;padding:7px 0 3px;flex-wrap:wrap}
-#command-sidebar .sf-selection button,#command-sidebar .cs-credits button{min-height:28px;padding:4px 9px;background:var(--cs-panel2);border:1px solid var(--cs-line);border-radius:5px;font-size:11px;color:var(--cs-text)}
-#command-sidebar .sf-selection small{display:block;color:var(--cs-dim);font-size:10px;line-height:1.4}
-#command-sidebar .sf-message{padding:12px;color:var(--cs-dim);font-size:12px;overflow-wrap:anywhere}
-#command-sidebar .sf-message code{font:11px/1.4 var(--mono);color:var(--cs-text)}
-#command-sidebar .sf-top{flex:none}
-#command-sidebar .sf-body{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
-#command-sidebar .sf-actions{display:flex;gap:2px}
-#command-sidebar .sf-heading button[aria-pressed="true"]{color:var(--cs-brand)}
-#command-sidebar .sf-search{padding:0 10px 8px}
-#command-sidebar .sf-query{display:block;width:100%;box-sizing:border-box;min-height:30px;padding:5px 9px;border:1px solid var(--cs-line);border-radius:6px;background:var(--cs-panel2);color:var(--cs-text);font:12px/1.4 var(--mono)}
-#command-sidebar .sf-query:focus{outline:none;border-color:var(--cs-brand)}
-#command-sidebar .sf-hit{padding-left:10px}
-#command-sidebar .sf-hit-text{display:flex;flex-direction:column;min-width:0;line-height:1.25}
-#command-sidebar .sf-hit-text small{color:var(--cs-dim);font:10px/1.35 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#command-sidebar .sf-skeleton{display:flex;flex-direction:column;gap:12px;padding:14px 14px 14px 16px}
-#command-sidebar .sf-skeleton span{display:block;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--cs-line) 0%,var(--cs-hover) 45%,var(--cs-line) 90%);background-size:220% 100%;animation:sf-shimmer 1.2s ease-in-out infinite}
-#command-sidebar .sf-skeleton span:nth-child(2n){animation-delay:.08s}
-#command-sidebar .sf-pending{display:flex;gap:4px;align-items:center;height:24px}
-#command-sidebar .sf-pending i{width:4px;height:4px;border-radius:50%;background:var(--cs-dim);animation:sf-dot 1s ease-in-out infinite}
-#command-sidebar .sf-pending i:nth-child(2){animation-delay:.15s}
-#command-sidebar .sf-pending i:nth-child(3){animation-delay:.3s}
-@keyframes sf-shimmer{from{background-position:120% 0}to{background-position:-100% 0}}
-@keyframes sf-dot{0%,80%,100%{opacity:.25;transform:none}40%{opacity:1;transform:translateY(-2px)}}
-@media (prefers-reduced-motion:reduce){#command-sidebar .sf-skeleton span,#command-sidebar .sf-pending i{animation:none}}
-#command-sidebar .cs-footer{display:flex;align-items:center;justify-content:space-between;flex:none;order:4;padding:7px 12px;border-top:1px solid var(--cs-line);color:var(--cs-dim);font:10px/1.5 var(--mono)}
-#command-sidebar .cs-footer #clock{margin:0;font:inherit;letter-spacing:0;color:inherit}
-#command-sidebar .cs-credits{padding:12px;margin:10px;border:1px solid var(--cs-line);border-radius:9px;background:var(--cs-panel)}
-#command-sidebar .cs-credits:empty{display:none}
-#command-sidebar .sf-credit-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
-#command-sidebar .sf-credit-numbers{display:flex;gap:12px;flex-wrap:wrap;padding-top:8px}
-#command-sidebar .sf-credit-numbers>div{display:flex;flex-direction:column;gap:3px}
-#command-sidebar .sf-credit-numbers>div:first-child{flex:1 1 100%}
-#command-sidebar .sf-credit-numbers strong{font:600 23px/1.3 var(--mono);color:var(--cs-brand)}
-#command-sidebar .cs-credits p,#command-sidebar .cs-credits small{color:var(--cs-dim);font-size:11px;line-height:1.5}
-#command-sidebar .cs-credits label,#command-sidebar .cs-credits small{display:block;margin:8px 0}
-#command-sidebar .cs-credits input{box-sizing:border-box;width:100%;min-width:0;margin:6px 0;padding:8px;color:var(--cs-text);background:var(--cs-panel2);border:1px solid var(--cs-line);border-radius:5px}
-#command-sidebar .cs-credits summary{cursor:pointer;font-size:12px;color:var(--cs-brand)}
-#command-sidebar button[data-terms-toggle]{color:var(--cs-dim)!important;background:transparent!important;border:1px solid var(--cs-line)!important;border-radius:5px!important;box-shadow:none!important}
-#command-sidebar button[data-terms-toggle]:hover{color:var(--cs-text)!important;background:var(--cs-hover)!important}
-#btn-pomo svg{width:18px;height:18px;flex:none}
-@media(max-width:600px){#command-sidebar .sf-row{min-height:34px!important}#command-sidebar .cs-tools button[data-flat].tb{height:38px}}
+@media(max-width:600px){#command-sidebar .cs-tools button[data-flat].tb{height:38px}}
 
 /* Ficha viva (design/ficha-viva-spec.md §2–3): K5 = one accent, more intense = more urgent.
    Te espera = solid --brand tile; sin leer = 7 px dot + white 600 name; trabajando = faint

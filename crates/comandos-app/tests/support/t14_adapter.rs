@@ -120,8 +120,7 @@ pub fn execute() -> serde_json::Value {
                 .to_string(),
         );
     let header_source = include_str!("../../src/ui/header.rs");
-    let header = body(header_source, "pub fn badge_text(")
-        + &body(header_source, "pub struct Header {")
+    let header = body(header_source, "pub struct Header {")
         + &body(header_source, "impl Header {");
     let tab_source = include_str!("../../src/ui/tab_label.rs");
     let mut tab_methods = String::new();

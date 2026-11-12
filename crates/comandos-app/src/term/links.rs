@@ -241,15 +241,30 @@ pub fn link_at(
         }
         owned.push(cells);
     }
+    link_in_cells(&owned, usize::from(row) - first, usize::from(col), native, |i| {
+        engine.row_wraps(first + i)
+    })
+}
+
+/// The link under column `col` of row `clicked` in rows of drawn cells (a
+/// few rows around the click, so a link cut over two lines is joined).
+/// `native` is the URL the terminal itself found there; `wraps(i)` says
+/// row `i` continues on the next one.
+pub fn link_in_cells(
+    owned: &[Vec<String>],
+    clicked: usize,
+    col: usize,
+    native: Option<String>,
+    wraps: impl Fn(usize) -> bool,
+) -> Option<String> {
+    let cols = owned.iter().map(Vec::len).max().unwrap_or(0);
     let grid: Vec<Vec<&str>> = owned
         .iter()
         .map(|l| l.iter().map(String::as_str).collect())
         .collect();
-    let clicked = usize::from(row) - first;
     // The window grid holds every pane of a split side by side: keep the clicked pane's
     // columns, between tmux's borders, so a cut link never joins the next pane's words
     // (2-nov: «…/auditoria-redes-20261102/» + a word from the left pane).
-    let col = usize::from(col);
     let border = |cell: &str| matches!(cell, "│" | "┃" | "║");
     let joint = |cell: &str| {
         border(cell)
@@ -275,7 +290,7 @@ pub fn link_at(
         .find(|&c| here.get(c).is_some_and(|cell| border(cell)));
     let right = (col + 1..here.len()).find(|&c| here.get(c).is_some_and(|cell| border(cell)));
     let start = left.map_or(0, |c| c + 1);
-    let end = right.unwrap_or(usize::from(cols));
+    let end = right.unwrap_or(cols);
     let same_pane = |line: &[&str]| {
         [left, right]
             .into_iter()
@@ -303,7 +318,7 @@ pub fn link_at(
         if !lines_ok.get(index + 1).copied().unwrap_or(false) {
             return false;
         }
-        if left.is_none() && right.is_none() && engine.row_wraps(first + index) {
+        if left.is_none() && right.is_none() && wraps(index) {
             return true;
         }
         let Some((previous, next)) = lines.get(index).zip(lines.get(index + 1)) else {

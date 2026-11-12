@@ -59,12 +59,9 @@ impl Drop for LeftFx {
 type Snapshot = (gdk_pixbuf::Pixbuf, i32, i32, i32, i32);
 pub(super) struct Owned {
     pub relay: RefCell<Option<ui::signals::SignalRelay>>,
-    pub requests: RefCell<BTreeMap<&'static str, Rc<ui::snippets::Scope>>>,
     pub reader_layout: RefCell<Option<glib::SourceId>>,
     pub reader_signals: RefCell<Vec<(glib::Object, glib::SignalHandlerId)>>,
-    pub reveal: RefCell<Option<glib::SourceId>>,
     pub mosaic_loading: Cell<bool>,
-    pub side_loading: Cell<bool>,
     pub debug_loading: Cell<bool>,
     pub zoom_closing: Cell<bool>,
     pub cells: RefCell<Vec<(String, gtk::Box)>>,
@@ -72,15 +69,8 @@ pub(super) struct Owned {
     pub cell_sizes: RefCell<BTreeMap<String, (i32, i32)>>,
     pub cell_grown: RefCell<BTreeMap<String, bool>>,
     pub state: RefCell<SideState>,
-    pub side: gtk::Paned,
-    pub host: gtk::Box,
-    pub head_event: gtk::EventBox,
-    pub head: gtk::Box,
-    pub tabs: gtk::Box,
-    pub tabs_scroll: gtk::ScrolledWindow,
-    pub previous: gtk::Button,
-    pub next: gtk::Button,
-    pub toggle: gtk::Button,
+    /// The left panel: the dashboard WebKit view, full height.
+    pub left: gtk::Box,
     pub column: gtk::Box,
     pub reader_paned: gtk::Paned,
     pub reader_host: gtk::Box,
@@ -90,8 +80,6 @@ pub(super) struct Owned {
     pub reader_scope: ui::snippets::Scope,
     pub clients: RefCell<OwnedViews<Client>>,
     pub focused: RefCell<Option<String>>,
-    pub side_current: RefCell<Option<String>>,
-    pub side_scope: ui::snippets::Scope,
     pub mosaic: RefCell<MosaicState>,
     pub mosaic_box: RefCell<Option<gtk::Box>>,
     pub mosaic_scope: ui::snippets::Scope,
@@ -106,13 +94,9 @@ pub(super) struct Owned {
     pub layout_doc: RefCell<Value>,
     pub pane_doc: RefCell<Value>,
     pub layout_save: RefCell<Option<glib::SourceId>>,
-    pub share_save: RefCell<Option<glib::SourceId>>,
     pub pane_save: RefCell<Option<glib::SourceId>>,
     pub layout_scope: ui::snippets::Scope,
     pub pane_scope: ui::snippets::Scope,
-    pub drag: Cell<Option<(f64, i32)>>,
-    pub queued: RefCell<Option<glib::SourceId>>,
-    pub shown: RefCell<String>,
     pub fx: RefCell<Option<LeftFx>>,
     pub snapshot: RefCell<Option<Snapshot>>,
     pub signals: RefCell<Vec<(glib::Object, glib::SignalHandlerId)>>,
@@ -120,49 +104,7 @@ pub(super) struct Owned {
 }
 impl Default for Owned {
     fn default() -> Self {
-        let side = gtk::Paned::new(gtk::Orientation::Vertical);
-        side.set_wide_handle(false);
-        let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        host.style_context().add_class("cc-side-term");
-        host.set_no_show_all(true);
-        host.hide();
-        side.pack2(&host, true, false);
-        let head_event = gtk::EventBox::new();
-        head_event.style_context().add_class("side-head");
-        head_event.add_events(
-            gdk::EventMask::BUTTON_PRESS_MASK
-                | gdk::EventMask::BUTTON_RELEASE_MASK
-                | gdk::EventMask::POINTER_MOTION_MASK,
-        );
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        head.set_size_request(-1, 40);
-        head_event.add(&head);
-        host.pack_start(&head_event, false, false, 0);
-        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        let tabs_scroll = gtk::ScrolledWindow::new(gtk::Adjustment::NONE, gtk::Adjustment::NONE);
-        tabs_scroll.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
-        tabs_scroll.set_propagate_natural_height(true);
-        tabs_scroll.add(&tabs);
-        let previous = side_button("‹", &["side-arr"], "Terminales anteriores");
-        let next = side_button("›", &["side-arr"], "Más terminales");
-        for button in [&previous, &next] {
-            button.set_valign(gtk::Align::Center);
-            button.set_no_show_all(true);
-        }
-        let plus = side_button("+", &["side-plus"], "Nueva terminal");
-        plus.set_widget_name("side-plus");
-        plus.set_valign(gtk::Align::Center);
-        let toggle = side_button("", &["side-tog"], "");
-        toggle.set_always_show_image(true);
-        toggle.set_no_show_all(true);
-        head.pack_start(&previous, false, false, 0);
-        head.pack_start(&tabs_scroll, true, true, 0);
-        head.pack_start(&next, false, false, 0);
-        head.pack_start(&plus, false, false, 0);
-        head.pack_end(&toggle, false, false, 0);
-        // The host deliberately skips window.show_all(); reveal its header
-        // children now so controls remain available when the host is shown.
-        head_event.show_all();
+        let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let reader_paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         reader_paned.style_context().add_class("cc-paned");
         reader_paned.set_wide_handle(true);
@@ -174,12 +116,9 @@ impl Default for Owned {
         column.pack_start(&reader_paned, true, true, 0);
         Self {
             relay: RefCell::new(None),
-            requests: RefCell::new(BTreeMap::new()),
             reader_layout: RefCell::new(None),
             reader_signals: RefCell::new(vec![]),
-            reveal: RefCell::new(None),
             mosaic_loading: Cell::new(false),
-            side_loading: Cell::new(false),
             debug_loading: Cell::new(false),
             zoom_closing: Cell::new(false),
             cells: RefCell::new(vec![]),
@@ -187,15 +126,7 @@ impl Default for Owned {
             cell_sizes: RefCell::new(BTreeMap::new()),
             cell_grown: RefCell::new(BTreeMap::new()),
             state: RefCell::new(SideState::default()),
-            side,
-            host,
-            head_event,
-            head,
-            tabs,
-            tabs_scroll,
-            previous,
-            next,
-            toggle,
+            left,
             column,
             reader_paned,
             reader_host,
@@ -205,8 +136,6 @@ impl Default for Owned {
             reader_scope: ui::snippets::Scope::default(),
             clients: RefCell::new(OwnedViews::new(53)),
             focused: RefCell::new(None),
-            side_current: RefCell::new(None),
-            side_scope: ui::snippets::Scope::default(),
             mosaic: RefCell::new(MosaicState::default()),
             mosaic_box: RefCell::new(None),
             mosaic_scope: ui::snippets::Scope::default(),
@@ -221,38 +150,15 @@ impl Default for Owned {
             layout_doc: RefCell::new(Value::Null),
             pane_doc: RefCell::new(Value::Null),
             layout_save: RefCell::new(None),
-            share_save: RefCell::new(None),
             pane_save: RefCell::new(None),
             layout_scope: ui::snippets::Scope::default(),
             pane_scope: ui::snippets::Scope::default(),
-            drag: Cell::new(None),
-            queued: RefCell::new(None),
-            shown: RefCell::new(String::new()),
             fx: RefCell::new(None),
             snapshot: RefCell::new(None),
             signals: RefCell::new(vec![]),
             sources: RefCell::new(vec![]),
         }
     }
-}
-pub(super) fn side_button(label: &str, classes: &[&str], tip: &str) -> gtk::Button {
-    let button = if label.is_empty() {
-        gtk::Button::new()
-    } else {
-        gtk::Button::with_label(label)
-    };
-    button.set_relief(gtk::ReliefStyle::None);
-    button.set_can_focus(false);
-    for name in std::iter::once("side-btn").chain(classes.iter().copied()) {
-        button.style_context().add_class(name);
-    }
-    button.set_tooltip_text(Some(tip));
-    button.connect_realize(|b| {
-        if let Some(window) = b.event_window() {
-            window.set_cursor(gdk::Cursor::from_name(&b.display(), "pointer").as_ref());
-        }
-    });
-    button
 }
 impl App {
     pub(super) fn action_session(&self) -> Option<String> {
@@ -323,23 +229,18 @@ impl App {
             .unwrap_or(false)
     }
     pub(super) fn close_aux(&self, id: &str) {
-        let client = self
+        let widget = self
             .t18
             .clients
             .borrow()
             .get(id)
-            .map(|c| (c.overlay.widget.clone(), c.kind));
-        if let Some((widget, kind)) = client {
-            if let Some(parent) = widget
+            .map(|c| c.overlay.widget.clone());
+        if let Some(widget) = widget
+            && let Some(parent) = widget
                 .parent()
                 .and_then(|p| p.downcast::<gtk::Container>().ok())
-            {
-                parent.remove(&widget);
-            }
-            if kind == "side" && self.t18.side_current.borrow().as_deref() == Some(id) {
-                self.t18.side_current.borrow_mut().take();
-                self.t18.state.borrow_mut().collapsed = true;
-            }
+        {
+            parent.remove(&widget);
         }
         self.t17.boxes.borrow_mut().remove(id);
         self.t18.clients.borrow_mut().remove(id);
@@ -351,9 +252,6 @@ impl App {
         if name == "zoom" {
             self.t18.zoom_closing.set(false);
             self.t18.mosaic.borrow_mut().unzoom();
-        }
-        if let Some(scope) = self.t18.requests.borrow_mut().remove(name) {
-            scope.close();
         }
         if let Some(tick) = self
             .t18
@@ -372,7 +270,6 @@ impl App {
     }
     pub(super) fn shutdown_t18(&self) {
         self.t18.scope.close();
-        self.t18.side_scope.close();
         self.t18.mosaic_scope.close();
         self.t18.reader_scope.close();
         self.t18.layout_scope.close();
@@ -380,9 +277,7 @@ impl App {
         for slot in [
             &self.t18.fill,
             &self.t18.layout_save,
-            &self.t18.share_save,
             &self.t18.pane_save,
-            &self.t18.queued,
         ] {
             if let Some(id) = slot.borrow_mut().take() {
                 id.remove();
@@ -406,13 +301,8 @@ impl App {
         self.t18.reader.borrow_mut().take();
         self.t18.fx.borrow_mut().take();
         self.t18.snapshot.borrow_mut().take();
-        for scope in self.t18.requests.borrow().values() {
-            scope.close();
-        }
-        for slot in [&self.t18.reveal, &self.t18.reader_layout] {
-            if let Some(source) = slot.borrow_mut().take() {
-                source.remove();
-            }
+        if let Some(source) = self.t18.reader_layout.borrow_mut().take() {
+            source.remove();
         }
         for (_, source) in std::mem::take(&mut *self.t18.cell_taps.borrow_mut()) {
             source.remove();
@@ -452,6 +342,7 @@ impl App {
             } else {
                 self.tmux.attach_argv(session)
             },
+            control_argv: None,
             cwd: home.clone(),
             session: Some(session.into()),
             palette,
@@ -509,7 +400,6 @@ impl App {
         )?;
         let weak = Rc::downgrade(self);
         let view = id.to_string();
-        let key = session.to_string();
         let instance = term.cleanup_cancellation();
         term.widget().connect_focus_in_event(move |_, _| {
             if let Some(app) = weak.upgrade()
@@ -518,7 +408,6 @@ impl App {
             {
                 app.interacted.set(true);
                 *app.t18.focused.borrow_mut() = Some(view.clone());
-                app.side_focus_js(&key, kind == "side");
             }
             glib::Propagation::Proceed
         });
@@ -535,11 +424,5 @@ impl App {
                 |_| {},
             );
         }
-    }
-    fn side_focus_js(&self, session: &str, side: bool) {
-        self.quiet_js(&format!(
-            "window.sidebarTermFocused&&sidebarTermFocused({})",
-            json!(if side { session } else { "" })
-        ));
     }
 }

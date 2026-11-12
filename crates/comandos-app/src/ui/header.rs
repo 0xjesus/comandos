@@ -1,16 +1,6 @@
 //! Modelos y controles de la cabecera de la ventana propia.
 use gtk::prelude::*;
-pub const HEADER_ACTIONS: [&str; 6] = [
-    "quickTerminal",
-    "newSession",
-    "sortMenu",
-    "notices",
-    "chains",
-    "analytics",
-];
-pub fn badge_text(count: u64) -> Option<String> {
-    (count > 0).then(|| count.to_string())
-}
+pub const HEADER_ACTIONS: [&str; 3] = ["quickTerminal", "newSession", "sortMenu"];
 pub fn tween(elapsed_us: f64, from: f64, to: f64, ms: f64) -> f64 {
     let t = (elapsed_us / (ms * 1000.)).clamp(0., 1.);
     from + (to - from) * (1. - (1. - t).powi(3))
@@ -19,9 +9,7 @@ pub struct Header {
     pub bar: gtk::HeaderBar,
     brand: gtk::Label,
     controls: Vec<(gtk::Button, &'static str)>,
-    pub badge: gtk::Label,
     pub actions: Vec<(gtk::Button, &'static str)>,
-    pub notice_wrap: gtk::Overlay,
 }
 impl Header {
     pub fn new(window: &gtk::ApplicationWindow, english: bool) -> Self {
@@ -65,9 +53,6 @@ impl Header {
             bar.pack_end(&b);
             controls.push((b, icon));
         }
-        let badge = gtk::Label::new(None);
-        badge.set_no_show_all(true);
-        badge.style_context().add_class("cc-badge");
         let mut actions = Vec::new();
         for (icon, key, label) in [
             (
@@ -76,41 +61,21 @@ impl Header {
                 if english { "Settings" } else { "Ajustes" },
             ),
             (
-                "bell",
-                "notif",
-                if english {
-                    "Notifications"
-                } else {
-                    "Notificaciones"
-                },
-            ),
-            (
                 "sparkles",
                 "news",
                 if english { "Summaries" } else { "Resúmenes" },
             ),
-            ("timer", "pomo", "Pomodoro"),
         ] {
             let b = super::icons::button(icon, 16, label);
             b.style_context().add_class("cc-key");
             b.style_context().add_class(&format!("cc-key-{key}"));
             actions.push((b, key));
         }
-        let notice_wrap = gtk::Overlay::new();
-        if let Some((button, _)) = actions.iter().find(|(_, k)| *k == "notif") {
-            notice_wrap.add(button);
-        }
-        badge.set_halign(gtk::Align::End);
-        badge.set_valign(gtk::Align::Start);
-        notice_wrap.add_overlay(&badge);
-        notice_wrap.set_overlay_pass_through(&badge, true);
         Self {
             bar,
             brand,
             controls,
-            badge,
             actions,
-            notice_wrap,
         }
     }
     pub fn paint(&self, theme: &crate::theme::ThemeTokens) {
@@ -133,20 +98,10 @@ impl Header {
         }
         for (b, key) in &self.actions {
             let name = match *key {
-                "notif" => "bell",
                 "news" => "sparkles",
-                "pomo" => "timer",
                 _ => "settings",
             };
             b.set_image(Some(&super::icons::image(name, 16, dim)));
-        }
-    }
-    pub fn set_badge(&self, count: u64) {
-        if let Some(text) = badge_text(count) {
-            self.badge.set_text(&text);
-            self.badge.show();
-        } else {
-            self.badge.hide();
         }
     }
 }

@@ -113,7 +113,7 @@ pub const COMPONENTS: &[Component] = &[
     Component {
         id: "tail",
         mount: crate::components::foundation_tail::mount,
-        attach: Some(crate::components::foundation_tail::attach),
+        attach: None,
     },
     Component {
         id: "snippets",
@@ -196,11 +196,6 @@ pub const COMPONENTS: &[Component] = &[
         attach: Some(crate::components::workspace::attach),
     },
     Component {
-        id: "chain-builder",
-        mount: crate::components::chain_builder::mount,
-        attach: None,
-    },
-    Component {
         id: "workspace-dock",
         mount: crate::components::workspace_dock::mount,
         attach: Some(crate::components::workspace_dock::attach),
@@ -226,29 +221,9 @@ pub const COMPONENTS: &[Component] = &[
         attach: Some(crate::components::news_reader::attach),
     },
     Component {
-        id: "notifications",
-        mount: crate::components::notifications::mount,
-        attach: None,
-    },
-    Component {
-        id: "analytics-render",
-        mount: crate::components::analytics::mount_render,
-        attach: None,
-    },
-    Component {
-        id: "analytics",
-        mount: crate::components::analytics::mount,
-        attach: None,
-    },
-    Component {
         id: "work-marks",
         mount: crate::components::work_marks::mount,
         attach: Some(crate::components::work_marks::attach),
-    },
-    Component {
-        id: "pomodoro",
-        mount: crate::components::pomodoro::mount,
-        attach: Some(crate::components::pomodoro::attach),
     },
     Component {
         id: "ui-sounds",
@@ -422,9 +397,7 @@ mod web {
         meta_ids(&content).iter().any(|id| {
             matches!(
                 *id,
-                "analytics"
-                    | "analytics-render"
-                    | "news-reader"
+                "news-reader"
                     | "ui-sounds"
                     | "vendor-markdown-it"
                     | "vendor-purify"

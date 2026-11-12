@@ -31,6 +31,28 @@ pub fn desktop_theme(name: &str, _themes: &Value) -> Option<ThemeTokens> {
     Some(ThemeTokens { ansi, values })
 }
 
+fn state_role(t: &Map<String, Value>, key: &str, fallback: &str) -> String {
+    static DASH: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../config/themes.json"
+        )))
+        .unwrap_or(Value::Null)
+    });
+    let own = token(t, key);
+    if !own.is_empty() {
+        return own;
+    }
+    let name = t.get("name").and_then(Value::as_str).unwrap_or("noche");
+    DASH.get("themes")
+        .and_then(|themes| themes.get(name))
+        .and_then(|theme| theme.get(key))
+        .and_then(Value::as_str)
+        .filter(|v| v.starts_with('#') && v.len() == 7)
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 pub fn base_css(theme: &ThemeTokens) -> String {
     let t = &theme.values;
     let mut css = include_str!("ui/app-original.css").to_string();
@@ -43,8 +65,20 @@ pub fn base_css(theme: &ThemeTokens) -> String {
         ("BRAND", "brand"),
         ("LINE", "line"),
         ("LINE2", "line2"),
+        ("PANEL2", "panel2"),
+        ("PANEL", "panel"),
     ] {
         css = css.replace(&format!("@{placeholder}@"), &token(t, key));
+    }
+    // The desktop palettes have no state roles; take them from the same
+    // theme of `config/themes.json` so every theme keeps its own states.
+    for (placeholder, key, fallback) in [
+        ("WAITING", "waiting", "#FFAE1A"),
+        ("WORKING", "working", "#5CC8FF"),
+        ("DONE", "done", "#5BD69A"),
+        ("ERR", "err", "#E5484D"),
+    ] {
+        css = css.replace(&format!("@{placeholder}@"), &state_role(t, key, fallback));
     }
     css = css.replace(
         "@ICONS@",

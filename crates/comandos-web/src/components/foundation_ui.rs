@@ -1,4 +1,4 @@
-//! General controls, operator globals and analytics coordinator wiring.
+//! General controls, operator globals and page-wide coordinator wiring.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn mount_ui() -> Result<(), wasm_bindgen::JsValue> {
     Ok(())
@@ -138,32 +138,8 @@ mod web {
             function(|_| {
                 let el = id("settings");
                 classes(&el, "open", !contains(&el, "open")?);
-                for name in ["servers", "remote", "usage"] {
+                for name in ["servers", "remote"] {
                     classes(&id(name), "open", false);
-                }
-                Ok(JsValue::UNDEFINED)
-            }),
-        );
-        listen(
-            &id("btn-usage"),
-            "click",
-            function(|_| {
-                let app = truthy(&exported("inApp", &[])?);
-                let params = new("URLSearchParams", &[get(&global("location"), "search")])?;
-                if app && truthy(&call(&params, "has", &["anwin".into()])?) {
-                    let payload = from_json(&json!({"headerAction":"analytics"}))?;
-                    call(
-                        &get(&get(&global("webkit"), "messageHandlers"), "centro"),
-                        "postMessage",
-                        &[js_sys::JSON::stringify(&payload)?.into()],
-                    )?;
-                    return Ok(JsValue::UNDEFINED);
-                }
-                let usage = id("usage");
-                if contains(&usage, "open")? {
-                    classes(&usage, "open", false);
-                } else {
-                    exported("openAnalytics", &[])?;
                 }
                 Ok(JsValue::UNDEFINED)
             }),
@@ -177,7 +153,6 @@ mod web {
                     ("settings", "btn-settings"),
                     ("servers", "ssh-manage"),
                     ("remote", "btn-remote"),
-                    ("usage", "btn-usage"),
                 ] {
                     let el = id(name);
                     if !contains(&el, "modal")?
@@ -427,7 +402,6 @@ mod web {
             }
             exported("initApp", &[])?;
             exported("mountCommandSidebar", &[])?;
-            exported("mountChainPage", &[])?;
             wait(exported("loadRemote", &[])).await?;
             call(&exported("loadPrefs", &[])?, "then", &[global("tick")])?;
             exported("loadSsh", &[])?;
@@ -436,12 +410,6 @@ mod web {
             Ok(JsValue::UNDEFINED)
         });
         set(&js_sys::global(), "__comandosStartup", &startup)?;
-        Ok(())
-    }
-    fn click_if_present(el: JsValue) -> Result<(), JsValue> {
-        if truthy(&el) {
-            call(&el, "click", &[])?;
-        }
         Ok(())
     }
     pub fn mount_globals() -> Result<(), JsValue> {
@@ -467,23 +435,6 @@ mod web {
             }
             Ok(JsValue::UNDEFINED)
         })?;
-        for (name, act) in [
-            ("nfDismiss", "dismiss"),
-            ("nfPin", "pin"),
-            ("nfUnpin", "unpin"),
-            ("nfSnooze", "snooze"),
-        ] {
-            publish(name, move |a| {
-                let id = call(&global("CSS"), "escape", &[a.get(0)])?;
-                let selector = if act == "dismiss" {
-                    format!(".nf2-x[data-id=\"{}\"]", string(&id))
-                } else {
-                    format!("[data-act=\"{act}\"][data-id=\"{}\"]", string(&id))
-                };
-                click_if_present(query(&doc(), &selector))?;
-                Ok(JsValue::UNDEFINED)
-            })?;
-        }
         publish("closeAllPanels", |_| {
             for modal in all(&doc(), ".modal.open") {
                 classes(&modal, "open", false);
@@ -553,121 +504,7 @@ mod web {
             Ok(JsValue::UNDEFINED)
         })
     }
-    fn analytics() -> Result<JsValue, JsValue> {
-        let existing = global("analyticsView");
-        if global("__comandosAnalyticsDeferred") == JsValue::TRUE
-            && !super::super::content_runtime::ready()
-        {
-            return Ok(existing);
-        }
-        if truthy(&existing) {
-            return Ok(existing);
-        }
-        let module = global("Analytics");
-        if !truthy(&module) {
-            return Ok(existing);
-        }
-        let saved = call(
-            &global("localStorage"),
-            "getItem",
-            &["cc-analytics-tab".into()],
-        )
-        .ok()
-        .filter(truthy)
-        .unwrap_or_else(|| "cuentas".into());
-        let opts = object();
-        set(&opts, "tab", &saved)?;
-        set(
-            &opts,
-            "fetchWeek",
-            &function(|a| {
-                let demo = global("ANALYTICS_DEMO");
-                let suffix = if truthy(&demo) {
-                    format!("&demo={}", string(&demo))
-                } else {
-                    String::new()
-                };
-                exported(
-                    "api",
-                    &[format!("/analytics/week?offset={}{}", string(&a.get(0)), suffix).into()],
-                )
-            }),
-        )?;
-        set(
-            &opts,
-            "fetchResources",
-            &function(|_| exported("api", &["/analytics/resources".into()])),
-        )?;
-        set(
-            &opts,
-            "onTab",
-            &function(|a| {
-                let _ = call(
-                    &global("localStorage"),
-                    "setItem",
-                    &["cc-analytics-tab".into(), a.get(0)],
-                );
-                Ok(JsValue::UNDEFINED)
-            }),
-        )?;
-        let view = call(&module, "create", &[id("an-root"), opts])?;
-        set(&js_sys::global(), "analyticsView", &view)?;
-        Ok(view)
-    }
-    fn open_analytics(tab: JsValue) -> Result<(), JsValue> {
-        let usage = id("usage");
-        for modal in all(&doc(), ".modal.open") {
-            if !js_sys::Object::is(&modal, &usage) {
-                classes(&modal, "open", false);
-            }
-        }
-        classes(&usage, "open", true);
-        if global("__comandosAnalyticsDeferred") == JsValue::TRUE
-            && !super::super::content_runtime::ready()
-        {
-            let prepared = super::super::content_runtime::prepare_content("analytics");
-            wasm_bindgen_futures::spawn_local(async move {
-                if wait(Ok(prepared.into())).await.is_ok()
-                    && contains(&id("usage"), "open").unwrap_or(false)
-                {
-                    let opened = analytics().and_then(|view| call(&view, "open", &[tab]));
-                    if let Err(error) = opened {
-                        toast(&string(&error));
-                    }
-                }
-            });
-            return Ok(());
-        }
-        let view = analytics()?;
-        if !view.is_null() && !view.is_undefined() {
-            call(&view, "open", &[tab])?;
-        }
-        Ok(())
-    }
     pub fn mount_analytics() -> Result<(), JsValue> {
-        let params = new("URLSearchParams", &[get(&global("location"), "search")])?;
-        let demo = call(&params, "get", &["demo".into()])?;
-        set(
-            &js_sys::global(),
-            "ANALYTICS_DEMO",
-            &super::super::foundation_lifecycle::only_panel(&if truthy(&demo) {
-                string(&demo)
-            } else {
-                String::new()
-            })
-            .into(),
-        )?;
-        set(&js_sys::global(), "analyticsView", &JsValue::NULL)?;
-        set(&js_sys::global(), "analyticsPhone", &JsValue::NULL)?;
-        publish("analytics", |_| analytics())?;
-        publish("openAnalytics", |a| {
-            open_analytics(a.get(0))?;
-            Ok(JsValue::UNDEFINED)
-        })?;
-        publish("openAnalyticsTab", |a| {
-            open_analytics(a.get(0))?;
-            Ok(JsValue::UNDEFINED)
-        })?;
         let original = global("setSplitLeft");
         publish("setSplitLeft", move |a| {
             if a.length() >= 2 {
@@ -721,45 +558,6 @@ mod web {
         })
     }
     pub fn attach_analytics() -> Result<(), JsValue> {
-        call(
-            &js_sys::global(),
-            "setInterval",
-            &[
-                function(|_| {
-                    let usage = id("usage");
-                    if !truthy(&get(&doc(), "hidden"))
-                        && truthy(&usage)
-                        && contains(&usage, "open")?
-                    {
-                        let view = analytics()?;
-                        if !view.is_null() && !view.is_undefined() {
-                            call(&view, "load", &[])?;
-                        }
-                    }
-                    Ok(JsValue::UNDEFINED)
-                }),
-                60000.into(),
-            ],
-        )?;
-        let resize = new(
-            "ResizeObserver",
-            &[function(|_| {
-                let view = global("analyticsView");
-                if !truthy(&view) || !contains(&id("usage"), "open")? {
-                    return Ok(JsValue::UNDEFINED);
-                }
-                let phone = number(&get(
-                    &call(&id("an-root"), "getBoundingClientRect", &[])?,
-                    "width",
-                )) < 600.0;
-                if global("analyticsPhone") != phone {
-                    set(&js_sys::global(), "analyticsPhone", &phone.into())?;
-                    call(&view, "paint", &[])?;
-                }
-                Ok(JsValue::UNDEFINED)
-            })],
-        )?;
-        call(&resize, "observe", &[id("usage")])?;
         listen(
             &doc(),
             "keydown",
@@ -836,7 +634,7 @@ export async function ui_contracts(source){
  const eq=(a,b,msg)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw Error(msg+': '+JSON.stringify(a)+' != '+JSON.stringify(b));};const ok=(v,m)=>{if(!v)throw Error(m)};const drain=async()=>{for(let i=0;i<32;i++)await Promise.resolve();};
  await drain();
  const ctx=ui_context();ctx.openAnalytics=()=>ctx.calls.push('openAnalytics');vm.createContext(ctx);const cut=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));vm.runInContext(cut('// ---------- UI general ----------','// ---------- snippets (v0) ----------'),ctx);vm.runInContext(cut('// ---------- Analytics (grill 1–2 oct): Cuentas · Comparar · Pomodoro ----------','</script>'),ctx);await drain();
- eq(ui.calls,ctx.calls,'original startup order');eq(LABEL,{waiting:'waiting for you',done:'finished',working:'working',idle:'alive, idle',dead:'off'},'language labels');eq(ui.nodes.poll.value,2,'poll initialized');eq(ui.nodes['poll-v'].textContent,2,'poll label');
+ eq(ui.calls,ctx.calls.filter(x=>!(Array.isArray(x)&&x[0]==='mountChainPage')),'original startup order without the retired chains page');eq(LABEL,{waiting:'waiting for you',done:'finished',working:'working',idle:'alive, idle',dead:'off'},'language labels');eq(ui.nodes.poll.value,2,'poll initialized');eq(ui.nodes['poll-v'].textContent,2,'poll label');
  const event=async(id,type)=>{let results=ui.nodes[id].events[type].map(f=>f({target:ui.nodes[id]}));await Promise.all(results);await drain()};
  ui.nodes.vol.value='42';await event('vol','change');eq(ui.calls.slice(-3),[['api','/conf-set',{key:'VOLUME',value:'42'}],['toast','Volume 42% (system-wide)'],['loadConf']],'volume write');
  await event('sw-voice','click');eq(ui.calls.filter(x=>Array.isArray(x)&&x[0]==='api'&&String(x[2]?.key).startsWith('SPEAK')).slice(-2),[['api','/conf-set',{key:'SPEAK_DONE',value:'1'}],['api','/conf-set',{key:'SPEAK_ATTENTION',value:'1'}]],'voice two keys sequential');ok(ui.nodes['sw-voice'].classList.has('on'),'voice on');eq(ui.nodes['sw-voice']['aria-checked'],'true','voice aria');
@@ -844,16 +642,12 @@ export async function ui_contracts(source){
  await event('sw-notif','click');eq(S.cfg.notif,false,'permission denial resets preference');ok(!ui.nodes['sw-notif'].classList.has('on'),'permission denial removes on');eq(ui.nodes['sw-notif']['aria-checked'],'true','original denial aria behavior retained');
  setPollSeconds(7);eq(S.cfg.poll,7,'operator poll dispatch');eq(ui.nodes['poll-v'].textContent,7,'poll label update');ok(ui.calls.some(x=>Array.isArray(x)&&x[0]==='arm'),'poll armed');await opFavorite('session',true);eq(ui.calls.slice(-1)[0],['favorite','session',true],'favorite delegating');
  setBrowserNotifications(false);eq(ui.nodes['sw-notif'].clicked??0,0,'matching flag no click');setBrowserNotifications(true);eq(ui.nodes['sw-notif'].clicked,1,'mismatch flag click');await drain();
- const nf=ui.node('nf');ui.nf=nf;for(const fn of [nfDismiss,nfPin,nfUnpin,nfSnooze])fn('"strange');eq(nf.clicked,4,'notice operator clicks');ok(ui.selectors.slice(-4).every(s=>s.includes('\\"strange')),'CSS escaped selectors');
  swOpenWith('needle');eq(ui.nodes['sw-in'].value,'needle','prefilled switcher');ok(ui.calls.some(x=>Array.isArray(x)&&x[0]==='dispatch'&&x[1]==='sw-in'),'switch input dispatch');
  nsOpenPrefilled('/private','harness-id','motor label','model-id','effort label',true);await drain();eq(ui.nodes['ns-cwd'].value,'/private','prefilled cwd');for(const buttons of Object.values(ui.pick))eq(buttons[0].clicked,1,'id or label picks');eq(ui.nodes['ns-danger'].clicked,1,'boolean danger toggle');
  for(const modal of ui.modals)modal.classList.add('open');closeAllPanels();ok(ui.modals.every(m=>!m.classList.has('open')),'all modals close');eq(ui.calls.slice(-1)[0],['closeModelMenus'],'model menu closes');
  ui.nodes.settings.events.click[0]({target:ui.nodes.settings});ui.nodes.settings.classList.add('open');ui.docEvents.keydown[0]({key:'Escape'});ok(!ui.nodes.settings.classList.has('open'),'escape modal');
  ui.nodes['btn-settings'].click();ok(ui.nodes.settings.classList.has('open'),'settings button toggles');
  await Promise.all(ui.lang.events.click.map(f=>f({target:ui.lang})));eq(ui.calls.slice(-2),[['api','/conf-set',{key:'CC_LANG',value:'en'}],'reload'],'language switch');
- openAnalyticsTab('comparar');eq(ui.analyticsCalls.slice(0,2),[['create','an-root','cuentas'],['open','comparar']],'analytics first create/open');eq(ANALYTICS_DEMO,'rneon','demo sanitized');const requested=ui.analyticsOpts.fetchWeek(-1);await requested;eq(ui.calls.slice(-1)[0],['api','/analytics/week?offset=-1&demo=rneon',undefined],'week route');ui.analyticsOpts.onTab('pomodoro');eq(localStorage.getItem('cc-analytics-tab'),'pomodoro','tab persistence');ok(analytics()===analyticsView,'same analytics instance');
- ui.timers.find(x=>x.ms===60000).f();eq(ui.analyticsCalls.slice(-1)[0],'load','visible minute refresh');document.hidden=true;const count=ui.analyticsCalls.length;ui.timers.find(x=>x.ms===60000).f();eq(ui.analyticsCalls.length,count,'hidden no refresh');document.hidden=false;
- ui.nodes['an-root'].width=500;ui.resize[0].f();eq(analyticsPhone,true,'phone geometry');const before=ui.analyticsCalls.length;ui.resize[0].f();eq(ui.analyticsCalls.length,before,'unchanged width no paint');ui.nodes['an-root'].width=800;ui.resize[0].f();eq(analyticsPhone,false,'desktop geometry');
  setSplitLeft(123);eq(localStorage.getItem('cc-split-left'),'123','split persistence');eq(setSplitLeft(321,false,{min:40}),'original result','legacy multiargument split');eq(ui.calls.slice(-1)[0],['originalSplit',321,false,{min:40}],'split delegate');
  openTerms.set('session',{frame:{contentWindow:{postMessage:(...a)=>ui.calls.push(['frame',...a])}}});globalThis.activeTerm='session';focusVisibleTerm();eq(ui.calls.slice(-1)[0],['frame',{source:'comandos',type:'toolbar',term:{type:'focus'}},location.origin],'frame focus message');eq(__comandosNewsTerminal(),{base:TERM_BASE,theme:curTheme},'live news terminal boundary');
  const keyboard=ui.docEvents.keydown.slice(-1)[0];let prevented=false;keyboard({key:'K',ctrlKey:true,shiftKey:true,preventDefault(){prevented=true}});ok(prevented,'snippets shortcut prevented');eq(ui.calls.slice(-1)[0],'openSnippets','snippets shortcut opens');snipDlg.open=true;keyboard({key:'k',ctrlKey:true,shiftKey:true,preventDefault(){}});eq(ui.calls.slice(-1)[0],'closeSnippets','snippets shortcut closes');
@@ -865,7 +659,7 @@ export async function ui_contracts(source){
         async fn ui_contracts(source: &str) -> Result<JsValue, JsValue>;
     }
     #[wasm_bindgen_test(async)]
-    async fn general_ui_globals_and_analytics_preserve_original_startup_and_controls() {
+    async fn general_ui_globals_preserve_original_startup_and_controls() {
         ui_fixture();
         mount_ui().unwrap();
         mount_globals().unwrap();

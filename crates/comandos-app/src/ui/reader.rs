@@ -23,11 +23,9 @@ pub fn message_owned(current: &str, owned: &str, base: &str, kind: &str) -> bool
     if current != owned || crate::config::loopback_only(base).is_err() {
         return false;
     }
-    let panel = match kind {
-        "reader" => "news",
-        "chains" => "chains",
-        _ => return false,
-    };
-    let prefix = format!("{}/?panel={panel}&", base.trim_end_matches('/'));
+    if kind != "reader" {
+        return false;
+    }
+    let prefix = format!("{}/?panel=news&", base.trim_end_matches('/'));
     owned.starts_with(&prefix)
 }

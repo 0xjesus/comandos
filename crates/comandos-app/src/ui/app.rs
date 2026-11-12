@@ -37,6 +37,10 @@ pub struct App {
     pub tmux: TmuxCtl,
     pub guard: WriteGuard,
     pub jobs: Jobs,
+    /// History reads for the terminals have their own threads: on the shared
+    /// ones they waited behind dashboard requests that can take seconds, and
+    /// a tab just shown stayed without its text for that long.
+    pub history_jobs: Jobs,
     pub dash: DashClient,
     pub window: gtk::ApplicationWindow,
     english: bool,
@@ -45,6 +49,7 @@ pub struct App {
     t17: app_t17::Owned,
     t18: app_t18::Owned,
     feed: app_feed::Owned,
+    focus: app_focus::Owned,
     modal_overlay: gtk::Overlay,
     modal: RefCell<Option<app_t15::Modal>>,
     modal_generation: Cell<u64>,
@@ -75,7 +80,6 @@ pub struct App {
     work_marks: RefCell<ui::marks::Marks>,
     marks_fetching: Cell<bool>,
     header: ui::header::Header,
-    popovers: RefCell<BTreeMap<String, (gtk::Popover, webkit2gtk::WebView)>>,
     favorite_pending: RefCell<BTreeMap<String, bool>>,
     favorite_queue: RefCell<std::collections::VecDeque<String>>,
     favorite_posting: Cell<bool>,
@@ -95,6 +99,9 @@ pub struct App {
     workspace: ui::workspace::GtkWorkspace,
     restore: RefCell<RestoreCoordinator>,
     startup_valid: Cell<bool>,
+    /// Startup is adding the restored tabs: the strip and the notebook are
+    /// brought up to date once at the end (see `tabs_added`).
+    adding_tabs: Cell<bool>,
     prefs_received: Cell<bool>,
     state_received: Cell<bool>,
     marks_received: Cell<bool>,
@@ -144,6 +151,7 @@ impl AppRuntime {
         self.app.workspace.shutdown();
         self.app.resize_queue.borrow_mut().cancel();
         self.app.theme_layers.borrow_mut().take();
+        self.app.history_jobs.shutdown(Duration::from_secs(1));
         self.app.jobs.shutdown(Duration::from_secs(6));
         for term in self.app.terms.borrow().values() {
             term.shutdown();
@@ -460,6 +468,7 @@ impl App {
             t17: app_t17::Owned::default(),
             t18: app_t18::Owned::default(),
             feed: app_feed::Owned::default(),
+            focus: app_focus::Owned::default(),
             modal_overlay: gtk::Overlay::new(),
             modal: RefCell::new(None),
             modal_generation: Cell::new(0),
@@ -469,6 +478,7 @@ impl App {
             tmux,
             guard,
             jobs,
+            history_jobs: Jobs::new(2, "history"),
             dash,
             window: window.clone(),
             paned,
@@ -501,7 +511,6 @@ impl App {
             work_marks: RefCell::new(ui::marks::Marks::default()),
             marks_fetching: Cell::new(false),
             header: ui::header::Header::new(&window, english),
-            popovers: RefCell::new(BTreeMap::new()),
             favorite_pending: RefCell::new(BTreeMap::new()),
             favorite_queue: RefCell::new(std::collections::VecDeque::new()),
             favorite_posting: Cell::new(false),
@@ -519,6 +528,7 @@ impl App {
             applied_button_style: RefCell::new(None),
             restore: RefCell::new(RestoreCoordinator::default()),
             startup_valid: Cell::new(false),
+            adding_tabs: Cell::new(false),
             prefs_received: Cell::new(false),
             state_received: Cell::new(false),
             marks_received: Cell::new(false),
@@ -664,6 +674,9 @@ impl App {
                 match result {
                     Ok((result, layout, fixture)) => {
                         app.startup_valid.set(true);
+                        let adding_at = std::time::Instant::now();
+                        let count = result.tabs.len();
+                        app.adding_tabs.set(true);
                         for tab in result.tabs {
                             app.add_tab(
                                 &tab.key,
@@ -674,6 +687,12 @@ impl App {
                                     .or_else(|| tab.ambiguity.first().map(String::as_str)),
                             );
                         }
+                        app.adding_tabs.set(false);
+                        app.tabs_added();
+                        crate::term::lag::note(&format!(
+                            "startup tabs={count} added in {:.0}ms",
+                            crate::term::lag::ms(adding_at)
+                        ));
                         app.restore.borrow_mut().finish(result.result);
                         if app.cfg.dash_url().is_none()
                             && let Some(layout) = layout
@@ -801,6 +820,7 @@ impl App {
         let sandbox = self.cfg.mode() == RunMode::Sandbox;
         let term = TermView::new(TermOptions {
             argv: self.tmux.attach_argv(key),
+            control_argv: self.tmux.control_argv(key),
             cwd: home.clone(),
             session: Some(key.into()),
             palette: crate::theme::desktop_theme(
@@ -908,6 +928,29 @@ impl App {
         } else if attach {
             match self.terminal(key) {
                 Ok(term) => {
+                    term.set_hide_noise(self.focus.noise_hidden.get());
+                    let (tmux, jobs) = (self.tmux.clone(), self.history_jobs.clone());
+                    term.set_history_source(Rc::new(move |target: String, first: i64, last: i64, done| {
+                        let tmux = tmux.clone();
+                        let asked = std::time::Instant::now();
+                        jobs.spawn(
+                            move || {
+                                let waited = crate::term::lag::ms(asked);
+                                let (first, last) = (first.to_string(), last.to_string());
+                                let args = ["capture-pane", "-p", "-e", "-S", &first, "-E", &last, "-t", &target];
+                                let text = tmux.read(&args).ok().filter(|o| o.ok()).map(|o| o.stdout);
+                                let took = crate::term::lag::ms(asked);
+                                if took > 250. {
+                                    crate::term::lag::note(&format!(
+                                        "history {target} waited={waited:.0}ms read={:.0}ms",
+                                        took - waited
+                                    ));
+                                }
+                                text
+                            },
+                            done,
+                        );
+                    }));
                     let widget = self.attach_pane_overlay(key, &term).widget.clone().upcast();
                     self.terms.borrow_mut().insert(key.into(), term);
                     widget
@@ -1007,9 +1050,19 @@ impl App {
             .borrow_mut()
             .insert(key.into(), &child, &gtk::Label::new(Some(label)).upcast());
         self.labels.borrow_mut().insert(key.into(), tab);
+        if !self.adding_tabs.get() {
+            self.tabs_added();
+        }
+    }
+    /// Puts new tabs in the strip and on screen. Startup calls it once for
+    /// all the restored tabs instead of once per tab.
+    fn tabs_added(self: &Rc<Self>) {
         self.sync_strip();
-        self.notebook.show_all();
-        if !self.workspace_doc.borrow().is_null() {
+        if self.workspace_doc.borrow().is_null() {
+            self.notebook.show_all();
+        } else {
+            // The workspace shows its pages itself; showing the notebook
+            // first mapped each new terminal twice.
             self.workspace.refresh();
             self.notebook.hide();
         }
@@ -1261,7 +1314,6 @@ impl App {
                     self.flush_resize();
                 }
             }
-            PollUpdate::Notices { badge, .. } => self.header.set_badge(badge),
             PollUpdate::State(value) => {
                 self.state_received.set(true);
                 for item in value
@@ -1317,11 +1369,14 @@ impl App {
                 .as_u64()
                 .unwrap_or(0),
         );
+        // Hidden before the terminals leave it: on screen, each page taken out
+        // made the next one current, so every terminal was mapped and resized
+        // once for a layout it was about to leave.
+        self.notebook.hide();
         self.workspace.apply(doc);
         *self.workspace_doc.borrow_mut() = doc.clone();
         self.remember_current_navigation_page();
         self.sync_strip();
-        self.notebook.hide();
         self.workspace.widget().show_all();
         self.restore_device_focus();
         self.resize_queue.borrow_mut().authority_received();
@@ -1893,13 +1948,20 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         // A stack ignores a hidden child as its visible page; the chat page is already
         // shown, so without this the app opened on an empty chat instead of tmux.
         term_page.show();
-        pages.add_named(&term_page, "term");
+        // Foco + repisa: the tab area, then the shelf of cards.
+        let term_row = app.focus.row.clone();
+        term_row.pack_start(&term_page, true, true, 0);
+        term_row.pack_start(&app.focus.shelf.widget, false, false, 0);
+        term_row.show();
+        pages.add_named(&term_row, "term");
         app.install_chat(&pages);
         pages.set_visible_child_name("term");
         terminals.pack_start(&pages, true, true, 0);
         terminals.pack_start(&app.status, false, false, 0);
-        app.t18.side.pack1(&webview, true, false);
-        paned.pack1(&app.t18.side, true, false);
+        app.t18.left.pack_start(&webview, true, true, 0);
+        // The left panel keeps its width in pixels; a window that grows or
+        // shrinks gives the difference to the terminals.
+        paned.pack1(&app.t18.left, false, false);
         let overlay = gtk::Overlay::new();
         overlay.add(&terminals);
         overlay.add_overlay(app.drag_layer.widget());
@@ -1944,6 +2006,7 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         window.add(&app.modal_overlay);
         app.install_foundation_handlers();
         app.install_feed();
+        app.install_focus();
         ui::app_commands::install(&app);
         ui::header::install(&app);
         app.install_keys();
@@ -2108,6 +2171,15 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
                 runtime.shutdown();
             }
         });
+        // The saved window state applies before the first show, so the window
+        // opens at its final size instead of growing a moment later.
+        if app
+            .state
+            .read_ui_document("app-pane-position.json")
+            .is_ok_and(|doc| doc.get("maximized") == Some(&Value::Bool(true)))
+        {
+            window.maximize();
+        }
         window.show_all();
         app.workspace.widget().hide();
         app.startup();
@@ -2185,4 +2257,6 @@ mod app_t18_views;
 mod app_chat;
 #[path = "app_feed.rs"]
 mod app_feed;
+#[path = "app_focus.rs"]
+mod app_focus;
 pub use app_t17_panes::header_preview;

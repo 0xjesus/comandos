@@ -51,6 +51,8 @@ const CAPTURES_AT_ONCE: usize = 8;
 /// Sesiones que nunca salen en el feed.
 const HIDDEN: [&str; 2] = ["hub", "control"];
 const MAX_REPLY: usize = 1200;
+/// Tope del texto de cada pane en `paneList` (una tarjeta muestra unas líneas).
+const MAX_PANE_REPLY: usize = 480;
 /// Marcas de «visto» que se guardan (las más recientes).
 const MAX_SEEN: usize = 512;
 
@@ -91,6 +93,20 @@ pub struct Draft {
     /// Cuenta e id de conversación del pane elegido, para leer su prompt.
     pub account: String,
     pub sid: String,
+    /// Every agent pane of the session, in tmux order (the desktop focus shelf).
+    pub pane_list: Vec<PaneDraft>,
+}
+
+/// One agent pane of a session: what its card in the shelf shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PaneDraft {
+    pub pane: String,
+    pub state: State,
+    pub ts: f64,
+    pub agent: String,
+    pub model: String,
+    pub account: String,
+    pub reply: String,
 }
 
 /// Estado del feed en el frente: el último cálculo y su vuelo único.
@@ -188,6 +204,16 @@ pub fn plain(text: &str, max: usize) -> String {
     screen::clip(&prompt::collapse(&joined), max)
 }
 
+/// Lo último que dijo el agente de un pane (el detalle, si lo hay).
+fn said_of<'a>(item: &'a Map<String, Value>) -> &'a str {
+    let detail = text(item, "detail");
+    if detail.trim().is_empty() {
+        text(item, "last")
+    } else {
+        detail
+    }
+}
+
 /// El estado de un pane: menú en pantalla > límite > trabajando (hook o
 /// pantalla) > quieto.
 fn pane_state(item: &Map<String, Value>, screen: Option<&Screen>) -> (State, Value) {
@@ -230,16 +256,23 @@ pub fn assemble(items: &[Value], screens: &HashMap<String, Screen>) -> Vec<Draft
         .into_iter()
         .filter_map(|(session, panes)| {
             let count = panes.len();
+            let pane_list = panes
+                .iter()
+                .map(|(item, state, _, ts)| PaneDraft {
+                    pane: text(item, "pane").to_owned(),
+                    state: *state,
+                    ts: *ts,
+                    agent: text(item, "agent").to_owned(),
+                    model: short_model(text(item, "model")),
+                    account: text(item, "account").to_owned(),
+                    reply: plain(said_of(item), MAX_PANE_REPLY),
+                })
+                .collect();
             let (item, state, ask, ts) = panes.into_iter().max_by(|a, b| {
                 a.1.cmp(&b.1)
                     .then(a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal))
             })?;
-            let detail = text(item, "detail");
-            let said = if detail.trim().is_empty() {
-                text(item, "last")
-            } else {
-                detail
-            };
+            let said = said_of(item);
             Some(Draft {
                 label: label(item),
                 session,
@@ -254,6 +287,7 @@ pub fn assemble(items: &[Value], screens: &HashMap<String, Screen>) -> Vec<Draft
                 ask,
                 account: text(item, "account").to_owned(),
                 sid: text(item, "agentSessionId").to_owned(),
+                pane_list,
             })
         })
         .collect();
@@ -288,6 +322,15 @@ pub fn feed_json(now: f64, drafts: &[Draft], seen: &HashMap<String, f64>) -> Val
                 "prompt": d.prompt,
                 "reply": d.reply,
                 "ask": d.ask,
+                "paneList": d.pane_list.iter().map(|p| json!({
+                    "pane": p.pane,
+                    "state": p.state.name(),
+                    "ts": p.ts,
+                    "agent": p.agent,
+                    "model": p.model,
+                    "account": p.account,
+                    "reply": p.reply,
+                })).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -334,10 +377,30 @@ pub async fn answer(native: &Arc<Native>, route: FeedRoute, request: &Request) -
     }
 }
 
-/// Lee las pantallas de los panes, de a `CAPTURES_AT_ONCE` (solo lectura).
+/// Lee las pantallas de los panes (solo lectura): todas en un lote de tmux
+/// y, las que el lote no trajo, una a una de a `CAPTURES_AT_ONCE`.
 async fn screens(native: &Native, panes: Vec<String>) -> HashMap<String, Screen> {
     let tmux = native.options().tmux.clone();
-    stream::iter(panes)
+    let commands: Vec<Vec<String>> = panes
+        .iter()
+        .map(|pane| {
+            ["capture-pane", "-p", "-t", pane, "-S", "-14"]
+                .map(str::to_owned)
+                .to_vec()
+        })
+        .collect();
+    let batch = tmux.run_many(&commands).await.unwrap_or_default();
+    let mut found = HashMap::new();
+    let mut missing = Vec::new();
+    for (i, pane) in panes.into_iter().enumerate() {
+        match batch.get(i).and_then(Option::as_ref) {
+            Some(out) => {
+                found.insert(pane, screen::read(&out.stdout));
+            }
+            None => missing.push(pane),
+        }
+    }
+    let rest: Vec<(String, Screen)> = stream::iter(missing)
         .map(|pane| {
             let tmux = tmux.clone();
             async move {
@@ -353,7 +416,9 @@ async fn screens(native: &Native, panes: Vec<String>) -> HashMap<String, Screen>
         .buffer_unordered(CAPTURES_AT_ONCE)
         .filter_map(|found| async move { found })
         .collect()
-        .await
+        .await;
+    found.extend(rest);
+    found
 }
 
 /// El feed sin «visto», recalculado como mucho cada `TTL`.
@@ -608,9 +673,13 @@ mod tests {
             keys,
             [
                 "session", "label", "state", "unread", "ts", "seen", "pane", "panes", "agent",
-                "model", "prompt", "reply", "ask"
+                "model", "prompt", "reply", "ask", "paneList"
             ]
         );
+        let panes = entry["paneList"].as_array().unwrap();
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0]["pane"], "%1");
+        assert_eq!(panes[0]["state"], "ask");
     }
 
     #[test]

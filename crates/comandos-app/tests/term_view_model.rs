@@ -48,6 +48,24 @@ fn padded_terminal_wrap_returns_the_entire_link_from_either_row() {
 }
 
 #[test]
+fn history_rows_find_the_link_drawn_there() {
+    use comandos_app::term::links::link_in_cells;
+    let row = |text: &str| -> Vec<String> {
+        format!("{text:<40}").chars().map(String::from).collect()
+    };
+    let rows = vec![
+        row("Old answer"),
+        row("see https://example.invalid/docs/"),
+        row("  page?id=7"),
+        row("Next step"),
+    ];
+    let link = Some("https://example.invalid/docs/page?id=7".to_string());
+    assert_eq!(link_in_cells(&rows, 1, 10, None, |_| false), link);
+    assert_eq!(link_in_cells(&rows, 2, 4, None, |_| false), link);
+    assert_eq!(link_in_cells(&rows, 3, 2, None, |_| false), None);
+}
+
+#[test]
 fn terminal_links_do_not_consume_the_following_prose_line() {
     use comandos_app::term::{
         engine::{Palette, TermEngine},

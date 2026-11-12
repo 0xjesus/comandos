@@ -55,9 +55,7 @@
 pub mod registry;
 
 pub mod components {
-    pub mod analytics;
     pub mod app_coordinator;
-    pub mod chain_builder;
     pub mod chat_view;
     pub mod command_sidebar;
     #[cfg(target_arch = "wasm32")]
@@ -74,8 +72,6 @@ pub mod components {
     pub mod foundation_tail;
     pub mod foundation_ui;
     pub mod news_reader;
-    pub mod notifications;
-    pub mod pomodoro;
     pub mod push_settings;
     pub mod quick_terminal;
     pub mod servers;

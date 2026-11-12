@@ -374,16 +374,13 @@ fn paint_tab() {
     if !truthy(&button) {
         return;
     }
-    let (on, waiting) = with(|s| {
-        (
-            s.data.is_some(),
-            s.data
-                .as_ref()
-                .map(|d| view::counts(&d.sessions).waiting)
-                .unwrap_or(0),
-        )
+    // The tab is always shown (default view); only the waiting badge follows the feed.
+    let waiting = with(|s| {
+        s.data
+            .as_ref()
+            .map(|d| view::counts(&d.sessions).waiting)
+            .unwrap_or(0)
     });
-    let _ = set(&button, "hidden", &(!on).into());
     let label = query(&button, ".lb");
     if truthy(&label) {
         let _ = set(&label, "textContent", &t("Sesiones", "Sessions").into());

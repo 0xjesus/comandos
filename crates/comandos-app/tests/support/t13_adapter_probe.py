@@ -151,7 +151,8 @@ for case in result['xterm']:
     assert case['success'] and case['effects'][0][1]==key and case['effects'][1]==['select',key] and case['effects'][2]==['persist'],case
 # Guard the actual production hooks and teardown, not only their doubles.
 assert 'self.remember_current_navigation_page();' in block(app,'    fn apply_workspace(')
-assert 'self.remember_current_navigation_page();' in block(app,'    fn add_tab(')
+assert 'self.tabs_added();' in block(app,'    fn add_tab(')
+assert 'self.remember_current_navigation_page();' in block(app,'    fn tabs_added(')
 assert 'object.disconnect(signal);' in block(t13,'    pub(super) fn shutdown_protocol(')
 assert 'self.mru_pages.borrow_mut().clear();' in block(t13,'    pub(super) fn shutdown_protocol(')
 assert 'app.active_notebook()' in app

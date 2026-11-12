@@ -11,12 +11,30 @@ pub fn create(application: &gtk::Application, cfg: &AppConfig) -> gtk::Applicati
     window.set_position(gtk::WindowPosition::Center);
     window.set_widget_name(cfg.wm_class());
     window.set_app_paintable(true);
+    window.connect_realize(|window| disable_frame_sync(window));
     if let Some(screen) = gdk::Screen::default()
         && let Some(visual) = screen.rgba_visual()
     {
         window.set_visual(Some(&visual));
     }
     window
+}
+
+/// On X11 GTK freezes the window's frame clock after every painted frame until
+/// mutter answers `_NET_WM_FRAME_DRAWN`. Mutter answers on its next composite,
+/// and only after 6 refresh intervals (100 ms at 60 Hz) when it thinks the
+/// window is covered; with the tab and feed animations repainting the window
+/// all the time, terminal output waited 40-100 ms for its frame
+/// (`~/.cache/comandos/lag.log`: `frame … tick≈wait clock_gap≈100`). Without
+/// frame sync the clock paces itself at 60 Hz and mutter composites the latest
+/// picture, like any X11 app that does not speak the protocol.
+fn disable_frame_sync(window: &gtk::ApplicationWindow) {
+    if let Some(x11) = window
+        .window()
+        .and_then(|w| w.downcast::<gdkx11::X11Window>().ok())
+    {
+        x11.set_frame_sync_enabled(false);
+    }
 }
 
 pub fn header(window: &gtk::ApplicationWindow) -> gtk::HeaderBar {

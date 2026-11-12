@@ -479,10 +479,24 @@ fn hover_follows_current_frame_bounds_without_changing_active_pane() {
 fn header_buttons_never_cover_the_model_name() {
     use comandos_app::ui::overlays::{KeysFit, keys_fit};
     // 42-column pane (~380 px): card text "Cobbler | fable-5-1" ~150 px, buttons 270 px.
-    assert_eq!(keys_fit(380, 150, 270, 60), KeysFit::Icons);
-    assert_eq!(keys_fit(1200, 220, 270, 60), KeysFit::Full);
-    assert_eq!(keys_fit(200, 170, 270, 60), KeysFit::Hidden, "sin espacio: se esconden");
+    assert_eq!(keys_fit(380, 150, 270, 60, 22), KeysFit::Icons);
+    assert_eq!(keys_fit(1200, 220, 270, 60, 22), KeysFit::Full);
+    assert_eq!(keys_fit(200, 170, 270, 60, 22), KeysFit::Hidden, "sin espacio: se esconden");
     // The edge: exactly the room left after the card text and its gap.
-    assert_eq!(keys_fit(500, 214, 270, 60), KeysFit::Full);
-    assert_eq!(keys_fit(500, 215, 270, 60), KeysFit::Icons);
+    assert_eq!(keys_fit(500, 208, 270, 60, 22), KeysFit::Full);
+    assert_eq!(keys_fit(500, 209, 270, 60, 22), KeysFit::Icons);
+    assert_eq!(keys_fit(230, 170, 270, 60, 22), KeysFit::Dot, "angosto: solo el punto");
+}
+
+#[test]
+fn edge_panes_follow_the_new_grid_before_tmux_answers() {
+    use comandos_app::ui::overlays::{PaneGeometry, stretch_to_grid};
+    let pane = |id: &str, left, top, width, height| PaneGeometry { id: id.into(), left, top, width, height };
+    let panes = vec![pane("%1", 0, 1, 80, 39), pane("%2", 81, 1, 79, 39)];
+    let out = stretch_to_grid(panes, (200, 50));
+    assert_eq!((out[0].width, out[0].height), (80, 49));
+    assert_eq!((out[1].width, out[1].height), (119, 49));
+    // A grid that shrank under a pane's left edge leaves that pane alone.
+    let out = stretch_to_grid(vec![pane("%3", 90, 0, 30, 10)], (60, 10));
+    assert_eq!(out[0].width, 30);
 }

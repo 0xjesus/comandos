@@ -26,19 +26,13 @@ fn owned_modals_keep_original_sizes_and_must_answer_close_policy() {
         (1280, 1200),
         (4000, 3000),
     ] {
-        for (kind, name) in [
-            (ModalKind::Url, "url"),
-            (ModalKind::Chains, "chains"),
-            (ModalKind::Analytics, "analytics"),
-        ] {
-            let (w, h) = modal_size(kind, width, height);
-            assert_eq!(
-                serde_json::json!([w, h]),
-                oracle::original(
-                    serde_json::json!({"op":"modal-size","kind":name,"width":width,"height":height})
-                )
-            );
-        }
+        let (w, h) = modal_size(ModalKind::Url, width, height);
+        assert_eq!(
+            serde_json::json!([w, h]),
+            oracle::original(
+                serde_json::json!({"op":"modal-size","kind":"url","width":width,"height":height})
+            )
+        );
     }
     for dismissable in [false, true] {
         for (escape, backdrop) in [(false, true), (true, false), (false, false)] {
@@ -57,14 +51,13 @@ fn owned_modals_keep_original_sizes_and_must_answer_close_policy() {
 }
 
 #[test]
-fn reader_and_chains_bridges_accept_only_their_exact_owned_local_page() {
+fn reader_bridge_accepts_only_its_exact_owned_local_page() {
     use comandos_app::ui::reader::{message_owned, reader_uri};
     let base = "http://127.0.0.1:4777";
     let news = reader_uri(base, "2026-10-08@10:00", "test").unwrap();
     let chains = format!("{base}/?panel=chains&v=test&session=fixture&pane=%251");
     assert!(message_owned(&news, &news, base, "reader"));
-    assert!(message_owned(&chains, &chains, base, "chains"));
-    assert!(!message_owned(&news, &news, base, "chains"));
+    assert!(!message_owned(&chains, &chains, base, "chains"));
     assert!(!message_owned(&chains, &chains, base, "reader"));
     assert!(!message_owned(
         &format!("{news}#changed"),

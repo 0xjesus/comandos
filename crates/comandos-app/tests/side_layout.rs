@@ -7,59 +7,25 @@
 use comandos_app::ui::side::SideState;
 use serde_json::json;
 #[test]
-fn side_layout_preserves_unknown_fields_and_bounds_web_geometry() {
+fn side_layout_preserves_unknown_fields_and_tracks_left_panel() {
     let raw = json!({"leftHidden":true,"leftPos":490,"termShare":0.42,"unknown":{"ñ":"😀"}});
     let mut side = SideState::from_json(&raw).unwrap();
     assert_eq!(side.to_json(), raw);
-    side.adopt_web(&json!({"session":"fixture","hidden":false,"cmds":{"open":false,"h":"9000"},"tabs":[{"id":"fixture","label":"á","on":true},{"id":"bad;id"}]}));
-    assert_eq!(side.cmds_h, 4000);
-    assert_eq!(side.tabs.len(), 1);
-    assert_eq!(side.session, "fixture");
-    side.collapsed = false;
-    assert_eq!(side.pin_position(true, 1.25, 0, 10000), Some(5000));
-    side.collapsed = true;
-    assert_eq!(side.pin_position(true, 1.25, 0, 10000), None);
-    assert_eq!(side.to_json(), raw);
+    assert!(side.left_hidden);
+    assert_eq!(side.left_pos, 490);
+    side.set_left(false, 700);
+    assert!(!side.left_hidden);
+    assert_eq!(side.left_pos, 490);
+    side.set_left(true, 650);
+    assert_eq!(side.left_pos, 650);
+    assert_eq!(
+        side.to_json(),
+        json!({"leftHidden":true,"leftPos":650,"termShare":0.42,"unknown":{"ñ":"😀"}})
+    );
+    assert!(SideState::from_json(&json!([])).is_err());
 }
 #[path = "support/t18_oracle.rs"]
 mod oracle;
-#[test]
-fn actual_original_side_tabs_pin_share_and_drag_match_native() {
-    use comandos_app::ui::side::{drag_position, side_tabs};
-    let tabs = json!([{"id":"fixture","label":"ñ😀".repeat(30),"title":"t".repeat(150),"on":true,"sel":1,"closing":true},{"id":"bad;id"},null,{"id":"local"}]);
-    assert_eq!(
-        json!(side_tabs(&tabs)),
-        oracle::original(json!({"op":"side-tabs","tabs":tabs}))
-    );
-    for h in [0, 39, 40, 41, 4000] {
-        for z in [0.0, 1.0, 1.25, 2.0] {
-            for collapsed in [false, true] {
-                let mut s = SideState::default();
-                s.cmds_h = h;
-                s.cmds_closed = true;
-                s.collapsed = collapsed;
-                let expected = oracle::original(
-                    json!({"op":"pin","state":{"cmds_h":h,"cmds_closed":true,"collapsed":collapsed},"zoom":z}),
-                );
-                assert_eq!(json!(s.pin_position(true, z, 0, 10000)), expected);
-            }
-        }
-    }
-    for share in [-1.0, 0.15, 0.42, 0.85, 2.0] {
-        let mut s = SideState::from_json(&json!({"termShare":share})).unwrap();
-        s.collapsed = false;
-        let expected = oracle::original(
-            json!({"op":"share","state":{"termShare":share,"collapsed":false},"total":1000,"position":200}),
-        );
-        assert_eq!(json!(s.share_position(1000, true, None).unwrap()), expected);
-    }
-    for y in [-20.5, 0.0, 100.5, 3000.0] {
-        assert_eq!(
-            json!(drag_position((20.0, 200), y, 0, 700)),
-            oracle::original(json!({"op":"drag","drag":[20,200],"y":y,"bounds":[0,700]}))
-        );
-    }
-}
 #[test]
 fn layout_document_authority_guard_cas_and_cancel_cover_four_modes() {
     use comandos_app::{config::parse_args, guard::WriteGuard, state_files::StateFiles};
@@ -257,23 +223,5 @@ fn actual_original_pane_initialization_uses_python_numbers_and_rounding() {
                 oracle::original(json!({"op":"pane-init","width":width,"document":doc}))
             );
         }
-    }
-}
-
-#[test]
-fn actual_original_wheel_prefers_vertical_delta_and_moves_sixty_pixels() {
-    for (x, y, discrete) in [
-        (2., 1., None),
-        (2., 0., None),
-        (0., -1., None),
-        (0., 0., Some(-1.)),
-        (0., 0., Some(1.)),
-        (0., 0., None),
-    ] {
-        let expected = oracle::original(json!({"op":"wheel","dx":x,"dy":y,"discrete":discrete}));
-        assert_eq!(
-            json!(comandos_app::ui::side::wheel_delta(x, y, discrete)),
-            expected
-        );
     }
 }

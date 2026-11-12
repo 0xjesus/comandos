@@ -202,3 +202,117 @@ fn sidebar_counts_a_new_opencode_account_only_from_the_turn_that_adds_it() {
         "TypeError"
     );
 }
+/// Lo de la columna (`build_week` + `sidebar_accounts_from`) con todas las filas.
+fn sidebar_full(input: &Value, rows: &a::WeekRows) -> Option<Value> {
+    let out = a::build_week(&week(input, rows)).ok()?;
+    a::sidebar_accounts_from(
+        out["accounts"].as_array().unwrap(),
+        input["limits"].as_array().unwrap(),
+        rows,
+    )
+    .ok()
+    .map(Value::Array)
+}
+/// `sidebar_week` sobre las filas que lee el atajo de la columna: las que terminan
+/// desde `sidebar_since` (el `finished_at >= ?` de la base), sin fotos de cuota
+/// en la semana actual y sin registros de Pomodoro.
+fn sidebar_fast(input: &Value) -> Option<Value> {
+    let now = comandos_core::focus::float(&input["now"]).unwrap();
+    let offset = input["offset"].as_i64().unwrap();
+    let since = a::sidebar_since(now, offset, input["tz_name"].as_str().unwrap()).ok()?;
+    let keep = |rows: &Value| -> Vec<Value> {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["finished"].as_f64().is_some_and(|f| f >= since))
+            .cloned()
+            .collect()
+    };
+    let rows = a::WeekRows::from_rows(&keep(&input["turns"]), &keep(&input["spans"]), now);
+    let none: Vec<Value> = vec![];
+    a::sidebar_week(&a::WeekInput {
+        now,
+        offset,
+        limits: input["limits"].as_array().unwrap(),
+        rows: &rows,
+        snapshots: if offset < 0 {
+            input["snapshots"].as_array().unwrap()
+        } else {
+            &none
+        },
+        records: &none,
+        tz_name: input["tz_name"].as_str().unwrap(),
+    })
+    .ok()
+    .map(Value::Array)
+}
+#[test]
+fn sidebar_week_matches_full_week_on_reference_cases() {
+    let f = workspace_loads(include_str!("analytics_week_fixture.json")).unwrap();
+    let mut compared = 0;
+    for (case, row) in f.as_array().unwrap().iter().enumerate() {
+        let input = &row["input"];
+        if row["kind"] != "week" || !matches!(input["offset"].as_i64(), Some(0 | -1)) {
+            continue;
+        }
+        let Some(full) = sidebar_full(input, &rows(input)) else {
+            continue;
+        };
+        assert_eq!(sidebar_fast(input), Some(full), "caso {case}");
+        compared += 1;
+    }
+    assert!(compared >= 20, "{compared}");
+}
+/// Cadenas de turnos que cruzan el corte de `sidebar_since` y la medianoche que
+/// abre la ventana, turnos viejos (fuera de la ventana) y OpenCode: las cuentas
+/// de la columna salen iguales con las filas recortadas.
+#[test]
+fn sidebar_week_ignores_rows_before_its_cutoff() {
+    let now = 1790864160.;
+    for offset in [0, -1] {
+        let open = a::sidebar_since(now, offset, a::TZ).unwrap();
+        let mut turns = vec![];
+        let mut spans = vec![];
+        let mut seed: u64 = 7;
+        let mut rand = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        let accounts = [
+            ("claude", "main"),
+            ("claude", "relotto"),
+            ("codex", "main"),
+            ("opencode", "main"),
+        ];
+        // Turnos densos alrededor del corte (huecos de 0 a 30 min) y dispersos en 17 días.
+        let mut at = open - 6. * 3600.;
+        while at < open + 6. * 3600. {
+            let (p, acc) = accounts[rand(4) as usize];
+            let len = 60. + rand(1500) as f64;
+            turns.push(json!({"provider":p,"agent":p,"account":acc,"git_root":format!("/r/{}",rand(3)),"pane_pwd":"/r/x","started":at,"finished":at+len,"tokens":rand(100000),"cost":rand(100) as f64/100.,"session":format!("s{}",rand(5)),"model":format!("m{}",rand(3))}));
+            at += len + rand(1800) as f64;
+        }
+        for i in 0..400 {
+            let start = now - 17. * 86400. + (i as f64) * 3670. + rand(600) as f64;
+            let (p, acc) = accounts[rand(4) as usize];
+            if rand(5) == 0 {
+                spans.push(json!({"provider":p,"account":acc,"git_root":"/r/1","started":start,"finished":start+900.}));
+            } else {
+                turns.push(json!({"provider":p,"agent":p,"account":acc,"git_root":null,"pane_pwd":format!("/r/{}",rand(3)),"started":start,"finished":start+rand(2400) as f64,"tokens":rand(50000),"cost":0.1,"session":"s","model":"m"}));
+            }
+        }
+        // Una sesión larga que empieza antes del corte y sigue dentro de la ventana.
+        turns.push(json!({"provider":"claude","account":"main","git_root":"/r/0","pane_pwd":"/r/0","started":open-7200.,"finished":open+7200.,"tokens":5}));
+        let input = json!({"now":now,"offset":offset,"limits":[
+            {"provider":"claude","account":"main","window":"7d","scope":"","percent":36.0,"resets_at":now+86400.,"plan":"max"},
+            {"provider":"codex","account":"main","window":"5h","scope":"","percent":12.5,"resets_at":now+3600.}
+        ],"turns":turns,"spans":spans,"snapshots":[
+            {"provider":"claude","account":"main","window":"7d","scope":"","percent":40,"resets_at":now-2.*86400.}
+        ],"records":[],"tz_name":a::TZ});
+        let full = sidebar_full(&input, &rows(&input)).unwrap();
+        assert!(full.as_array().unwrap().len() >= 4, "{full}");
+        assert_eq!(sidebar_fast(&input), Some(full), "offset {offset}");
+    }
+}

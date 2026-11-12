@@ -68,9 +68,6 @@ impl App {
                 "quickTerminal" => self.quick_terminal(),
                 "sortMenu" => self.sort_menu(None),
                 "newSession" => return self.handlers.invoke("T14.wizard", &json!({})),
-                "notices" => return self.handlers.invoke("T17.notices", &json!({})),
-                "chains" => return self.handlers.invoke("T18.chains", &json!({})),
-                "analytics" => return self.handlers.invoke("T18.analytics", &json!({})),
                 _ => return Err(CommandError::Unknown(action)),
             },
             BridgeMsg::OpenSession {
@@ -105,15 +102,14 @@ impl App {
                     .handlers
                     .invoke("T18.reader", &json!({"action":action,"id":id,"on":on}));
             }
-            BridgeMsg::SidebarTerm(value) => {
-                return self.handlers.invoke("T18.sidebar_term", &value);
-            }
+            // The desktop has no sidebar terminal or chains modal; the shared
+            // parser still recognizes those messages, so they are dropped here.
+            BridgeMsg::SidebarTerm(_) | BridgeMsg::ChainModal(_) => {}
             BridgeMsg::LeftPanel(action) => {
                 return self
                     .handlers
                     .invoke("T18.left_panel", &json!({"action":action}));
             }
-            BridgeMsg::ChainModal(value) => return self.handlers.invoke("T18.chain_modal", &value),
             BridgeMsg::OpenUrl { url, label, modal } => {
                 return self.handlers.invoke(
                     if modal {
