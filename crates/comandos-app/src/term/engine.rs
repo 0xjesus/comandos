@@ -305,6 +305,28 @@ impl TermEngine {
             .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
     }
 
+    /// The live screen as text, one string per row, and the cursor's cell
+    /// (column, row), wherever the view is scrolled to: what is compared
+    /// with tmux's own screen of the pane.
+    #[allow(clippy::indexing_slicing)]
+    pub fn live_screen(&self) -> (Vec<String>, (u16, u16)) {
+        let grid = self.engine.term().grid();
+        let spacer = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+        let rows = (0..grid.screen_lines())
+            .map(|row| {
+                let line = &grid[Line(i32::try_from(row).unwrap_or(0))];
+                (0..grid.columns())
+                    .map(|col| &line[alacritty_terminal::index::Column(col)])
+                    .filter(|cell| !cell.flags.intersects(spacer))
+                    .map(|cell| if cell.c == '\t' { ' ' } else { cell.c })
+                    .collect()
+            })
+            .collect();
+        let at = grid.cursor.point;
+        let cell = (u16::try_from(at.column.0).unwrap_or(0), u16::try_from(at.line.0).unwrap_or(0));
+        (rows, cell)
+    }
+
     pub fn row_wraps(&self, row: usize) -> bool {
         self.row_cells(row)
             .and_then(|cells| cells.last())

@@ -73,7 +73,7 @@ impl Client {
             let at = self.wait(self.replied, "reply", |e| matches!(e, Event::Reply { .. }));
             self.replied = at + 1;
             let Event::Reply { ok, lines, .. } = self.seen[at].clone() else { unreachable!() };
-            if let Some(ask) = self.commands.answered() {
+            if let Some(ask) = self.commands.answered(ok) {
                 return (at, ask, ok, lines);
             }
         }
@@ -119,18 +119,51 @@ fn a_control_client_gets_pane_output_layout_history_and_input() {
         }
     }
 
-    // The history arrives as the reply to its own command, not mixed with
-    // the output of other panes.
-    c.send(|k, w| k.history(w, panes[0], 50));
-    let (_, ask, ok, lines) = loop {
-        let r = c.reply();
-        if r.1 != Ask::Plain {
-            break r;
+    // A snapshot arrives as four replies in order, not mixed with the
+    // output of other panes: history, screen rows, joined screen, state.
+    c.send(|k, w| k.snapshot(w, panes[0], 50));
+    let mut parts = Vec::new();
+    while parts.len() < 6 {
+        let (_, ask, ok, lines) = c.reply();
+        if ask != Ask::Plain {
+            assert!(ok, "{ask:?}");
+            parts.push((ask, lines));
         }
-    };
-    assert_eq!((ask, ok), (Ask::History { pane: panes[0] }, true));
-    let text = lines.iter().map(|l| String::from_utf8_lossy(l).into_owned()).collect::<Vec<_>>().join("\n");
-    assert!(text.contains("se\u{f1}al") && text.contains("rojo"), "{text}");
+    }
+    let asks: Vec<Ask> = parts.iter().map(|(ask, _)| ask.clone()).collect();
+    let pane = panes[0];
+    assert_eq!(
+        asks,
+        vec![
+            Ask::Above { pane },
+            Ask::Rows { pane },
+            Ask::Joined { pane },
+            Ask::MainRows { pane },
+            Ask::MainJoined { pane },
+            Ask::State { pane }
+        ]
+    );
+    // No full-screen program is running: nothing is covered.
+    assert!(parts[3].1.iter().all(Vec::is_empty) && parts[4].1.iter().all(Vec::is_empty));
+    let text = |i: usize| parts[i].1.iter().map(|l| String::from_utf8_lossy(l).into_owned()).collect::<Vec<_>>().join("\n");
+    assert!(text(1).contains("se\u{f1}al \x1b[31mrojo"), "{}", text(1));
+    assert!(text(2).contains("se\u{f1}al rojo"), "{}", text(2));
+    let height: usize = text(5).split(' ').nth(2).and_then(|h| h.parse().ok()).unwrap();
+    assert_eq!(parts[1].1.len(), height, "one line per screen row");
+    assert!(text(5).starts_with(&format!("%{pane} ")), "{}", text(5));
+
+    // A command that fails takes the rest of its line with it: one error
+    // reply, and the next reply belongs to the next line.
+    c.send(|k, w| {
+        k.snapshot(w, 9999, 50);
+        k.check(w, pane);
+    });
+    let (_, ask, ok, _) = c.reply();
+    assert_eq!((ask, ok), (Ask::Above { pane: 9999 }, false));
+    let (_, ask, ok, _) = c.reply();
+    assert_eq!((ask, ok), (Ask::CheckRows { pane }, true));
+    let (_, ask, ok, _) = c.reply();
+    assert_eq!((ask, ok), (Ask::CheckState { pane }, true));
 
     // A wrong command is an error reply, and the client keeps working.
     c.send(|k, w| k.pause_after(w, 5));

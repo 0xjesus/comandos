@@ -97,16 +97,7 @@ impl Jobs {
 }
 
 /// Canal hacia el hilo de GLib: lo que se envíe llega a `done` una vez.
-pub fn to_main<T: Send + 'static, F: FnOnce(T) + 'static>(done: F) -> async_channel::Sender<T> {
-    let name = std::any::type_name::<F>();
-    let done = move |value: T| {
-        let started = std::time::Instant::now();
-        done(value);
-        let took = crate::term::lag::ms(started);
-        if took > 30. {
-            crate::term::lag::note(&format!("job {took:.0}ms {name}"));
-        }
-    };
+pub fn to_main<T: Send + 'static>(done: impl FnOnce(T) + 'static) -> async_channel::Sender<T> {
     let (tx, rx) = async_channel::bounded::<T>(1);
     let context = glib::MainContext::ref_thread_default();
     let delivery_context = context.clone();

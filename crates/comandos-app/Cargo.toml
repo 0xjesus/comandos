@@ -49,6 +49,7 @@ nix = { version = "=0.31.3", default-features = false, features = ["fs", "signal
 getrandom.workspace = true
 comandos-term = { path = "../comandos-term" }
 alacritty_terminal = { version = "=0.26.0", default-features = false }
+unicode-width = "=0.2.2"
 rustix = { version = "=1.1.5", features = ["event", "process"] }
 signal-hook = "=0.4.5"
 

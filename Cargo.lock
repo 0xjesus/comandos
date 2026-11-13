@@ -396,6 +396,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "signal-hook",
+ "unicode-width",
  "ureq",
  "webkit2gtk",
 ]

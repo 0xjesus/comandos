@@ -117,6 +117,14 @@ struct Model {
     base_x: f64,
     /// Cells of the tmux window the panes sit in (right and bottom edges).
     window_cells: (u16, u16),
+    /// When the panes are next compared with tmux, the first output not
+    /// compared yet, and how many times in a row each pane was found wrong.
+    audit_at: Option<u64>,
+    audit_from: Option<u64>,
+    audit_wrong: Vec<(u32, u8)>,
+    /// Lines the engine had scrolled off its top when the selection was
+    /// last moved with them.
+    scroll_seen: u64,
     regions: Vec<super::noise::Region>,
     noise_maps: Vec<(super::noise::Region, Vec<Option<u16>>)>,
     output_at: Option<Instant>,
@@ -181,6 +189,13 @@ impl Hold {
         quiet.min(self.cap_at)
     }
 }
+/// A pane is compared with tmux this long after its last output, and at
+/// least this often while it keeps writing.
+const AUDIT_QUIET_MS: u64 = 500;
+const AUDIT_BUSY_MS: u64 = 4000;
+/// Repairs in a row that did not hold before a pane is left alone.
+const AUDIT_GIVE_UP: u8 = 3;
+
 /// A pane that is not loaded in the model: everything that is its own.
 struct PaneSlot {
     info: super::control::PaneInfo,
@@ -189,6 +204,8 @@ struct PaneSlot {
     selection: Option<Selection>,
     /// Its own wheel glide (see `Model::glide`).
     glide: (f64, f64),
+    /// See `Model::scroll_seen`.
+    scroll_seen: u64,
 }
 /// A history fill as one frame paints it.
 #[derive(Clone, PartialEq)]
@@ -538,6 +555,10 @@ impl TermView {
                 stale: Vec::new(),
                 base_x: 12.,
                 window_cells: (0, 0),
+                audit_at: None,
+                audit_from: None,
+                audit_wrong: Vec::new(),
+                scroll_seen: 0,
                 regions: Vec::new(),
                 noise_maps: Vec::new(),
                 pane_ids: Vec::new(),
@@ -758,7 +779,8 @@ impl TermView {
         // Retired: cutting gray rows out of the picture tmux draws broke
         // split panes (text cut at the pane edge, stale history banners). It
         // returns as stable folding once every pane is drawn by the app.
-        let on = on && false;
+        let _ = on;
+        let on = false;
         if m.hide_noise != on {
             m.hide_noise = on;
             m.pick = None;
@@ -1257,6 +1279,7 @@ impl Inner {
         model.loaded = None;
         model.key_pane = None;
         model.stale.clear();
+        model.scroll_seen = model.engine.engine().scrolled_up();
         if on {
             model.hide_noise = false;
             model.tmux_regions.clear();
@@ -1298,10 +1321,11 @@ impl Inner {
             return false;
         };
         let Some(out) = m.loaded else { return false };
-        let slot = &mut m.slots[i];
+        let Some(slot) = m.slots.get_mut(i) else { return false };
         std::mem::swap(&mut m.engine, &mut slot.engine);
         std::mem::swap(&mut m.frame, &mut slot.frame);
         std::mem::swap(&mut m.selection, &mut slot.selection);
+        std::mem::swap(&mut m.scroll_seen, &mut slot.scroll_seen);
         m.loaded = Some(std::mem::replace(&mut slot.info, out));
         (m.glide, m.glide_frac, slot.glide) = (slot.glide.0, slot.glide.1, (m.glide, m.glide_frac));
         m.painted = None;
@@ -1392,6 +1416,15 @@ impl Inner {
                     } else if let Some(slot) = m.slots.iter_mut().find(|s| s.info.id == pane) {
                         slot.engine.feed(&bytes, now);
                     }
+                    // Compared with tmux once the pane goes quiet, and every
+                    // few seconds while it does not.
+                    let ms = self.ms();
+                    let from = *m.audit_from.get_or_insert(ms);
+                    m.audit_at = Some(ms.saturating_add(AUDIT_QUIET_MS).min(from.saturating_add(AUDIT_BUSY_MS)));
+                }
+                super::control::Action::Seed { pane, size, bytes } => self.native_seed(m, pane, size, &bytes, now),
+                super::control::Action::Check { pane, size, cursor, rows } => {
+                    self.native_check(m, pane, size, cursor, &rows);
                 }
                 super::control::Action::Notice(bytes) => m.engine.feed(&bytes, now),
                 super::control::Action::Exited => m.engine.feed(b"\x1b[0m\r\n", now),
@@ -1406,9 +1439,145 @@ impl Inner {
                 self.full.set(true);
             }
         }
+        if m.audit_at.is_some_and(|at| self.ms() >= at) {
+            (m.audit_at, m.audit_from) = (None, None);
+            Self::native_command(m, |control, wire| control.check(wire));
+        }
+    }
+    /// Sends what a control session wants to say.
+    fn native_command(m: &mut Model, say: impl FnOnce(&mut super::control::Session, &mut Vec<u8>)) {
+        let Model { pty, control, .. } = m;
+        if let (Some(pty), Some(control)) = (pty.as_mut(), control.as_mut()) {
+            let mut wire = Vec::new();
+            say(control, &mut wire);
+            if !wire.is_empty() {
+                let _ = pty.write(&wire);
+            }
+        }
+    }
+    /// A pane's engine is filled with exactly what tmux holds: on attach,
+    /// when tmux gave the pane another size, or to repair it.
+    fn native_seed(&self, m: &mut Model, pane: u32, size: (u16, u16), bytes: &[u8], now: Instant) {
+        let px = (
+            m.geom.cell_w.round().clamp(1., f64::from(u16::MAX)) as u16,
+            m.geom.cell_h.round().clamp(1., f64::from(u16::MAX)) as u16,
+        );
+        let loaded = m.loaded.is_some_and(|p| p.id == pane);
+        let (engine, selection, seen) = if loaded {
+            (&mut m.engine, &mut m.selection, &mut m.scroll_seen)
+        } else if let Some(slot) = m.slots.iter_mut().find(|s| s.info.id == pane) {
+            (&mut slot.engine, &mut slot.selection, &mut slot.scroll_seen)
+        } else {
+            return;
+        };
+        // Whoever was reading back stays that far back.
+        let back = engine.engine().display_offset();
+        if engine.size() != size {
+            engine.resize(size.0, size.1, px);
+        }
+        engine.feed(bytes, now);
+        if back > 0 {
+            engine.scroll(i32::try_from(back).unwrap_or(i32::MAX));
+        }
+        *selection = None;
+        *seen = engine.engine().scrolled_up();
+        if loaded {
+            m.painted = None;
+            m.painted_cursor = None;
+        }
+        self.full.set(true);
+        // And it is compared right away: a seed is checked like any output.
+        m.audit_at = Some(self.ms());
+    }
+    /// Compares a pane's engine with what tmux says the pane shows. tmux is
+    /// the program's real terminal, so when they differ the engine is filled
+    /// again from tmux (and the difference is noted in the lag log).
+    fn native_check(&self, m: &mut Model, pane: u32, size: (u16, u16), cursor: (u16, u16), rows: &[Vec<u8>]) {
+        let loaded = m.loaded.is_some_and(|p| p.id == pane);
+        let (engine, selecting) = if loaded {
+            (&m.engine, m.selection.is_some() || m.pressed.is_some())
+        } else if let Some(slot) = m.slots.iter().find(|s| s.info.id == pane) {
+            (&slot.engine, slot.selection.is_some())
+        } else {
+            return;
+        };
+        let later = Some(self.ms().saturating_add(AUDIT_BUSY_MS));
+        // Mid-resize, or mid-update (a synchronized update is not on the
+        // grid until the program ends it): compared the next time.
+        if engine.size() != size || engine.next_deadline().is_some() {
+            m.audit_at = m.audit_at.or(later);
+            return;
+        }
+        let (ours, at) = engine.live_screen();
+        let row = super::control::first_difference(&ours, rows);
+        let times = m.audit_wrong.iter().find(|(id, _)| *id == pane).map_or(0, |(_, times)| *times);
+        if row.is_none() && at == cursor {
+            m.audit_wrong.retain(|(id, _)| *id != pane);
+            if std::env::var_os("COMANDOS_AUDIT_TRACE").is_some() {
+                super::lag::note(&format!(
+                    "audit same {} %{pane} {}x{}",
+                    self.options.session.as_deref().unwrap_or("-"),
+                    size.0,
+                    size.1
+                ));
+            }
+            return;
+        }
+        // A pane the seed itself cannot reproduce is left as it is.
+        if times >= AUDIT_GIVE_UP {
+            return;
+        }
+        // Nobody's reading or selection is pulled from under them.
+        if engine.engine().display_offset() > 0 || selecting {
+            m.audit_at = m.audit_at.or(later);
+            return;
+        }
+        let cut = |text: &str| text.chars().take(200).collect::<String>();
+        let shown = row.map_or_else(String::new, |r| {
+            let theirs = rows.get(r).map(|t| String::from_utf8_lossy(t).into_owned()).unwrap_or_default();
+            format!(" row {r} ours {:?} tmux {:?}", cut(ours.get(r).map_or("", String::as_str)), cut(&theirs))
+        });
+        super::lag::note(&format!(
+            "drift {} %{pane} {}x{} try {} cursor ours {at:?} tmux {cursor:?}{shown}",
+            self.options.session.as_deref().unwrap_or("-"),
+            size.0,
+            size.1,
+            times + 1,
+        ));
+        m.audit_wrong.retain(|(id, _)| *id != pane);
+        m.audit_wrong.push((pane, times + 1));
+        Self::native_command(m, |control, wire| control.reseed(pane, wire));
+    }
+    /// A selection stays on its text: the lines that left through the top
+    /// of the screen took it up with them, as far as they went.
+    fn follow_scroll(m: &mut Model) {
+        fn moved(engine: &TermEngine, seen: &mut u64) -> i32 {
+            let now = engine.engine().scrolled_up();
+            i32::try_from(now.wrapping_sub(std::mem::replace(seen, now))).unwrap_or(0)
+        }
+        let lift = |selection: &mut Option<Selection>, up: i32| {
+            if let Some(s) = selection {
+                s.anchor.0 = s.anchor.0.saturating_sub(up);
+                s.head.0 = s.head.0.saturating_sub(up);
+            }
+        };
+        let up = moved(&m.engine, &mut m.scroll_seen);
+        if up > 0 {
+            lift(&mut m.selection, up);
+            if let Some(pressed) = &mut m.pressed {
+                pressed.0 = pressed.0.saturating_sub(up);
+            }
+        }
+        for slot in &mut m.slots {
+            let up = moved(&slot.engine, &mut slot.scroll_seen);
+            if up > 0 {
+                lift(&mut slot.selection, up);
+            }
+        }
     }
     /// Notes which panes changed, so only those are painted again.
     fn native_damage(&self, m: &mut Model, lines: &mut Vec<usize>) {
+        Self::follow_scroll(m);
         if m.slots.is_empty() {
             return;
         }
@@ -1447,6 +1616,7 @@ impl Inner {
                     m.engine = slot.engine;
                     m.frame = slot.frame;
                     m.selection = slot.selection;
+                    m.scroll_seen = slot.scroll_seen;
                     m.loaded = Some(slot.info);
                 }
                 None => {
@@ -1485,6 +1655,7 @@ impl Inner {
                     frame: FrameCache::default(),
                     selection: None,
                     glide: (0., 0.),
+                    scroll_seen: 0,
                 });
             }
         }
