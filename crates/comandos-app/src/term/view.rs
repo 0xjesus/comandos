@@ -4436,7 +4436,7 @@ impl Inner {
             );
             {
                 match shape {
-                    CursorShape::Beam => context.rectangle(x, y, 1., m.geom.cell_h),
+                    CursorShape::Beam => cursor_beam(context, x, y, m.geom.cell_h),
                     CursorShape::Underline => {
                         context.rectangle(x, y + m.geom.cell_h - 2., width, 2.)
                     }
@@ -4483,40 +4483,80 @@ impl Inner {
             }
         }
         // A program that hides the terminal's cursor and draws its own as one
-        // cell in reverse video gets the same cursor as everything else.
+        // cell in reverse video gets the cursor chosen in the preferences
+        // instead: its cell is painted as plain text with that cursor on it.
         if !cursor.visible
-            && m.focused
             && let Some((col, row, wide)) = m.engine.program_cursor()
             && let Some(shown) = shown_row(col, row)
         {
             let (x, y) = (ox + f64::from(col) * cell_w, oy + shown * cell_h);
             let width = cell_w * if wide { 2. } else { 1. };
+            let shape = comandos_term::render::preferred_cursor_shape(
+                CursorShape::Block,
+                Some(m.cursor_shape),
+                m.focused,
+            );
             let under = tile_rects
                 .iter()
                 .find(|((tx, ty, tw, th), _)| x >= *tx && x < tx + tw && y >= *ty && y < ty + th)
                 .map_or(m.engine.palette().bg, |(_, rgb)| *rgb);
+            let ops = m.frame.row_ops(usize::from(row));
+            // Reversed, the cell's background is the colour its text has.
+            let cell_y = oy + f64::from(row) * cell_h;
+            let ink = ops
+                .iter()
+                .find_map(|op| match op {
+                    PaintOp::Rect { x: rx, y: ry, w, rgb, .. } if *rx <= x && x < rx + w && (*ry - cell_y).abs() < 1. => {
+                        Some(*rgb)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(m.engine.palette().fg);
+            let (cursor_rgb, accent) = (m.engine.palette().cursor, m.engine.palette().cursor_accent);
             let _ = context.save();
             context.rectangle(x, y, width, cell_h);
             context.clip();
             color(context, under);
             let _ = context.paint();
-            color(context, m.engine.palette().cursor);
-            cursor_block(context, x, y, width, cell_h);
-            let _ = context.fill();
+            color(context, cursor_rgb);
+            if shape == CursorShape::Block {
+                cursor_block(context, x, y, width, cell_h);
+                let _ = context.fill();
+            }
+            let _ = context.save();
             context.translate(0., (shown - f64::from(row)) * cell_h);
-            for op in m.frame.row_ops(usize::from(row)) {
+            let letter = if shape == CursorShape::Block { accent } else { ink };
+            for op in ops {
                 let mut op = op.clone();
                 match &mut op {
                     PaintOp::Text { col: from, cells, rgb, .. } if *from <= col && col < from.saturating_add(*cells) => {
-                        *rgb = m.engine.palette().cursor_accent;
+                        *rgb = letter;
                         paint_op(context, text_painter, &m.geom, &op);
                     }
                     PaintOp::Glyph { x: cell_x, rgb, .. } if *cell_x == x => {
-                        *rgb = m.engine.palette().cursor_accent;
+                        *rgb = letter;
                         paint_op(context, text_painter, &m.geom, &op);
                     }
                     _ => {}
                 }
+            }
+            let _ = context.restore();
+            color(context, cursor_rgb);
+            match shape {
+                CursorShape::Beam => {
+                    cursor_beam(context, x, y, cell_h);
+                    let _ = context.fill();
+                }
+                CursorShape::Underline => {
+                    context.rectangle(x, y + cell_h - 2., width, 2.);
+                    let _ = context.fill();
+                }
+                CursorShape::HollowBlock => {
+                    context.rectangle(x + 0.5, y + 0.5, width - 1., cell_h - 1.);
+                    context.set_line_width(1.);
+                    let _ = context.stroke();
+                }
+                CursorShape::Block | CursorShape::Hidden => {}
             }
             let _ = context.restore();
         }
@@ -4593,6 +4633,12 @@ fn row_bands(rows: &[bool], g: &CellGeom) -> Vec<(i32, i32)> {
 fn mix(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     let lerp = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round().clamp(0., 255.) as u8;
     [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])]
+}
+
+/// The thin cursor: a bar with round ends at the left of its cell.
+fn cursor_beam(cr: &cairo::Context, x: f64, y: f64, cell_h: f64) {
+    let inset = (cell_h * 0.12).floor();
+    rounded_rect(cr, x, y + inset, 2., cell_h - 2. * inset, 1.);
 }
 
 /// The block cursor: a little shorter than its row, with soft corners.

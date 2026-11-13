@@ -46,7 +46,11 @@ fn main() {
         session: Some(session.clone()),
         palette,
         scrollback: 4000,
-        preferences: serde_json::json!({}),
+        // `CONTROL_SHOT_SHAPE=ibeam|underline|block`: the cursor preference.
+        preferences: match std::env::var("CONTROL_SHOT_SHAPE") {
+            Ok(shape) => serde_json::json!({ "cursor_shape": shape }),
+            Err(_) => serde_json::json!({}),
+        },
         mode: RunMode::Live,
         environment: vec![],
         clear_env: false,
