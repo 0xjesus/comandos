@@ -30,7 +30,15 @@ fn main() {
             format!("tmux -S '{socket}' {flags}attach -t '={session}'; echo '[fin]'; exec cat"),
         ]
     };
-    let palette = Palette::xterm_default([211, 218, 228], [10, 13, 19], [211, 218, 228], [10, 13, 19], [60, 80, 120]);
+    // `CONTROL_SHOT_CURSOR=r,g,b`: the cursor in a theme's colour.
+    let cursor = std::env::var("CONTROL_SHOT_CURSOR")
+        .ok()
+        .and_then(|v| {
+            let mut n = v.split(',').filter_map(|p| p.trim().parse::<u8>().ok());
+            Some([n.next()?, n.next()?, n.next()?])
+        })
+        .unwrap_or([211, 218, 228]);
+    let palette = Palette::xterm_default([211, 218, 228], [10, 13, 19], cursor, [10, 13, 19], [60, 80, 120]);
     let term = TermView::new(TermOptions {
         argv: attach(""),
         control_argv: Some(attach("-CC ")),
@@ -70,6 +78,10 @@ fn main() {
             step(ms, Box::new(move || {
                 shot(&w, &format!("{o}-mouse-{i}.png"));
                 println!("shot {i}: selection={:?}", t.selection_text());
+                if std::env::var_os("CONTROL_SHOT_CURSOR").is_some() {
+                    let state = t.diagnostic_snapshot().ok();
+                    println!("shot {i}: cursor={} focused={:?}", state.as_ref().map_or("?".into(), |s| s["cursor"].to_string()), state.as_ref().map(|s| s["focused"].clone()));
+                }
             }));
         }
         step(last + 300, Box::new(gtk::main_quit));

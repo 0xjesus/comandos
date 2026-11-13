@@ -276,6 +276,36 @@ impl TermEngine {
         self.engine.term().colors()[index].map(|rgb| [rgb.r, rgb.g, rgb.b])
     }
 
+    /// Where a program that hides the terminal's cursor draws its own: the
+    /// only cell in reverse video on the live screen (Claude Code's prompt
+    /// does this). `None` while the terminal's cursor shows, the view is
+    /// scrolled back or more than one cell is reversed (a highlight).
+    pub fn program_cursor(&self) -> Option<(u16, u16, bool)> {
+        if self.cursor().visible || self.engine.display_offset() != 0 {
+            return None;
+        }
+        let mut found = None;
+        for row in 0..self.engine.term().grid().screen_lines() {
+            let cells = self.row_cells(row)?;
+            let mut col = 0;
+            while let Some(cell) = cells.get(col) {
+                if !cell.flags.contains(Flags::INVERSE) {
+                    col += 1;
+                    continue;
+                }
+                let wide = cell.flags.contains(Flags::WIDE_CHAR);
+                let width = if wide { 2 } else { 1 };
+                let longer = cells.get(col + width).is_some_and(|c| c.flags.contains(Flags::INVERSE));
+                if found.is_some() || longer {
+                    return None;
+                }
+                found = Some((u16::try_from(col).ok()?, u16::try_from(row).ok()?, wide));
+                col += width;
+            }
+        }
+        found
+    }
+
     fn visible_line(&self, line: usize) -> Option<Line> {
         let grid = self.engine.term().grid();
         if line >= grid.screen_lines() {

@@ -591,7 +591,7 @@ impl App {
             if let Some(term) = self.term_for_action(key).as_ref() {
                 term.clear_selection();
             }
-            self.feedback("Seleccion copiada", "Texto al portapapeles");
+            // The selection going away is the sign that it was copied.
             return;
         }
         let tmux = self.tmux.clone();
@@ -621,11 +621,7 @@ impl App {
                 if let Some(app) = weak.upgrade().filter(|a| a.instance(&key, &instance)) {
                     match result {
                         Ok(Some(text)) => {
-                            if clipboard
-                                .copy_selection(&text, glib::monotonic_time() as f64 / 1_000_000.)
-                            {
-                                app.feedback("Seleccion copiada", "Texto al portapapeles");
-                            }
+                            clipboard.copy_selection(&text, glib::monotonic_time() as f64 / 1_000_000.);
                         }
                         Ok(None) => app.feedback(
                             if clipboard

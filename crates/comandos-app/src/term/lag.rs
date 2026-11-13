@@ -34,6 +34,21 @@ pub fn take_phases() -> String {
     out
 }
 
+/// `COMANDOS_LAG_TRACE=1`: every echo and every paint is written, not only
+/// the slow ones. For measuring; never on in normal use.
+pub fn trace() -> bool {
+    thread_local! {
+        static ON: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+    ON.with(|on| {
+        on.get().unwrap_or_else(|| {
+            let wanted = std::env::var_os("COMANDOS_LAG_TRACE").is_some();
+            on.set(Some(wanted));
+            wanted
+        })
+    })
+}
+
 pub fn ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.
 }

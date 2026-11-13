@@ -32,6 +32,8 @@ use std::{
 };
 
 type Handler = ui::app_commands::Handler;
+/// How long a notice stays over the terminals.
+const STATUS_SHOWN: Duration = Duration::from_secs(6);
 pub struct App {
     pub cfg: AppConfig,
     pub tmux: TmuxCtl,
@@ -453,7 +455,36 @@ impl App {
         let drag_layer = ui::drag::DragLayer::new();
         let status = gtk::Label::new(None);
         status.set_no_show_all(true);
-        status.connect_label_notify(|label| label.set_visible(!label.text().is_empty()));
+        // A notice floats over the terminals and leaves by itself: it never
+        // takes a row from them (a terminal that loses a row is resized).
+        status.set_halign(gtk::Align::Center);
+        status.set_valign(gtk::Align::End);
+        status.set_margin_bottom(18);
+        status.set_ellipsize(pango::EllipsizeMode::End);
+        status.set_max_width_chars(96);
+        let style = gtk::CssProvider::new();
+        let _ = style.load_from_data(
+            b"label{background:rgba(18,21,29,0.96);color:#d3dae4;border:1px solid rgba(148,148,148,0.35);\
+border-radius:8px;padding:5px 14px;font-size:12px;}",
+        );
+        status.style_context().add_provider(&style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        let turn = Rc::new(Cell::new(0u64));
+        status.connect_label_notify(move |label| {
+            let shown = !label.text().is_empty();
+            label.set_visible(shown);
+            let mine = turn.get().wrapping_add(1);
+            turn.set(mine);
+            if shown {
+                let (label, turn) = (label.downgrade(), turn.clone());
+                glib::timeout_add_local_once(STATUS_SHOWN, move || {
+                    if turn.get() == mine
+                        && let Some(label) = label.upgrade()
+                    {
+                        label.set_text("");
+                    }
+                });
+            }
+        });
         let workspace = ui::workspace::GtkWorkspace::new();
         let state = StateFiles::new(cfg.clone(), guard.clone());
         let strip = RefCell::new(ui::tabstrip::TabStripNotebook::new(notebook.clone()));
@@ -1957,7 +1988,6 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         app.install_chat(&pages);
         pages.set_visible_child_name("term");
         terminals.pack_start(&pages, true, true, 0);
-        terminals.pack_start(&app.status, false, false, 0);
         app.t18.left.pack_start(&webview, true, true, 0);
         // The left panel keeps its width in pixels; a window that grows or
         // shrinks gives the difference to the terminals.
@@ -1966,6 +1996,8 @@ pub fn run(args: &[String], default_live: bool) -> ExitCode {
         overlay.add(&terminals);
         overlay.add_overlay(app.drag_layer.widget());
         overlay.set_overlay_pass_through(app.drag_layer.widget(), true);
+        overlay.add_overlay(&app.status);
+        overlay.set_overlay_pass_through(&app.status, true);
         app.t17.shelf.paned.pack1(&overlay, true, false);
         app.t18
             .reader_paned

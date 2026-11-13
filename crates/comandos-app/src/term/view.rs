@@ -100,6 +100,12 @@ struct Model {
     resize_at: Option<u64>,
     /// Lag log: last key sent and first output not yet painted.
     key_at: Option<Instant>,
+    /// Panes that got text from tmux since the last read was accounted for.
+    fed: Vec<u32>,
+    /// Something reached every pane (a new layout, a notice of the app).
+    fed_all: bool,
+    /// The key whose echo is on its way to the screen (lag trace only).
+    key_shown: Option<Instant>,
     /// Noise filter: on/off, the panes to filter and the last row maps.
     hide_noise: bool,
     /// The tmux control client behind this view, when it is pane-native.
@@ -546,6 +552,9 @@ impl TermView {
                 ssh_at: None,
                 resize_at: None,
                 key_at: None,
+                fed: Vec::new(),
+                fed_all: false,
+                key_shown: None,
                 output_at: None,
                 hide_noise: true,
                 control: None,
@@ -1409,8 +1418,14 @@ impl Inner {
         let now = Instant::now();
         for action in actions {
             match action {
-                super::control::Action::Layout(panes) => self.layout_panes(m, &panes),
+                super::control::Action::Layout(panes) => {
+                    m.fed_all = true;
+                    self.layout_panes(m, &panes);
+                }
                 super::control::Action::Feed { pane, bytes } => {
+                    if !m.fed.contains(&pane) {
+                        m.fed.push(pane);
+                    }
                     if m.loaded.is_some_and(|p| p.id == pane) {
                         m.engine.feed(&bytes, now);
                     } else if let Some(slot) = m.slots.iter_mut().find(|s| s.info.id == pane) {
@@ -1422,12 +1437,23 @@ impl Inner {
                     let from = *m.audit_from.get_or_insert(ms);
                     m.audit_at = Some(ms.saturating_add(AUDIT_QUIET_MS).min(from.saturating_add(AUDIT_BUSY_MS)));
                 }
-                super::control::Action::Seed { pane, size, bytes } => self.native_seed(m, pane, size, &bytes, now),
+                super::control::Action::Seed { pane, size, bytes } => {
+                    if !m.fed.contains(&pane) {
+                        m.fed.push(pane);
+                    }
+                    self.native_seed(m, pane, size, &bytes, now);
+                }
                 super::control::Action::Check { pane, size, cursor, rows } => {
                     self.native_check(m, pane, size, cursor, &rows);
                 }
-                super::control::Action::Notice(bytes) => m.engine.feed(&bytes, now),
-                super::control::Action::Exited => m.engine.feed(b"\x1b[0m\r\n", now),
+                super::control::Action::Notice(bytes) => {
+                    m.fed_all = true;
+                    m.engine.feed(&bytes, now);
+                }
+                super::control::Action::Exited => {
+                    m.fed_all = true;
+                    m.engine.feed(b"\x1b[0m\r\n", now);
+                }
             }
         }
         outcome
@@ -1443,6 +1469,27 @@ impl Inner {
             (m.audit_at, m.audit_from) = (None, None);
             Self::native_command(m, |control, wire| control.check(wire));
         }
+    }
+    /// While keys or text arrive the cursor stays lit: it only blinks once
+    /// the terminal has been quiet for a moment, so it is never missing
+    /// from the place being typed in.
+    fn steady_cursor(&self, m: &mut Model) -> bool {
+        let now = self.ms();
+        m.schedule.blinked(now);
+        if m.blink_visible {
+            return false;
+        }
+        // It was in the dark half of a blink: its row is painted again.
+        m.blink_visible = true;
+        let row = m.frame.cursor().line;
+        m.schedule.damage(now, &[row]);
+        if !m.slots.is_empty()
+            && let Some(id) = m.loaded.map(|p| p.id)
+            && !m.stale.contains(&id)
+        {
+            m.stale.push(id);
+        }
+        true
     }
     /// Sends what a control session wants to say.
     fn native_command(m: &mut Model, say: impl FnOnce(&mut super::control::Session, &mut Vec<u8>)) {
@@ -1578,6 +1625,19 @@ impl Inner {
     /// Notes which panes changed, so only those are painted again.
     fn native_damage(&self, m: &mut Model, lines: &mut Vec<usize>) {
         Self::follow_scroll(m);
+        // An engine names its cursor row as changed every time it is asked.
+        // A read that brought a pane no text (tmux answering a command, or
+        // text for another pane) must not paint it: for the pane being typed
+        // in, that frame is the one the program's echo would have used.
+        let fed = std::mem::take(&mut m.fed);
+        let all = std::mem::take(&mut m.fed_all) || m.loaded.is_none();
+        let got = |id: u32| all || fed.contains(&id);
+        if lines.len() <= 1 && !m.loaded.is_none_or(|p| got(p.id)) {
+            lines.clear();
+        }
+        if !lines.is_empty() {
+            let _ = self.steady_cursor(m);
+        }
         if m.slots.is_empty() {
             return;
         }
@@ -1589,7 +1649,7 @@ impl Inner {
         }
         let mut scratch = Vec::new();
         let Model { slots, stale, .. } = &mut *m;
-        for slot in slots.iter_mut() {
+        for slot in slots.iter_mut().filter(|s| got(s.info.id)) {
             let _ = slot.engine.drain();
             scratch.clear();
             if slot.engine.take_dirty(&mut scratch) || !scratch.is_empty() {
@@ -2120,7 +2180,14 @@ impl Inner {
         match action {
             KeyAction::Send(bytes) => {
                 self.send_event(&bytes);
-                self.model.borrow_mut().key_at = Some(Instant::now());
+                let mut m = self.model.borrow_mut();
+                m.key_at = Some(Instant::now());
+                m.key_shown = m.key_at.filter(|_| super::lag::trace());
+                let lit = self.steady_cursor(&mut m);
+                drop(m);
+                if lit {
+                    self.request_frame();
+                }
                 glib::Propagation::Stop
             }
             KeyAction::ScrollPage(direction) => {
@@ -2968,16 +3035,31 @@ fn connect_events(inner: &Rc<Inner>) {
     inner.im.connect_commit(move |_, text| {
         if let Some(inner) = weak.upgrade() {
             inner.aim_keys();
-            let bytes = {
+            // Only a composition that was on screen needs painting over: a
+            // plain letter changes nothing until the program echoes it.
+            // Typing also brings a view scrolled back down to the live screen.
+            let (bytes, composed) = {
                 let mut m = inner.model.borrow_mut();
+                let composed = !m.preedit.is_empty()
+                    || m.engine.engine().display_offset() != 0
+                    || m.glide_frac != 0.;
                 m.preedit.clear();
-                m.ime.end(text)
+                (m.ime.end(text), composed)
             };
             if let Some(bytes) = bytes {
                 inner.send_event(&bytes);
-                inner.model.borrow_mut().key_at = Some(Instant::now());
+                let mut m = inner.model.borrow_mut();
+                m.key_at = Some(Instant::now());
+                m.key_shown = m.key_at.filter(|_| super::lag::trace());
+                let lit = inner.steady_cursor(&mut m);
+                drop(m);
+                if lit {
+                    inner.request_frame();
+                }
             }
-            inner.redraw();
+            if composed {
+                inner.redraw();
+            }
         }
     });
     let weak = Rc::downgrade(inner);
@@ -3583,6 +3665,7 @@ impl Inner {
             }
             self.full.set(false);
         }
+        let blit_at = Instant::now();
         if !direct && let Some(image) = canvas.as_ref() {
             context.set_operator(cairo::Operator::Source);
             if context.set_source_surface(image, 0., 0.).is_ok() {
@@ -3625,9 +3708,24 @@ impl Inner {
         if !paint {
             return;
         }
+        super::lag::phase("blit", blit_at);
         let took = super::lag::ms(started);
         let session = self.options.session.as_deref().unwrap_or("-");
         let phases = super::lag::take_phases();
+        if super::lag::trace() {
+            // A key counts as shown by the first paint of output that came after it.
+            let echoed = m.key_shown.zip(m.output_at).filter(|(key, output)| output >= key);
+            let (key, echo) = echoed.map_or((-1., -1.), |(key, output)| {
+                (super::lag::ms(key), output.duration_since(key).as_secs_f64() * 1000.)
+            });
+            if echoed.is_some() {
+                m.key_shown = None;
+            }
+            let wait = m.output_at.map_or(-1., super::lag::ms);
+            super::lag::note(&format!(
+                "trace paint {took:.1}ms key={key:.1} echo={echo:.1} output={wait:.1} {phases}"
+            ));
+        }
         if took > super::lag::SLOW_PAINT_MS {
             let (cols, rows) = m.engine.size();
             super::lag::note(&format!("paint {took:.1}ms {session} {cols}x{rows} {phases}"));
@@ -3692,8 +3790,10 @@ impl Inner {
         if !all {
             ids.retain(|id| m.stale.contains(id));
         }
-        let (cell_w, cell_h, top) = (m.geom.cell_w, m.geom.cell_h, m.padding + 14.);
-        let (base_x, focused, key) = (m.base_x, m.focused, m.key_pane);
+        let (focused, key) = (m.focused, m.key_pane);
+        // Among several panes the cursor does not blink: a pane painted in
+        // the dark half would keep it missing until its next output.
+        let blink = std::mem::replace(&mut m.blink_visible, true);
         if all {
             let bg = m.engine.palette().bg;
             context.set_source_rgba(
@@ -3706,17 +3806,12 @@ impl Inner {
             let _ = context.paint();
             context.set_operator(cairo::Operator::Over);
         }
-        let (right_edge, bottom_edge) = m.window_cells;
         for id in ids {
             if !Self::load_pane(m, id) {
                 continue;
             }
             let Some(p) = m.loaded else { continue };
-            // Its tile: the header row above the text and half of each gap.
-            let x0 = if p.left == 0 { 0. } else { base_x + (f64::from(p.left) - 0.5) * cell_w };
-            let x1 = if p.left + p.width >= right_edge { w } else { base_x + (f64::from(p.left + p.width) + 0.5) * cell_w };
-            let y0 = if p.top <= 1 { 0. } else { top + f64::from(p.top - 1) * cell_h };
-            let y1 = if p.top + p.height >= bottom_edge { h } else { top + f64::from(p.top + p.height) * cell_h };
+            let (x0, y0, x1, y1) = Self::pane_rect(m, &p, (w, h));
             let _ = context.save();
             context.rectangle(x0, y0, x1 - x0, y1 - y0);
             context.clip();
@@ -3727,8 +3822,20 @@ impl Inner {
             let _ = context.restore();
         }
         m.focused = focused;
+        m.blink_visible = blink;
         Self::load_pane(m, keep);
         m.stale.clear();
+    }
+    /// The part of the widget that belongs to a pane: its text, the header
+    /// row above it and half of each gap to its neighbours.
+    fn pane_rect(m: &Model, p: &super::control::PaneInfo, (w, h): (f64, f64)) -> (f64, f64, f64, f64) {
+        let (cell_w, cell_h, top, base_x) = (m.geom.cell_w, m.geom.cell_h, m.padding + 14., m.base_x);
+        let (right_edge, bottom_edge) = m.window_cells;
+        let x0 = if p.left == 0 { 0. } else { base_x + (f64::from(p.left) - 0.5) * cell_w };
+        let x1 = if p.left + p.width >= right_edge { w } else { base_x + (f64::from(p.left + p.width) + 0.5) * cell_w };
+        let y0 = if p.top <= 1 { 0. } else { top + f64::from(p.top - 1) * cell_h };
+        let y1 = if p.top + p.height >= bottom_edge { h } else { top + f64::from(p.top + p.height) * cell_h };
+        (x0, y0, x1, y1)
     }
     /// Runs at the start of a GTK frame, before it paints: reads the screen
     /// and asks GTK to repaint only the rows that changed. Typing, a spinner
@@ -3747,11 +3854,29 @@ impl Inner {
             return;
         }
         if !m.slots.is_empty() {
-            // Several panes: `draw` paints the ones that changed.
+            // Several panes: `draw` paints the ones that changed, and only
+            // their part of the window is sent to the display again.
             let now = self.ms();
             m.schedule.painted(now);
+            let size = (f64::from(self.area.allocated_width()), f64::from(self.area.allocated_height()));
+            let parts: Vec<(f64, f64, f64, f64)> = if self.full.get() || m.glide_frac != 0. {
+                Vec::new()
+            } else {
+                m.loaded
+                    .iter()
+                    .chain(m.slots.iter().map(|s| &s.info))
+                    .filter(|p| m.stale.contains(&p.id))
+                    .map(|p| Self::pane_rect(&m, p, size))
+                    .collect()
+            };
             drop(m);
-            self.area.queue_draw();
+            if parts.is_empty() {
+                self.area.queue_draw();
+            }
+            for (x0, y0, x1, y1) in parts {
+                let (x, y) = (x0.floor() as i32, y0.floor() as i32);
+                self.area.queue_draw_area(x, y, x1.ceil() as i32 - x, y1.ceil() as i32 - y);
+            }
             return;
         }
         let scale = self.area.scale_factor().max(1);
@@ -3802,6 +3927,7 @@ impl Inner {
             }
         };
         super::lag::phase("refresh", refresh_at);
+        let look_at = Instant::now();
         // Panes as this frame shows them. tmux's own report arrives later
         // while the window or a division moves, so it only names them.
         let tiles = {
@@ -3978,6 +4104,7 @@ impl Inner {
             });
         }
         m.fill_wanted = wanted;
+        super::lag::phase("look", look_at);
         FrameLook {
             fresh,
             plain: m.selection.is_none()
@@ -4182,6 +4309,7 @@ impl Inner {
             let _ = context.restore();
         }
         super::lag::phase("ops", ops_at);
+        let over_at = Instant::now();
         // Where a grid row ended up on screen (hidden rows: None).
         let shown_row = |col: u16, row: u16| -> Option<f64> {
             match maps
@@ -4312,7 +4440,7 @@ impl Inner {
                     CursorShape::Underline => {
                         context.rectangle(x, y + m.geom.cell_h - 2., width, 2.)
                     }
-                    CursorShape::Block => context.rectangle(x, y, width, m.geom.cell_h),
+                    CursorShape::Block => cursor_block(context, x, y, width, m.geom.cell_h),
                     CursorShape::HollowBlock => {
                         context.rectangle(x + 0.5, y + 0.5, width - 1., m.geom.cell_h - 1.);
                         context.set_line_width(1.);
@@ -4354,6 +4482,44 @@ impl Inner {
                 }
             }
         }
+        // A program that hides the terminal's cursor and draws its own as one
+        // cell in reverse video gets the same cursor as everything else.
+        if !cursor.visible
+            && m.focused
+            && let Some((col, row, wide)) = m.engine.program_cursor()
+            && let Some(shown) = shown_row(col, row)
+        {
+            let (x, y) = (ox + f64::from(col) * cell_w, oy + shown * cell_h);
+            let width = cell_w * if wide { 2. } else { 1. };
+            let under = tile_rects
+                .iter()
+                .find(|((tx, ty, tw, th), _)| x >= *tx && x < tx + tw && y >= *ty && y < ty + th)
+                .map_or(m.engine.palette().bg, |(_, rgb)| *rgb);
+            let _ = context.save();
+            context.rectangle(x, y, width, cell_h);
+            context.clip();
+            color(context, under);
+            let _ = context.paint();
+            color(context, m.engine.palette().cursor);
+            cursor_block(context, x, y, width, cell_h);
+            let _ = context.fill();
+            context.translate(0., (shown - f64::from(row)) * cell_h);
+            for op in m.frame.row_ops(usize::from(row)) {
+                let mut op = op.clone();
+                match &mut op {
+                    PaintOp::Text { col: from, cells, rgb, .. } if *from <= col && col < from.saturating_add(*cells) => {
+                        *rgb = m.engine.palette().cursor_accent;
+                        paint_op(context, text_painter, &m.geom, &op);
+                    }
+                    PaintOp::Glyph { x: cell_x, rgb, .. } if *cell_x == x => {
+                        *rgb = m.engine.palette().cursor_accent;
+                        paint_op(context, text_painter, &m.geom, &op);
+                    }
+                    _ => {}
+                }
+            }
+            let _ = context.restore();
+        }
         if !m.preedit.is_empty() {
             let layout = self.area.create_pango_layout(None);
             layout.set_font_description(Some(&m.font));
@@ -4366,6 +4532,7 @@ impl Inner {
             pangocairo::functions::show_layout(context, &layout);
         }
         let _ = context.restore();
+        super::lag::phase("over", over_at);
         m.painted_cursor = painted_cursor;
         m.painted = Some(look);
     }
@@ -4426,6 +4593,12 @@ fn row_bands(rows: &[bool], g: &CellGeom) -> Vec<(i32, i32)> {
 fn mix(a: [u8; 3], b: [u8; 3], t: f64) -> [u8; 3] {
     let lerp = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round().clamp(0., 255.) as u8;
     [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])]
+}
+
+/// The block cursor: a little shorter than its row, with soft corners.
+fn cursor_block(cr: &cairo::Context, x: f64, y: f64, w: f64, cell_h: f64) {
+    let inset = (cell_h * 0.1).floor();
+    rounded_rect(cr, x, y + inset, w, cell_h - 2. * inset, 2.5);
 }
 
 fn rounded_rect(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
