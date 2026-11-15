@@ -68,6 +68,9 @@ impl App {
                 "quickTerminal" => self.quick_terminal(),
                 "sortMenu" => self.sort_menu(None),
                 "newSession" => return self.handlers.invoke("T14.wizard", &json!({})),
+                // Settings, Remote, Servers and Sovereignty open in the middle of
+                // the window: the left page stores which one and asks for this.
+                "chains" => return self.open_center_panel(),
                 _ => return Err(CommandError::Unknown(action)),
             },
             BridgeMsg::OpenSession {
@@ -102,9 +105,11 @@ impl App {
                     .handlers
                     .invoke("T18.reader", &json!({"action":action,"id":id,"on":on}));
             }
-            // The desktop has no sidebar terminal or chains modal; the shared
-            // parser still recognizes those messages, so they are dropped here.
-            BridgeMsg::SidebarTerm(_) | BridgeMsg::ChainModal(_) => {}
+            // The desktop has no sidebar terminal; the shared parser still
+            // recognizes its messages, so they are dropped here.
+            BridgeMsg::SidebarTerm(_) => {}
+            // The center page says its panel was closed.
+            BridgeMsg::ChainModal(_) => self.close_window(ui::modals::CENTER),
             BridgeMsg::LeftPanel(action) => {
                 return self
                     .handlers

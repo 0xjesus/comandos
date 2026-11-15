@@ -57,7 +57,7 @@ fn reader_bridge_accepts_only_its_exact_owned_local_page() {
     let news = reader_uri(base, "2026-10-08@10:00", "test").unwrap();
     let chains = format!("{base}/?panel=chains&v=test&session=fixture&pane=%251");
     assert!(message_owned(&news, &news, base, "reader"));
-    assert!(!message_owned(&chains, &chains, base, "chains"));
+    assert!(message_owned(&chains, &chains, base, "chains"));
     assert!(!message_owned(&chains, &chains, base, "reader"));
     assert!(!message_owned(
         &format!("{news}#changed"),

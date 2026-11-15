@@ -140,16 +140,45 @@ impl App {
                 Err(error) => app.status.set_text(&error.to_string()),
             }
         });
-        self.t18
-            .reader_signals
-            .borrow_mut()
-            .push((manager.upcast(), id));
+        if kind == "reader" {
+            self.t18
+                .reader_signals
+                .borrow_mut()
+                .push((manager.upcast(), id));
+        } else if let Some(owner) = self.t18.windows.borrow_mut().get_mut(kind) {
+            owner.signals.push((manager.upcast(), id));
+        }
     }
     pub(super) fn open_web_modal(self: &Rc<Self>, uri: &str, label: &str) -> Result<(), CommandError> {
+        self.open_window_page(uri, "link", if label.is_empty() { uri } else { label })
+    }
+    /// The dashboard page that shows the panel the left page just asked for.
+    pub(super) fn open_center_panel(self: &Rc<Self>) -> Result<(), CommandError> {
+        let base = self
+            .cfg
+            .dash_url()
+            .ok_or_else(|| CommandError::Refused("dashboard unavailable".into()))?
+            .to_string();
+        self.open_window_page(
+            &format!(
+                "{}/?panel=chains&v={}&session=&pane=",
+                base.trim_end_matches('/'),
+                env!("CARGO_PKG_VERSION")
+            ),
+            ui::modals::CENTER,
+            "ComandOS",
+        )
+    }
+    fn open_window_page(
+        self: &Rc<Self>,
+        uri: &str,
+        name: &'static str,
+        title_text: &str,
+    ) -> Result<(), CommandError> {
         if uri.len() > 8192 || !(uri.starts_with("http://") || uri.starts_with("https://")) {
             return Err(CommandError::Invalid("invalid web URL".into()));
         }
-        let name = "link";
+        let center = name == ui::modals::CENTER;
         self.close_window(name);
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_transient_for(Some(&self.window));
@@ -157,12 +186,18 @@ impl App {
         window.set_decorated(false);
         window.style_context().add_class("mosaic-zoom");
         let (w, h) = self.window.size();
-        let size = ui::modals::modal_size(ModalKind::Url, w, h);
+        let kind = if center {
+            ModalKind::Center
+        } else {
+            ModalKind::Url
+        };
+        let size = ui::modals::modal_size(kind, w, h);
         window.set_default_size(size.0, size.1);
         window.set_position(gtk::WindowPosition::CenterOnParent);
         let page = ui::webview::create_page(&self.cfg, &self.webview, "centro", uri)
             .map_err(|e| CommandError::Failed(format!("{e:?}")))?;
         let scope = Rc::new(ui::snippets::Scope::default());
+        let ticket = scope.ticket();
         let view = page.view.clone();
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
         {
@@ -171,7 +206,6 @@ impl App {
             head.style_context().add_class("mosaic-head");
             let title = gtk::Label::new(None);
             title.set_ellipsize(pango::EllipsizeMode::End);
-            let title_text = if label.is_empty() { uri } else { label };
             let text = title_text.chars().take(80).collect::<String>();
             title.set_markup(&format!("<span weight=\"bold\"> 🌐 {}</span><span foreground=\"#8A8F98\" size=\"small\">  · Esc {}</span>",glib::markup_escape_text(&text),if self.english{"closes"}else{"cierra"}));
             title.set_xalign(0.0);
@@ -199,6 +233,9 @@ impl App {
                 scope,
             },
         );
+        if center {
+            self.bind_aux_bridge(&view, &ticket, uri, name);
+        }
         self.bind_window_close(name, &window, false);
         window.show_all();
         Ok(())
