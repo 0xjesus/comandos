@@ -46,3 +46,4 @@ pub mod session_feed;
 pub mod index_page;
 
 pub mod theme_preferences;
+pub mod user_themes;

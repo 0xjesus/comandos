@@ -3,6 +3,8 @@ use serde_json::Value;
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Theme(String),
+    /// A user theme: its built-in base and the full palette JSON to paint.
+    Palette(String, String),
     CursorStyle(String),
     ButtonStyle(String),
     Session(String),
@@ -23,6 +25,42 @@ pub enum Command {
     /// A toolbar action button pressed from the parent's bar.
     Action(String),
 }
+/// A user theme's colours over its base palette. Only the base's own keys
+/// are taken, and only as `#RRGGBB`; anything else rejects the message.
+pub fn palette_over(base: &str, palette: &Value) -> Option<String> {
+    let mut cfg: serde_json::Map<String, Value> = serde_json::from_str(base).ok()?;
+    let palette = palette.as_object()?;
+    for (key, color) in palette {
+        let c = color.as_str()?;
+        let tail = c.strip_prefix('#')?;
+        if tail.len() != 6 || !tail.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        const ANSI: [&str; 16] = [
+            "black",
+            "red",
+            "green",
+            "yellow",
+            "blue",
+            "magenta",
+            "cyan",
+            "white",
+            "brightBlack",
+            "brightRed",
+            "brightGreen",
+            "brightYellow",
+            "brightBlue",
+            "brightMagenta",
+            "brightCyan",
+            "brightWhite",
+        ];
+        if !cfg.contains_key(key) && !ANSI.contains(&key.as_str()) {
+            return None;
+        }
+        cfg.insert(key.clone(), Value::String(c.to_owned()));
+    }
+    serde_json::to_string(&cfg).ok()
+}
 pub fn toolbar_action(action: &str) -> bool {
     matches!(action, "mode" | "panes" | "history" | "copy" | "paste" | "keyboard" | "ctrl")
 }
@@ -41,8 +79,11 @@ pub fn command(data: &Value) -> Option<Command> {
     Some(match data.get("type")?.as_str()? {
         "theme" => {
             let s = text("theme")?;
-            crate::page_theme::theme(&s)?;
-            Command::Theme(s)
+            let base = crate::page_theme::theme(&s)?;
+            match data.get("palette") {
+                Some(palette) => Command::Palette(s, palette_over(base, palette)?),
+                None => Command::Theme(s),
+            }
         }
         "cursor-style" => {
             let style = text("style")?;
@@ -124,6 +165,36 @@ pub fn control_byte(data: &[u8]) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn user_theme_palette_overrides_only_known_hex_keys() {
+        let m = |v| command(&v);
+        let Some(Command::Palette(base, cfg)) = m(
+            serde_json::json!({"source":"comandos","type":"theme","theme":"dia","palette":{"background":"#101010","brightRed":"#FF0000"}}),
+        ) else {
+            panic!("palette");
+        };
+        assert_eq!(base, "dia");
+        let cfg: Value = serde_json::from_str(&cfg).unwrap();
+        assert_eq!(cfg["background"], "#101010");
+        assert_eq!(cfg["brightRed"], "#FF0000");
+        assert_eq!(cfg["foreground"], "#17202B");
+        for bad in [
+            serde_json::json!({"background":"red"}),
+            serde_json::json!({"onload":"#000000"}),
+            serde_json::json!("x"),
+        ] {
+            assert_eq!(
+                m(
+                    serde_json::json!({"source":"comandos","type":"theme","theme":"dia","palette":bad})
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            m(serde_json::json!({"source":"comandos","type":"theme","theme":"dia"})),
+            Some(Command::Theme("dia".into()))
+        );
+    }
     #[test]
     fn control_and_toolbar_match_legacy() {
         assert_eq!(toolbar_key("escape"), Some(&b"\x1b"[..]));

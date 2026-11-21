@@ -92,6 +92,7 @@ mod web {
     use crate::components::web_support::*;
     use comandos_web_dom::port::*;
     use comandos_web_view::theme_preferences as model;
+    use comandos_web_view::user_themes as ut;
     use js_sys::{Array, Reflect};
     use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
     // Temporary access to bindings owned by the helper/terminal coordinator.
@@ -142,7 +143,12 @@ mod web {
         .map(|v| utf16_string(&v))
     }
     fn current_theme() -> String {
-        string(&global("curTheme"))
+        let id = global("curThemeId");
+        if truthy(&id) {
+            string(&id)
+        } else {
+            string(&global("curTheme"))
+        }
     }
     fn current_buttons() -> String {
         string(&global("curButtonStyle"))
@@ -182,6 +188,11 @@ mod web {
         Ok(())
     }
     fn broadcast(name: JsValue) -> Result<(), JsValue> {
+        let r = ut::resolve(&prefs(), &string(&name));
+        let msg = message("theme", "theme", r.base.clone().into())?;
+        if r.user {
+            set(&msg, "palette", &from_json(&ut::term_palette(&r.colors))?)?;
+        }
         frames(|frame| {
             invoke_void("styleTermFrame", std::slice::from_ref(&frame))?;
             let window = get(&frame, "contentWindow");
@@ -189,10 +200,7 @@ mod web {
                 call(
                     &window,
                     "postMessage",
-                    &[
-                        message("theme", "theme", name.clone())?,
-                        get(&global("location"), "origin"),
-                    ],
+                    &[msg.clone(), get(&global("location"), "origin")],
                 )?;
             }
             Ok(())
@@ -221,43 +229,114 @@ mod web {
             Ok(())
         })
     }
-    fn apply_theme(name: JsValue, tell: bool) -> Result<(), JsValue> {
-        let input = name.as_string().unwrap_or_default();
-        let name = model::theme(&input);
-        set(&js_sys::global(), "curTheme", &name.into())?;
+    thread_local! {
+        static PREFS: std::cell::RefCell<serde_json::Value> =
+            const { std::cell::RefCell::new(serde_json::Value::Null) };
+        static DRAFT: std::cell::RefCell<Option<ut::Draft>> =
+            const { std::cell::RefCell::new(None) };
+        static DELETE_ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    fn prefs() -> serde_json::Value {
+        PREFS.with(|p| p.borrow().clone())
+    }
+    fn remember(p: &JsValue) {
+        let v = to_json(p);
+        if v.is_object() {
+            PREFS.with(|slot| *slot.borrow_mut() = v);
+        }
+    }
+    /// A user theme that exists, or the built-in name (unknown → noche).
+    fn known(name: &str) -> String {
+        if ut::is_user_id(name) && ut::find(&prefs(), name).is_some() {
+            name.into()
+        } else {
+            model::theme(name).into()
+        }
+    }
+    const CSS_VARS: [&str; 10] = [
+        "--bg",
+        "--panel",
+        "--panel2",
+        "--line",
+        "--line2",
+        "--text",
+        "--dim",
+        "--faint",
+        "--brand",
+        "--on-brand",
+    ];
+    /// Paint the page: the built-in base, plus a user theme's colours (or a
+    /// draft being edited) as inline variables over it.
+    fn paint(
+        base: &str,
+        colors: Option<&serde_json::Map<String, serde_json::Value>>,
+        treatment: &str,
+    ) -> Result<(), JsValue> {
         let meta = model::metadata();
-        let m = meta.get(name).unwrap_or(&serde_json::Value::Null);
+        let m = meta.get(base).unwrap_or(&serde_json::Value::Null);
         let docel = get(&doc(), "documentElement");
         let data = get(&docel, "dataset");
-        if name == "noche" {
-            Reflect::delete_property(&data.into(), &"theme".into())?;
+        if base == "noche" {
+            Reflect::delete_property(&data.clone().into(), &"theme".into())?;
         } else {
-            set(&data, "theme", &name.into())?;
+            set(&data, "theme", &base.into())?;
         }
-        set(
-            &get(&docel, "dataset"),
-            "treatment",
-            &m["treatment"].as_str().unwrap_or_default().into(),
-        )?;
-        set(
-            &get(&docel, "style"),
-            "colorScheme",
-            &m["scheme"].as_str().unwrap_or_default().into(),
-        )?;
+        let treatment = if treatment == "solid" { "" } else { treatment };
+        set(&data, "treatment", &treatment.into())?;
+        let st = get(&docel, "style");
+        match colors {
+            Some(c) => {
+                for (k, v) in ut::css_vars(c) {
+                    call(&st, "setProperty", &[k.into(), v.into()])?;
+                }
+                let bg = c
+                    .get("bg")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("#000000");
+                let scheme = if ut::luminance(bg) > 0.35 {
+                    "light"
+                } else {
+                    "dark"
+                };
+                set(&st, "colorScheme", &scheme.into())?;
+            }
+            None => {
+                for k in CSS_VARS {
+                    call(&st, "removeProperty", &[k.into()])?;
+                }
+                set(
+                    &st,
+                    "colorScheme",
+                    &m["scheme"].as_str().unwrap_or_default().into(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+    fn apply_theme(name: JsValue, tell: bool) -> Result<(), JsValue> {
+        let input = name.as_string().unwrap_or_default();
+        let name = known(&input);
+        let r = ut::resolve(&prefs(), &name);
+        // `curTheme` stays a built-in name: terminal pages and URLs read it.
+        set(&js_sys::global(), "curTheme", &r.base.clone().into())?;
+        set(&js_sys::global(), "curThemeId", &name.clone().into())?;
+        let meta = model::metadata();
+        let m = meta.get(&r.base).unwrap_or(&serde_json::Value::Null);
+        paint(&r.base, r.user.then_some(&r.colors), &r.treatment)?;
         let color = query(&doc(), "meta[name=\"theme-color\"]");
         if truthy(&color) {
-            attr(
-                &color,
-                "content",
+            let first = if r.user {
+                r.colors.get("bg").and_then(serde_json::Value::as_str)
+            } else {
                 m.get("sw")
                     .and_then(|sw| sw.get(0))
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default(),
-            );
+            };
+            attr(&color, "content", first.unwrap_or_default());
         }
         let btn = query(&doc(), "#btn-theme");
         html(&btn, icon(m["icon"].as_str().unwrap_or_default(), 15.0))?;
-        let label = m["label"].as_str().unwrap_or_default();
+        let label = &r.label;
         set(
             &btn,
             "title",
@@ -268,7 +347,7 @@ mod web {
             .into(),
         )?;
         render_themes()?;
-        broadcast(name.into())?;
+        broadcast(name.clone().into())?;
         notify_app("theme", name.into(), tell)
     }
     fn apply_buttons(style: JsValue, tell: bool) -> Result<(), JsValue> {
@@ -303,19 +382,20 @@ mod web {
     fn select_theme(name: JsValue) -> JsValue {
         let previous = current_theme();
         let applied = apply_theme(name.clone(), true);
+        let user = ut::resolve(&prefs(), &string(&name));
         let fetched = applied.and_then(|()| {
             let patch = object();
             set(&patch, "theme", &name)?;
+            if let Some(style) = user.button_style.as_deref().filter(|_| user.user) {
+                set(&patch, "button_style", &style.into())?;
+                apply_buttons(style.into(), true)?;
+            }
             invoke(&global("api"), &["/prefs-set".into(), patch])
         });
         promise(async move {
             let result = async {
                 wait(fetched).await?;
-                let meta = model::metadata();
-                let name = string(&name);
-                let label = meta.get(&name).unwrap_or(&serde_json::Value::Null)["label"]
-                    .as_str()
-                    .ok_or_else(|| js_sys::TypeError::new("Cannot read properties of undefined"))?;
+                let label = user.label.as_str();
                 invoke_void(
                     "toast",
                     &[tr(format!("Tema: {label}"), format!("Theme: {label}")).into()],
@@ -371,55 +451,301 @@ mod web {
         if !truthy(&g) {
             return Ok(());
         }
-        html(
-            &g,
-            model::theme_gallery(&current_theme(), |n, s| icon(n, s.into())),
-        )?;
-        for btn in all(&g, "[data-theme-id]") {
-            let item = btn.clone();
-            listen(
-                &btn,
-                "click",
-                void(move |_| {
-                    let _ = select_theme(get(&get(&item, "dataset"), "themeId"));
-                    Ok(())
-                }),
-            );
-            let item = btn.clone();
-            let gallery = g.clone();
-            listen(
-                &btn,
-                "keydown",
-                void(move |a| {
-                    let e = a.get(0);
-                    let key = string(&get(&e, "key"));
-                    if !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].contains(&key.as_str())
-                    {
-                        return Ok(());
-                    }
-                    call(&e, "preventDefault", &[])?;
-                    let delta = if ["ArrowLeft", "ArrowUp"].contains(&key.as_str()) {
-                        -1
-                    } else {
-                        1
-                    };
-                    let index = number(&get(&get(&item, "dataset"), "index")) as i32;
-                    let next = model::THEMES
-                        .get(
-                            (index + delta + model::THEMES.len() as i32) as usize
-                                % model::THEMES.len(),
-                        )
-                        .copied()
-                        .unwrap_or("noche");
-                    let el = query(&gallery, &format!("[data-theme-id=\"{next}\"]"));
-                    if truthy(&el) {
-                        call(&el, "focus", &[])?;
-                    }
-                    Ok(())
-                }),
-            );
+        let en = english();
+        let markup = DRAFT.with(|d| {
+            ut::gallery(
+                &prefs(),
+                &current_theme(),
+                d.borrow().as_ref(),
+                en,
+                &|n, s| icon(n, s.into()),
+            )
+        });
+        html(&g, markup)?;
+        if !truthy(&get(&g, "_utWired")) {
+            set(&g, "_utWired", &true.into())?;
+            wire_gallery(&g)?;
         }
         Ok(())
+    }
+    /// Show the draft live on the page and in the preview, without
+    /// re-rendering (a colour dialog may still be open).
+    fn paint_draft() -> Result<(), JsValue> {
+        let Some(d) = DRAFT.with(|d| d.borrow().clone()) else {
+            return Ok(());
+        };
+        let show = d.from.user || d.edited();
+        paint(&d.from.base, show.then_some(&d.colors), &d.treatment)?;
+        let pv = query(&doc(), "[data-ut-pv]");
+        if truthy(&pv) {
+            let fresh = ut::preview(&d);
+            let holder = call(&doc(), "createElement", &["div".into()])?;
+            html(&holder, fresh)?;
+            let next = get(&holder, "firstElementChild");
+            if truthy(&next) {
+                call(&pv, "replaceWith", &[next])?;
+            }
+        }
+        for el in all(&doc(), "[data-ut-hex]") {
+            let key = string(&get(&get(&el, "dataset"), "utHex"));
+            let v = color_of(&d.colors, &key);
+            text(&el, &v.into())?;
+        }
+        for el in all(&doc(), "[data-ut-cr]") {
+            let key = string(&get(&get(&el, "dataset"), "utCr"));
+            if let Some(r) = ut::contrast(&d.colors, &key) {
+                let (cls, sym) = ut::mark(r);
+                attr(&el, "class", &format!("ut-cr {cls}"));
+                attr(&el, "title", &ut::mark_text(r, english()));
+                text(&el, &format!("{sym} {r:.1}").into())?;
+            }
+        }
+        for el in all(&doc(), "[data-ut-edited]") {
+            set(&el, "hidden", &(!d.edited()).into())?;
+        }
+        Ok(())
+    }
+    fn color_of(c: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
+        if let Some(i) = key
+            .strip_prefix("pal")
+            .and_then(|i| i.parse::<usize>().ok())
+        {
+            return c["pal"]
+                .get(i)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .into();
+        }
+        c.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .into()
+    }
+    fn open_draft(id: &str) {
+        let d = ut::Draft::new(ut::resolve(&prefs(), id), &current_buttons());
+        DRAFT.with(|slot| *slot.borrow_mut() = Some(d));
+        DELETE_ARMED.with(|a| a.set(false));
+    }
+    fn close_draft() -> Result<(), JsValue> {
+        DRAFT.with(|slot| *slot.borrow_mut() = None);
+        apply_theme(current_theme().into(), false)
+    }
+    fn data_of(el: &JsValue, key: &str) -> Option<String> {
+        let v = get(&get(el, "dataset"), key);
+        (!v.is_undefined() && !v.is_null()).then(|| string(&v))
+    }
+    fn wire_gallery(g: &JsValue) -> Result<(), JsValue> {
+        listen(
+            g,
+            "click",
+            void(move |a| {
+                let target = get(&a.get(0), "target");
+                let hit = call(&target, "closest", &["button".into()])?;
+                if !truthy(&hit) {
+                    return Ok(());
+                }
+                if let Some(id) = data_of(&hit, "themeId") {
+                    let same = DRAFT.with(|d| d.borrow().as_ref().is_some_and(|d| d.from.id == id));
+                    if same {
+                        return close_draft();
+                    }
+                    open_draft(&id);
+                    if id == current_theme() {
+                        return render_themes();
+                    }
+                    let _ = select_theme(id.into());
+                    return Ok(());
+                }
+                if hit_has(&hit, "data-ut-close") {
+                    return close_draft();
+                }
+                if let Some(tab) = data_of(&hit, "utTab") {
+                    DRAFT.with(|d| {
+                        if let Some(d) = d.borrow_mut().as_mut() {
+                            d.tab = tab;
+                        }
+                    });
+                    return render_themes();
+                }
+                if let Some(t) = data_of(&hit, "utTreatment") {
+                    DRAFT.with(|d| {
+                        if let Some(d) = d.borrow_mut().as_mut() {
+                            d.treatment = t;
+                        }
+                    });
+                    render_themes()?;
+                    return paint_draft();
+                }
+                if let Some(style) = data_of(&hit, "utButtons") {
+                    let user = DRAFT.with(|d| {
+                        let mut d = d.borrow_mut();
+                        let Some(d) = d.as_mut() else { return false };
+                        d.button_style = style.clone();
+                        d.from.user
+                    });
+                    if user {
+                        apply_buttons(style.into(), false)?;
+                        render_themes()?;
+                        return paint_draft();
+                    }
+                    let _ = select_buttons(style.into());
+                    return render_themes();
+                }
+                if hit_has(&hit, "data-ut-undo") {
+                    let id = DRAFT.with(|d| d.borrow().as_ref().map(|d| d.from.id.clone()));
+                    if let Some(id) = id {
+                        open_draft(&id);
+                        apply_theme(current_theme().into(), false)?;
+                        apply_buttons(current_buttons().into(), false)?;
+                    }
+                    return Ok(());
+                }
+                if let Some(kind) = data_of(&hit, "utSave") {
+                    let _ = save_draft(kind == "here");
+                    return Ok(());
+                }
+                if hit_has(&hit, "data-ut-delete") {
+                    if !DELETE_ARMED.with(|a| a.replace(true)) {
+                        text(
+                            &hit,
+                            &tr(
+                                "¿Borrar? Clic otra vez".into(),
+                                "Delete? Click again".into(),
+                            )
+                            .into(),
+                        )?;
+                        return Ok(());
+                    }
+                    let _ = delete_draft();
+                }
+                Ok(())
+            }),
+        );
+        listen(
+            g,
+            "input",
+            void(move |a| {
+                let target = get(&a.get(0), "target");
+                let Some(key) = data_of(&target, "utColor") else {
+                    return Ok(());
+                };
+                let value = string(&get(&target, "value"));
+                let changed = DRAFT.with(|d| {
+                    d.borrow_mut()
+                        .as_mut()
+                        .is_some_and(|d| d.set_color(&key, &value))
+                });
+                if changed {
+                    paint_draft()?;
+                }
+                Ok(())
+            }),
+        );
+        listen(
+            g,
+            "keydown",
+            void(move |a| {
+                let e = a.get(0);
+                let key = string(&get(&e, "key"));
+                let target = get(&e, "target");
+                if !truthy(&get(&get(&target, "dataset"), "themeId")) {
+                    return Ok(());
+                }
+                if !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].contains(&key.as_str()) {
+                    return Ok(());
+                }
+                call(&e, "preventDefault", &[])?;
+                let cards = all(&doc(), "#theme-gallery [data-theme-id]");
+                let at = cards.iter().position(|c| c == &target).unwrap_or(0) as i32;
+                let delta = if ["ArrowLeft", "ArrowUp"].contains(&key.as_str()) {
+                    -1
+                } else {
+                    1
+                };
+                let n = cards.len() as i32;
+                if n > 0 {
+                    call(&cards[((at + delta + n) % n) as usize], "focus", &[])?;
+                }
+                Ok(())
+            }),
+        );
+        Ok(())
+    }
+    fn hit_has(el: &JsValue, name: &str) -> bool {
+        call(el, "hasAttribute", &[name.into()]).is_ok_and(|v| truthy(&v))
+    }
+    async fn refresh_prefs() -> Result<(), JsValue> {
+        let p = wait(invoke(&global("api"), &["/prefs".into()])).await?;
+        remember(&p);
+        Ok(())
+    }
+    fn save_draft(here: bool) -> JsValue {
+        promise(async move {
+            let result = async {
+                let Some(d) = DRAFT.with(|d| d.borrow().clone()) else {
+                    return Ok(());
+                };
+                let input = query(&doc(), "#ut-name");
+                let label = string(&get(&input, "value")).trim().to_string();
+                let id = if here && d.from.user {
+                    d.from.id.clone()
+                } else {
+                    ut::new_id(js_sys::Date::now() as u64)
+                };
+                let theme = d.theme(&id, &label);
+                if let Err(e) = ut::validate(&theme) {
+                    invoke_void("toast", &[e.into(), true.into()])?;
+                    return Ok(());
+                }
+                let patch = from_json(&serde_json::json!({
+                    "user_theme": theme,
+                    "theme": id,
+                    "button_style": d.button_style,
+                }))?;
+                wait(invoke(&global("api"), &["/prefs-set".into(), patch])).await?;
+                refresh_prefs().await?;
+                open_draft(&id);
+                apply_theme(id.clone().into(), true)?;
+                apply_buttons(d.button_style.clone().into(), true)?;
+                invoke_void(
+                    "toast",
+                    &[tr(format!("Guardado: {label}"), format!("Saved: {label}")).into()],
+                )
+            }
+            .await;
+            if let Err(e) = result {
+                error_toast(e);
+            }
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+    fn delete_draft() -> JsValue {
+        promise(async move {
+            let result = async {
+                let Some(d) = DRAFT.with(|d| d.borrow().clone()) else {
+                    return Ok(());
+                };
+                let patch = from_json(&serde_json::json!({"user_theme_delete": d.from.id}))?;
+                wait(invoke(&global("api"), &["/prefs-set".into(), patch])).await?;
+                refresh_prefs().await?;
+                DRAFT.with(|slot| *slot.borrow_mut() = None);
+                let now = prefs()["theme"].as_str().unwrap_or("noche").to_string();
+                apply_theme(now.into(), true)?;
+                invoke_void(
+                    "toast",
+                    &[tr(
+                        format!("Borrado: {}", d.from.label),
+                        format!("Deleted: {}", d.from.label),
+                    )
+                    .into()],
+                )
+            }
+            .await;
+            if let Err(e) = result {
+                error_toast(e);
+            }
+            Ok(JsValue::UNDEFINED)
+        })
     }
     fn set_pref(patch: JsValue, ok: JsValue) -> JsValue {
         let fetched = invoke(&global("api"), &["/prefs-set".into(), patch.clone()]);
@@ -615,6 +941,7 @@ mod web {
         promise(async move {
             let _ = async {
                 let p = wait(fetched).await?;
+                remember(&p);
                 themeFavoriteReadAt(&js_sys::Date::now().into());
                 if version == themeFavoriteVersion() {
                     invoke_void("applyFavorites", &[get(&p, "favorites")])?;

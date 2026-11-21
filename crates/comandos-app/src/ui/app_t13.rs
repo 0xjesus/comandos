@@ -133,11 +133,6 @@ impl App {
         if let Some(object) = prefs.as_object_mut() {
             object.insert(key.into(), json!(value));
         }
-        if key == "theme"
-            && let Some(settings) = gtk::Settings::default()
-        {
-            settings.set_gtk_application_prefer_dark_theme(value != "dia");
-        }
         let received = self.prefs_received.get();
         self.poll(PollUpdate::Prefs {
             value: prefs,

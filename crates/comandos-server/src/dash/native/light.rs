@@ -9,6 +9,7 @@ use super::{
 };
 use crate::{HandlerError, Reply, Request};
 use comandos_core::json::{response_dumps, truthy};
+use comandos_web_view::user_themes;
 use http::StatusCode;
 use serde_json::{Map, Value, json};
 use std::{
@@ -429,8 +430,29 @@ fn update_prefs(
         "contraste",
         "ubuntu",
     ];
+    // Temas propios: guardar/reemplazar uno, o borrarlo. Si se borra el tema
+    // activo, queda puesto el de fábrica del que salió.
+    if let Some(theme) = data.get("user_theme") {
+        let stored = prefs.get("user_themes").cloned().unwrap_or(Value::Null);
+        let list = user_themes::upsert(&stored, theme).map_err(PrefsFault::Bad)?;
+        prefs.insert("user_themes".into(), list);
+    }
+    if let Some(id) = data.get("user_theme_delete").and_then(Value::as_str) {
+        let current = Value::Object(prefs.clone());
+        let base = user_themes::find(&current, id).and_then(|t| t.get("base").cloned());
+        let stored = prefs.get("user_themes").cloned().unwrap_or(Value::Null);
+        prefs.insert("user_themes".into(), user_themes::remove(&stored, id));
+        if prefs.get("theme").and_then(Value::as_str) == Some(id) {
+            prefs.insert("theme".into(), base.unwrap_or_else(|| json!("noche")));
+        }
+    }
     if let Some(theme) = is_one_of(data.get("theme"), &THEMES) {
         prefs.insert("theme".into(), json!(theme));
+    } else if let Some(id) = data.get("theme").and_then(Value::as_str)
+        && user_themes::is_user_id(id)
+        && user_themes::find(&Value::Object(prefs.clone()), id).is_some()
+    {
+        prefs.insert("theme".into(), json!(id));
     }
     if let Some(style) = is_one_of(
         data.get("button_style"),

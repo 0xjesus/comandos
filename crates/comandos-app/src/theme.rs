@@ -31,6 +31,69 @@ pub fn desktop_theme(name: &str, _themes: &Value) -> Option<ThemeTokens> {
     Some(ThemeTokens { ansi, values })
 }
 
+/// The theme chosen in the preferences, including a user theme saved in
+/// `user_themes`: its colours over those of the built-in theme it came from.
+/// The state roles keep coming from that built-in theme.
+pub fn prefs_theme(prefs: &Value, themes: &Value) -> Option<ThemeTokens> {
+    let name = prefs
+        .get("theme")
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_THEME);
+    let user = name.starts_with("u-").then(|| {
+        prefs
+            .get("user_themes")?
+            .as_array()?
+            .iter()
+            .find(|t| t.get("id").and_then(Value::as_str) == Some(name))
+    });
+    let Some(user) = user.flatten() else {
+        return desktop_theme(name, themes);
+    };
+    let base = user
+        .get("base")
+        .and_then(Value::as_str)
+        .unwrap_or(DEFAULT_THEME);
+    let mut theme = desktop_theme(base, themes)?;
+    let colors = user.get("colors").and_then(Value::as_object);
+    for (key, value) in colors.into_iter().flatten() {
+        if key == "pal" {
+            let pal: Option<Vec<String>> = value
+                .as_array()
+                .filter(|p| p.len() == 16)
+                .and_then(|p| p.iter().map(|c| hex_color(c)).collect());
+            if let Some(pal) = pal {
+                theme.ansi = pal;
+            }
+        } else if theme.values.contains_key(key)
+            && key != "name"
+            && let Some(color) = hex_color(value)
+        {
+            theme.values.insert(key.clone(), Value::String(color));
+        }
+    }
+    Some(theme)
+}
+
+fn hex_color(v: &Value) -> Option<String> {
+    let s = v.as_str()?;
+    let tail = s.strip_prefix('#')?;
+    (tail.len() == 6 && tail.bytes().all(|c| c.is_ascii_hexdigit()))
+        .then(|| format!("#{}", tail.to_ascii_uppercase()))
+}
+
+/// Whether a theme's background is dark (GTK's own widgets follow it).
+pub fn is_dark(theme: &ThemeTokens) -> bool {
+    let bg = theme
+        .values
+        .get("bg")
+        .and_then(Value::as_str)
+        .unwrap_or("#000000");
+    let c = |i: usize| {
+        f64::from(u8::from_str_radix(bg.get(i..i + 2).unwrap_or("00"), 16).unwrap_or(0)) / 255.0
+    };
+    0.2126 * c(1) + 0.7152 * c(3) + 0.0722 * c(5) < 0.35
+}
+
 fn state_role(t: &Map<String, Value>, key: &str, fallback: &str) -> String {
     static DASH: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
         serde_json::from_str(include_str!(concat!(

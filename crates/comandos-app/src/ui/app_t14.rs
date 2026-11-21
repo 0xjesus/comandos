@@ -109,7 +109,7 @@ impl App {
             None,
         );
     }
-    fn dashboard_script(self: &Rc<Self>, script: &str) {
+    pub(in crate::ui) fn dashboard_script(self: &Rc<Self>, script: &str) {
         let weak = Rc::downgrade(self);
         self.webview.evaluate_javascript(
             script,

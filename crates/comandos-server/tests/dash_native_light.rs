@@ -632,3 +632,54 @@ async fn unsure_files_decline_to_legacy() {
     assert_eq!(legacy.requests().len(), 3);
     front.stop().await;
 }
+
+#[tokio::test]
+async fn prefs_set_saves_selects_and_deletes_user_themes() {
+    let home = TestHome::new("prefs-user-themes");
+    let front = front(&home, dead_port(), home.options()).await;
+    let noche = serde_json::json!({
+        "fg": "#EAF0FB", "bg": "#0A0D13", "cursor": "#FFAE1A", "bar": "#0D1119",
+        "dim": "#9AA6BF", "text": "#EAF0FB", "brand": "#ff6fa8", "line": "#222A3A",
+        "line2": "#2E3852", "faint": "#5E6980", "panel": "#121722", "panel2": "#161C29",
+        "pal": ["#232B3E", "#FF6B6B", "#2EE59D", "#FFAE1A", "#7AA5FF", "#B49CFF", "#4DD0E1", "#EAF0FB",
+                "#5E6980", "#FF8F8F", "#6FF0BC", "#FFC55C", "#A3C0FF", "#CDBBFF", "#86E3F0", "#FFFFFF"],
+    });
+    let theme = serde_json::json!({"id": "u-rosa", "label": "Noche rosa", "base": "noche",
+        "colors": noche, "treatment": "glass", "button_style": "arcade"});
+    // Un tema propio que no existe todavía no se puede elegir.
+    let wire = request_body(
+        front.port,
+        "POST",
+        "/prefs-set",
+        "",
+        r#"{"theme": "u-rosa"}"#,
+    )
+    .await;
+    assert_eq!(wire.status, 200);
+    let body = serde_json::json!({"user_theme": theme, "theme": "u-rosa"}).to_string();
+    let wire = request_body(front.port, "POST", "/prefs-set", "", &body).await;
+    assert_eq!(wire.status, 200, "{}", wire.text());
+    let prefs: serde_json::Value =
+        serde_json::from_str(&get(front.port, "/prefs").await.text()).unwrap();
+    assert_eq!(prefs["theme"], "u-rosa");
+    assert_eq!(prefs["user_themes"][0]["colors"]["brand"], "#FF6FA8");
+    let mut bad = theme.clone();
+    bad["colors"]["bg"] = serde_json::json!("azul");
+    let body = serde_json::json!({"user_theme": bad}).to_string();
+    let wire = request_body(front.port, "POST", "/prefs-set", "", &body).await;
+    assert_eq!(wire.status, 400);
+    let wire = request_body(
+        front.port,
+        "POST",
+        "/prefs-set",
+        "",
+        r#"{"user_theme_delete": "u-rosa"}"#,
+    )
+    .await;
+    assert_eq!(wire.status, 200);
+    let prefs: serde_json::Value =
+        serde_json::from_str(&get(front.port, "/prefs").await.text()).unwrap();
+    assert_eq!(prefs["theme"], "noche");
+    assert_eq!(prefs["user_themes"], serde_json::json!([]));
+    front.stop().await;
+}

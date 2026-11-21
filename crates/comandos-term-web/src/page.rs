@@ -131,6 +131,9 @@ fn apply_theme(page: &Rc<RefCell<Page>>, name: &str) {
     let Some(data) = crate::page_theme::theme(name) else {
         return;
     };
+    apply_palette(page, name, data);
+}
+fn apply_palette(page: &Rc<RefCell<Page>>, name: &str, data: &str) {
     let cfg = value(data);
     page.borrow_mut().theme = name.into();
     if let Some(t) = term(page) {
@@ -649,6 +652,7 @@ fn set_ctrl(page: &Rc<RefCell<Page>>, armed: bool) {
 fn handle(page: &Rc<RefCell<Page>>, command: Command) {
     match command {
         Command::Theme(name) => apply_theme(page, &name),
+        Command::Palette(name, cfg) => apply_palette(page, &name, &cfg),
         Command::CursorStyle(style) => {
             page.borrow_mut().cursor_preference_changed = true;
             if let Some(t) = term(page) {

@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 use comandos_app::theme::{
-    base_css, button_style_css, desktop_theme, header_css, theme_css, themes_from_file,
+    base_css, button_style_css, desktop_theme, header_css, is_dark, prefs_theme, theme_css,
+    themes_from_file,
 };
 
 #[test]
@@ -172,5 +173,41 @@ print(scope['THEME'])
     assert_eq!(
         comandos_app::theme::DEFAULT_THEME,
         std::str::from_utf8(&oracle.stdout).unwrap().trim()
+    );
+}
+
+#[test]
+fn user_theme_paints_its_colours_over_its_base() {
+    let themes = themes_from_file(Some(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../config/themes.json"
+    ))));
+    let base = desktop_theme("dia", &themes).unwrap();
+    let mut pal = base.ansi.clone();
+    pal[1] = "#123456".into();
+    let prefs = serde_json::json!({
+        "theme": "u-mio",
+        "user_themes": [{"id": "u-mio", "base": "dia", "colors": {
+            "brand": "#ff00aa", "bg": "#101010", "name": "#000000", "pal": pal,
+            "nope": "#ffffff", "text": "blue"
+        }}]
+    });
+    let t = prefs_theme(&prefs, &themes).unwrap();
+    assert_eq!(t.values["brand"], "#FF00AA");
+    assert_eq!(t.values["bg"], "#101010");
+    assert_eq!(
+        t.values["text"], base.values["text"],
+        "invalid colours are ignored"
+    );
+    assert_eq!(t.values["name"], "dia", "state roles come from the base");
+    assert!(!t.values.contains_key("nope"));
+    assert_eq!(t.ansi[1], "#123456");
+    assert!(is_dark(&t));
+    assert!(!is_dark(&base));
+    // An unknown user theme falls back like any unknown name.
+    let missing = serde_json::json!({"theme": "u-gone"});
+    assert_eq!(
+        prefs_theme(&missing, &themes).unwrap().values["bg"],
+        desktop_theme("noche", &themes).unwrap().values["bg"]
     );
 }

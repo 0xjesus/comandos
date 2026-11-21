@@ -283,6 +283,8 @@ pub fn live_pref_snapshot(value: &Value) -> Value {
         "terminal_opacity",
         "theme",
         "tabs_layout",
+        // Saving a user theme under the same id must repaint too.
+        "user_themes",
     ];
     let mut out = serde_json::Map::new();
     for key in KEYS {

@@ -28,7 +28,8 @@ fn live_pref_snapshot_only_keeps_live_keys() {
             "terminal_padding": null,
             "terminal_opacity": null,
             "theme": "noche",
-            "tabs_layout": null
+            "tabs_layout": null,
+            "user_themes": null
         })
     );
 }

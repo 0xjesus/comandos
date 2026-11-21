@@ -854,12 +854,8 @@ border-radius:8px;padding:5px 14px;font-size:12px;}",
             control_argv: self.tmux.control_argv(key),
             cwd: home.clone(),
             session: Some(key.into()),
-            palette: crate::theme::desktop_theme(
-                self.preferences
-                    .borrow()
-                    .get("theme")
-                    .and_then(Value::as_str)
-                    .unwrap_or(crate::theme::DEFAULT_THEME),
+            palette: crate::theme::prefs_theme(
+                &self.preferences.borrow(),
                 &crate::theme::themes_from_file(Some(include_bytes!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../config/themes.json"
@@ -1266,6 +1262,16 @@ border-radius:8px;padding:5px 14px;font-size:12px;}",
                     != crate::poll::live_pref_snapshot(&value)
                     || self.preferences.borrow().get("button_style") != value.get("button_style")
                 {
+                    // The left dashboard reads its theme only when it loads; a
+                    // change made in the centre window must reach it too.
+                    let old = self.preferences.borrow().clone();
+                    if old.get("theme").is_some()
+                        && (old.get("theme") != value.get("theme")
+                            || old.get("user_themes") != value.get("user_themes")
+                            || old.get("button_style") != value.get("button_style"))
+                    {
+                        self.dashboard_script("window.loadPrefs&&loadPrefs()");
+                    }
                     *self.preferences.borrow_mut() = value.clone();
                     self.apply_tabs_layout(
                         value
@@ -1278,13 +1284,13 @@ border-radius:8px;padding:5px 14px;font-size:12px;}",
                         env!("CARGO_MANIFEST_DIR"),
                         "/../../config/themes.json"
                     ))));
-                    let theme = crate::theme::desktop_theme(
-                        value
-                            .get("theme")
-                            .and_then(Value::as_str)
-                            .unwrap_or(crate::theme::DEFAULT_THEME),
-                        &themes,
-                    );
+                    let theme = crate::theme::prefs_theme(&value, &themes);
+                    if let Some(theme) = theme.as_ref()
+                        && let Some(settings) = gtk::Settings::default()
+                    {
+                        settings
+                            .set_gtk_application_prefer_dark_theme(crate::theme::is_dark(theme));
+                    }
                     if let Some(theme) = theme.as_ref() {
                         self.drag_layer.colors(
                             theme
