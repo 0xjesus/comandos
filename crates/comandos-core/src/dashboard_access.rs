@@ -135,6 +135,10 @@ pub const API_GET: &[&str] = &[
     "/work-marks",
     // Ruta nativa sin heredado (ficha viva): prompts y respuestas de los agentes.
     "/session-feed",
+    // Rutas nativas sin heredado: recibos de mensajes, Consumos y saldo de OpenRouter.
+    "/session/message",
+    "/usage/board",
+    "/credits/openrouter",
 ];
 
 fn py_strip(value: &str) -> &str {

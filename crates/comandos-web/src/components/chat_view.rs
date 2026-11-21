@@ -10,7 +10,7 @@ pub use web::install;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{PaneRow, choose, cut, pane_label, pane_number, swipe, working};
+use super::{PaneRow, Verdict, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, swipe, verdict, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -19,7 +19,7 @@ use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
 const STORE: &str = "comandos.viewMode";
@@ -52,6 +52,8 @@ struct Chat {
     editing: RefCell<Option<JsValue>>,
     dirty: Cell<bool>,
     paused: Cell<bool>,
+    /// A message is on its way: a second tap must not send it (or an Enter) again.
+    sending: Cell<bool>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
 const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
@@ -519,6 +521,9 @@ impl Chat {
         }
     }
     fn send(self: &Rc<Self>) {
+        if self.sending.get() {
+            return;
+        }
         let area = query(&id("cv-dock"), "textarea");
         let value = text(&get(&area, "value"));
         let session = text(&global("activeTerm"));
@@ -531,8 +536,8 @@ impl Chat {
             self.press("yes");
             return;
         }
-        let _ = set(&area, "value", &"".into());
-        grow(&area);
+        // The draft stays in the box until the server confirms it.
+        self.sending.set(true);
         if self.on.get() {
             let feed = query(&el(), ".cv-feed");
             let _ = call(&feed, "insertAdjacentHTML", &["beforeend".into(), format!("<div class=\"cv-me pending\"><p>{}</p></div>", esc(&value)).into()]);
@@ -545,17 +550,25 @@ impl Chat {
         let pane = self.target(&session).0;
         let me = self.clone();
         spawn_local(async move {
-            let body = from_json(&json!({"session":session,"pane":pane,"text":value})).unwrap_or(JsValue::NULL);
-            match request("POST", "/send", body).await {
-                Ok(r) if number(&get(&r, "status")) < 300. => {}
-                _ => {
-                    toast("No se pudo enviar el mensaje a la sesión");
+            let outcome = deliver(&session, &pane, &value).await;
+            let area = query(&id("cv-dock"), "textarea");
+            let current = text(&get(&area, "value"));
+            match outcome {
+                Ok(()) => {
+                    let _ = set(&area, "value", &remaining(&value, &current).into());
+                }
+                Err(message) => {
+                    // Never lost: the failed text goes back first, anything typed since after it.
+                    let _ = set(&area, "value", &restore(&value, &current).into());
+                    toast(&message);
                     for pending in all(&query(&el(), ".cv-feed"), ":scope > .cv-me.pending") {
                         let _ = call(&pending, "remove", &[]);
                     }
                 }
             }
+            grow(&area);
             classes(&button, "busy", false);
+            me.sending.set(false);
             me.age.set(0.);
             me.tick(true);
         });
@@ -682,6 +695,105 @@ impl Chat {
             }
         });
     }
+}
+
+/// Pauses between attempts with the same `clientMessageId` (the route is idempotent).
+const RETRY_PAUSES: [f64; 3] = [800., 2000., 5000.];
+/// One attempt gives up after this long (a phone waking up can leave a request hanging).
+const ATTEMPT_MS: f64 = 20000.;
+const KEEP: &str = "El borrador se conserva.";
+
+fn sleep(ms: f64) -> JsValue {
+    js_sys::Promise::new(&mut |resolve, _| {
+        later(resolve.into(), ms);
+    })
+    .into()
+}
+fn message_id() -> String {
+    call(&global("crypto"), "randomUUID", &[])
+        .ok()
+        .and_then(|v| v.as_string())
+        .filter(|id| (1..=64).contains(&id.len()))
+        .unwrap_or_else(|| fallback_id(js_sys::Date::now(), js_sys::Math::random()))
+}
+/// POST with the dashboard token and a time limit. `None`: no answer (offline, timed out).
+async fn post_json(path: &str, body: &serde_json::Value) -> Option<(u16, serde_json::Value)> {
+    let headers = object();
+    if let Ok(token) = invoke(&global("authToken"), &[])
+        && truthy(&token)
+    {
+        set(&headers, "X-Comandos-Token", &token).ok()?;
+    }
+    set(&headers, "Content-Type", &"application/json".into()).ok()?;
+    let options = object();
+    set(&options, "method", &"POST".into()).ok()?;
+    set(&options, "headers", &headers).ok()?;
+    set(&options, "body", &body.to_string().into()).ok()?;
+    let timer = get(&js_sys::global(), "AbortController")
+        .dyn_into::<js_sys::Function>()
+        .ok()
+        .and_then(|class| js_sys::Reflect::construct(&class, &js_sys::Array::new()).ok())
+        .and_then(|ctrl| {
+            set(&options, "signal", &get(&ctrl, "signal")).ok()?;
+            let abort = get(&ctrl, "abort").dyn_into::<js_sys::Function>().ok()?.bind0(&ctrl);
+            Some(later(abort.into(), ATTEMPT_MS))
+        });
+    let answer = match wait(call(&js_sys::global(), "fetch", &[path.into(), options])).await {
+        Ok(r) => {
+            let status = number(&get(&r, "status")) as u16;
+            let parsed = wait(call(&r, "json", &[])).await.map(|v| to_json(&v)).unwrap_or_default();
+            Some((status, parsed))
+        }
+        Err(_) => None,
+    };
+    if let Some(timer) = timer {
+        cancel(timer);
+    }
+    answer
+}
+/// `POST /session/message`, retried with the same id on a network error; an older server
+/// without the route gets one plain `/send`. `Err` is the message for the toast.
+async fn deliver(session: &str, pane: &str, value: &str) -> Result<(), String> {
+    let body = json!({"clientMessageId": message_id(), "session": session, "pane": pane, "text": value, "submit": true});
+    let mut still_running = false;
+    for attempt in 0..=RETRY_PAUSES.len() {
+        if let Some(pause) = attempt.checked_sub(1).and_then(|i| RETRY_PAUSES.get(i)) {
+            let _ = wait(Ok(sleep(*pause))).await;
+        }
+        let answer = post_json("/session/message", &body).await;
+        let (status, reply) = match &answer {
+            Some((status, reply)) => (Some(*status), reply.clone()),
+            None => (None, serde_json::Value::Null),
+        };
+        let field = |k: &str| reply.get(k).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        match verdict(status, &field("code"), &field("status")) {
+            Verdict::Sent => return Ok(()),
+            Verdict::Retry => still_running = status == Some(202),
+            Verdict::Legacy => {
+                let body = from_json(&json!({"session": session, "pane": pane, "text": value})).unwrap_or(JsValue::NULL);
+                return match request("POST", "/send", body).await {
+                    Ok(r) if number(&get(&r, "status")) < 300. => Ok(()),
+                    _ => Err(format!("No se pudo enviar el mensaje a la sesión. {KEEP}")),
+                };
+            }
+            Verdict::Fail if field("status") == "uncertain" => {
+                return Err(format!("El texto llegó a la sesión, pero no se confirmó su envío; revísala antes de reenviar. {KEEP}"));
+            }
+            Verdict::Fail => {
+                let why = field("error");
+                return Err(if why.is_empty() {
+                    format!("No se pudo enviar el mensaje a la sesión. {KEEP}")
+                } else {
+                    format!("No se pudo enviar el mensaje a la sesión: {why}. {KEEP}")
+                });
+            }
+        }
+    }
+    Err(if still_running {
+        format!("El mensaje sigue entregándose; revisa la sesión antes de reenviarlo. {KEEP}")
+    } else {
+        format!("No se pudo enviar el mensaje a la sesión (sin conexión). {KEEP}")
+    })
 }
 
 /// Mounts the view and its toggle once; remote dashboards only.
@@ -944,6 +1056,48 @@ pub fn swipe(dx: f64, dy: f64) -> i32 {
         0
     }
 }
+/// What the composer does with an answer of `POST /session/message` (`None`: no answer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Sent,
+    /// Same `clientMessageId` again: the route never types a message twice.
+    Retry,
+    /// The server does not know the route: one plain `/send`.
+    Legacy,
+    Fail,
+}
+pub fn verdict(status: Option<u16>, code: &str, state: &str) -> Verdict {
+    match status {
+        None | Some(202) => Verdict::Retry,
+        Some(200..=299) => Verdict::Sent,
+        // The route's own 404s always carry a code (`session_gone`, `pane_gone`).
+        Some(404) if code.is_empty() => Verdict::Legacy,
+        // An uncertain receipt answers the same on every retry: the person decides.
+        Some(500..) if state != "uncertain" => Verdict::Retry,
+        Some(_) => Verdict::Fail,
+    }
+}
+/// The draft after a failed send: the failed text first, then whatever was typed since.
+pub fn restore(failed: &str, current: &str) -> String {
+    if current.starts_with(failed) {
+        current.to_owned()
+    } else if current.trim().is_empty() {
+        failed.to_owned()
+    } else {
+        format!("{failed}\n{current}")
+    }
+}
+/// The draft after a delivered send: only what was typed after the sent text remains.
+pub fn remaining(sent: &str, current: &str) -> String {
+    match current.strip_prefix(sent) {
+        Some(rest) => rest.trim_start_matches(['\n', '\r']).to_owned(),
+        None => current.to_owned(),
+    }
+}
+/// `clientMessageId` where `crypto.randomUUID` is missing (an insecure origin).
+pub fn fallback_id(now_ms: f64, random: f64) -> String {
+    format!("m{:x}-{:08x}", now_ms.max(0.) as u64, (random.clamp(0., 1.) * 4_294_967_295.) as u64)
+}
 /// The agent is still on it: the transcript moved recently and does not end in an answer.
 pub fn working(messages: &[(String, String)], age: f64) -> bool {
     age < 90. && messages.last().is_some_and(|(r, _)| r != "a")
@@ -985,6 +1139,36 @@ mod tests {
         assert_eq!(swipe(-60., 0.), 0, "too short");
         assert_eq!(swipe(-100., 80.), 0, "mostly a scroll");
         assert_eq!(swipe(0., 0.), 0, "a tap");
+    }
+    #[test]
+    fn a_failed_send_never_loses_the_draft() {
+        assert_eq!(restore("hola", ""), "hola");
+        assert_eq!(restore("hola", "hola"), "hola", "still in the box");
+        assert_eq!(restore("hola", "hola y más"), "hola y más");
+        assert_eq!(restore("hola", "nuevo"), "hola\nnuevo", "failed text first");
+        assert_eq!(remaining("hola", "hola"), "");
+        assert_eq!(remaining("hola", "hola\nsigue"), "sigue");
+        assert_eq!(remaining("hola", "otra cosa"), "otra cosa", "edited: keep it");
+    }
+    #[test]
+    fn only_network_errors_retry_and_old_servers_fall_back_once() {
+        assert_eq!(verdict(Some(200), "", "delivered"), Verdict::Sent);
+        assert_eq!(verdict(None, "", ""), Verdict::Retry);
+        assert_eq!(verdict(Some(202), "", "delivering"), Verdict::Retry);
+        assert_eq!(verdict(Some(502), "", ""), Verdict::Retry);
+        assert_eq!(verdict(Some(503), "unavailable", "rejected"), Verdict::Retry);
+        assert_eq!(verdict(Some(500), "partial", "uncertain"), Verdict::Fail);
+        assert_eq!(verdict(Some(404), "pane_gone", "rejected"), Verdict::Fail);
+        assert_eq!(verdict(Some(404), "", ""), Verdict::Legacy);
+        assert_eq!(verdict(Some(409), "pane_busy", "rejected"), Verdict::Fail);
+        assert_eq!(verdict(Some(401), "", ""), Verdict::Fail);
+        assert_eq!(verdict(Some(422), "invalid", "rejected"), Verdict::Fail);
+    }
+    #[test]
+    fn fallback_ids_fit_the_server_rule() {
+        let id = fallback_id(1_791_115_200_000., 0.5);
+        assert!(id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'), "{id}");
+        assert_ne!(id, fallback_id(1_791_115_200_000., 0.25));
     }
     #[test]
     fn collapsed_view_starts_at_the_last_answer() {

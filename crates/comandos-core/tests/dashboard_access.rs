@@ -197,3 +197,45 @@ fn mutation_admission_rejects_before_reading_and_preserves_close_differences() {
         );
     }
 }
+
+/// Native-only GET routes with no Python branch: a tailnet peer needs the token.
+#[test]
+fn native_only_gets_require_the_token_remotely() {
+    let token = b"fake-correct";
+    for path in [
+        "/session/message?clientMessageId=abc",
+        "/session/message",
+        "/usage/board",
+        "/credits/openrouter",
+    ] {
+        let remote = [("Host", "x.ts.net"), ("X-Forwarded-For", "100.64.0.9")];
+        let req = policy::Request {
+            method: policy::Method::Get,
+            path,
+            peer_ip: Some("127.0.0.1"),
+            headers: &remote,
+        };
+        let denied = policy::request_admission(&req, token, false).err();
+        assert_eq!(denied.map(|r| r.status), Some(401), "{path}");
+        let authorized = [
+            ("Host", "x.ts.net"),
+            ("X-Forwarded-For", "100.64.0.9"),
+            ("X-Comandos-Token", "fake-correct"),
+        ];
+        let req = policy::Request {
+            method: policy::Method::Get,
+            path,
+            peer_ip: Some("127.0.0.1"),
+            headers: &authorized,
+        };
+        assert!(policy::request_admission(&req, token, false).is_ok(), "{path}");
+        let local = [("Host", "127.0.0.1:4777")];
+        let req = policy::Request {
+            method: policy::Method::Get,
+            path,
+            peer_ip: Some("127.0.0.1"),
+            headers: &local,
+        };
+        assert!(policy::request_admission(&req, token, false).is_ok(), "{path} local");
+    }
+}

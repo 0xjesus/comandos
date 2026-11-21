@@ -531,6 +531,11 @@ async fn handle(state: &DashState, request: Request) -> Result<Reply, HandlerErr
     {
         return Ok(reply);
     }
+    // `/session/message` no tiene rama en el Python: con el conjunto apagado o
+    // ausente se responde aquí (o 503), nunca se reenvía.
+    if live.is_none() && native::message::claims(&request.method, &request.target) {
+        return native::message::without_live(state.native.as_ref(), &request).await;
+    }
     // Conjunto apagado (esquema rechazado o retirado): lo nativo se reenvía y
     // también cuenta como declinación en el censo (D7).
     if live.is_none()

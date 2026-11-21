@@ -59,7 +59,8 @@ const BUSY: &str = "Ya se está escribiendo en ese pane; espera a que termine.";
 
 #[derive(Default)]
 pub struct TypingState {
-    locks: PaneTypingLocks,
+    /// También los toma `/session/message`: nunca escriben los dos a la vez.
+    pub(super) locks: PaneTypingLocks,
     /// requestId → (status, cuerpo), en orden de llegada.
     results: Mutex<VecDeque<(String, u16, Value)>>,
     /// requestId que atendió el Python.

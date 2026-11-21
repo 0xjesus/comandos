@@ -15,6 +15,7 @@ pub mod files;
 pub mod input;
 pub mod lanes;
 pub mod light;
+pub mod message;
 pub mod news;
 pub mod notices;
 pub mod operations;
@@ -98,6 +99,8 @@ pub enum NativeRoute {
     Catalog(catalogs::CatalogRoute),
     Terminal(terminal::TerminalRoute),
     PaneType,
+    /// `/session/message`: ruta solo nativa (nunca se reenvía).
+    SessionMessage,
     ModelStatus,
     State,
     QuickTerminal,
@@ -171,6 +174,7 @@ impl NativeRoute {
             | NativeRoute::Catalog(_)
             | NativeRoute::Terminal(_)
             | NativeRoute::PaneType
+            | NativeRoute::SessionMessage
             | NativeRoute::ModelStatus
             | NativeRoute::State
             | NativeRoute::QuickTerminal
@@ -304,6 +308,7 @@ const TABLES: &[&[Entry]] = &[
     sidebar::ROUTES,
     chat::ROUTES,
     feed::ROUTES,
+    message::ROUTES,
     // Cortes de la 2f. `residue` va la última: sus prefijos no deben tapar
     // ninguna entrada exacta.
     tabs::ROUTES,
@@ -322,7 +327,7 @@ const TABLES: &[&[Entry]] = &[
 /// Cuántas tablas de `TABLES` son de la base (2b–2e): las primeras, antes de
 /// las de los cortes de la 2f. Quien añada una tabla de base lo sube aquí.
 #[cfg(test)]
-const BASE_TABLES: usize = 18;
+const BASE_TABLES: usize = 19;
 
 pub fn route(method: &Method, target: &str) -> Option<NativeRoute> {
     if *method == Method::GET
@@ -719,6 +724,8 @@ pub struct Native {
     pub(crate) journal: lanes::Lane<lanes::JournalBackend>,
     /// Caché por `requestId` y candados de `POST /pane/type`.
     pub(crate) typing: Arc<typing::TypingState>,
+    /// Recibos de `/session/message` (sus candados son los de `typing`).
+    pub(crate) messages: Arc<message::MessageState>,
     /// GET `/state`: caché de 1,2 s, vuelo único y cachés de los lectores.
     pub(crate) states: states::Engine,
     /// GET `/session-feed`: último cálculo, vuelo único y cachés de transcripts.
@@ -765,6 +772,7 @@ impl Native {
             resources: Arc::default(),
             notice_feed: notices::RevisionFeed::default(),
             typing: Arc::default(),
+            messages: Arc::default(),
             states: states::Engine::default(),
             feed: feed::FeedState::default(),
             census: Arc::default(),
@@ -1005,6 +1013,10 @@ impl Native {
         if cut_is_off(&self.opts.cuts_off, route.cut()) {
             return Ok(self.decline(request));
         }
+        // Sin heredado y sin la base: nunca se declina.
+        if route == NativeRoute::SessionMessage {
+            return message::respond(self, request).await.map(Outcome::Reply);
+        }
         if !self.ready().await {
             if route == NativeRoute::PaneType
                 && let Some(reply) = typing::retry_reply(&self.typing, request)
@@ -1041,6 +1053,7 @@ impl Native {
             NativeRoute::Catalog(route) => catalogs::answer(self, route).await,
             NativeRoute::Terminal(route) => terminal::answer(self, route, request).await,
             NativeRoute::PaneType => typing::answer(self, request).await,
+            NativeRoute::SessionMessage => Ok(message::respond(self, request).await?),
             NativeRoute::ModelStatus => operations::answer(self, request).await,
             NativeRoute::State => states::answer(self, &request.target).await,
             NativeRoute::QuickTerminal => quick::answer(self, request).await,
@@ -1143,7 +1156,7 @@ mod scaffold_tests {
         // la apaga) y toda entrada de las tablas de la 2f, a su corte. La lista
         // explícita cubre las tablas de ambos carriles (2f-1 y 2f-3/2f-4); el
         // recuento debe igualar `TABLES.len()`.
-        let base: [&[Entry]; 18] = [
+        let base: [&[Entry]; 19] = [
             light::ROUTES,
             events::ROUTES,
             notices::ROUTES,
@@ -1162,6 +1175,7 @@ mod scaffold_tests {
             sidebar::ROUTES,
             chat::ROUTES,
             feed::ROUTES,
+            message::ROUTES,
         ];
         let cuts: [&[Entry]; 11] = [
             tabs::ROUTES,
