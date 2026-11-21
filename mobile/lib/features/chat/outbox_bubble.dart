@@ -27,8 +27,11 @@ class OutboxBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool promptOpen = item.waitCode == WaitCode.promptOpen;
     final (IconData icon, Color color, String status) = switch (item.state) {
       OutboxState.queued when blocked => (Icons.schedule, Orbita.faint, 'En cola: espera al anterior'),
+      OutboxState.queued || OutboxState.sending when promptOpen =>
+        (Icons.front_hand_outlined, Orbita.waiting, kWaitingForPrompt),
       OutboxState.queued => (Icons.schedule, Orbita.working, item.lastError ?? 'En cola'),
       OutboxState.sending => (Icons.schedule, Orbita.working, 'Enviando…'),
       OutboxState.delivered => (Icons.check, Orbita.done, 'Entregado'),
@@ -94,6 +97,40 @@ class OutboxBubble extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Above the composer while a failed message is being edited: the later
+/// messages of the session wait for the edited text (or for "Descartar").
+class EditHoldNote extends StatelessWidget {
+  const EditHoldNote({super.key, required this.held, required this.onDiscard});
+
+  final int held;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final String text = held == 0
+        ? 'Editando un mensaje que no se envió'
+        : held == 1
+            ? '1 mensaje en espera hasta que envíes el texto editado'
+            : '$held mensajes en espera hasta que envíes el texto editado';
+    return Material(
+      color: Orbita.bar,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 8, 0),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.pause_circle_outline, size: 15, color: Orbita.waiting),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(text, style: const TextStyle(color: Orbita.waiting, fontSize: 12.5)),
+            ),
+            TextButton(onPressed: onDiscard, child: const Text('Descartar edición')),
+          ],
         ),
       ),
     );

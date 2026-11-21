@@ -1,6 +1,9 @@
 import 'package:comandos_mobile/core/models/transcript.dart';
+import 'package:comandos_mobile/core/outbox/outbox_item.dart';
 import 'package:comandos_mobile/features/chat/markdown.dart';
+import 'package:comandos_mobile/features/chat/outbox_bubble.dart';
 import 'package:comandos_mobile/features/chat/transcript_merge.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ChatMessage u(String t) => ChatMessage(ChatRole.user, t);
@@ -74,5 +77,32 @@ void main() {
       final List<MdBlock> b = parseMarkdown('texto\n```\ncodigo sin cerrar');
       expect(b.last, isA<MdCode>());
     });
+  });
+
+  testWidgets('15b: a message held by an open prompt says so (queued or retrying)', (WidgetTester tester) async {
+    for (final OutboxState st in <OutboxState>[OutboxState.queued, OutboxState.sending]) {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: OutboxBubble(
+            item: OutboxItem(
+              id: 'x',
+              host: 'h',
+              session: 's',
+              text: 'sigue',
+              createdAtMs: 1,
+              state: st,
+              waitCode: WaitCode.promptOpen,
+              lastError: kWaitingForPrompt,
+            ),
+            blocked: false,
+            onRetry: () {},
+            onEdit: () {},
+            onDiscard: () {},
+            onArrived: () {},
+          ),
+        ),
+      ));
+      expect(find.text('Esperando a que respondas el permiso'), findsOneWidget, reason: st.name);
+    }
   });
 }

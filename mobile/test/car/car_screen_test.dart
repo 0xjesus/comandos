@@ -38,11 +38,14 @@ class _NoTimer implements Timer {
 
 void main() {
   late Directory dir;
+  late List<String> calls;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('car');
     sl.reset();
+    calls = <String>[];
     final MockClient client = MockClient((http.Request r) async {
+      calls.add(r.url.path);
       switch (r.url.path) {
         case '/session-feed':
           return _json(<String, Object?>{
@@ -121,6 +124,29 @@ void main() {
     await pumpCar(tester, const Size(820, 380));
     expect(tester.takeException(), isNull);
     expect(find.text('Hablar'), findsOneWidget);
+    await leave(tester);
+  });
+
+  testWidgets('8: hidden app → no polling; back → polling resumes', (WidgetTester tester) async {
+    await pumpCar(tester, const Size(400, 820));
+    int polls() => calls.where((String p) => p == '/session-feed' || p == '/chat/transcript').length;
+    Future<void> run(Duration d) async {
+      for (int i = 0; i < d.inSeconds; i++) {
+        await tester.pump(const Duration(seconds: 1));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      }
+    }
+
+    await run(const Duration(seconds: 3));
+    expect(polls(), greaterThan(2), reason: 'polls while visible');
+    sl.get<AppVisibility>().value = false;
+    await run(const Duration(seconds: 2)); // let a request in flight finish
+    final int hidden = polls();
+    await run(const Duration(seconds: 20));
+    expect(polls(), hidden, reason: 'nothing while hidden');
+    sl.get<AppVisibility>().value = true;
+    await run(const Duration(seconds: 4));
+    expect(polls(), greaterThan(hidden));
     await leave(tester);
   });
 

@@ -174,6 +174,42 @@ void main() {
     expect(rec.starts, 0);
   });
 
+  test('requireSpeech (Modo auto rounds): a silent recording is dropped, never transcribed', () async {
+    Future<Future<DictationOutcome>> recordAuto() async {
+      final int before = rec.starts;
+      final Future<DictationOutcome> f = d.start('s1', requireSpeech: true);
+      await waitFor(() => rec.starts > before && d.phase == DictationPhase.recording);
+      File(rec.path!).writeAsBytesSync(<int>[1, 2, 3]);
+      return f;
+    }
+
+    // Only road noise for 10 s: the detector ends it, nothing is sent out.
+    final Future<DictationOutcome> f = await recordAuto();
+    for (int i = 0; i <= 105; i++) {
+      clock.nowMs += 100;
+      rec.levelsCtl.add(-62 + (i % 3).toDouble());
+      await flush(2);
+    }
+    await settle();
+    expect(await f, isA<DictationNothing>());
+    expect(calls, 0, reason: 'never transcribed');
+    await waitFor(() => files().isEmpty);
+
+    // Spoken words: transcribed as usual.
+    results.add('sí');
+    final Future<DictationOutcome> g = await recordAuto();
+    clock.nowMs += 100;
+    rec.levelsCtl.add(-60);
+    for (int i = 0; i < 5; i++) {
+      clock.nowMs += 100;
+      rec.levelsCtl.add(-20);
+    }
+    await flush(2);
+    await d.stop();
+    expect(await g, isA<DictationText>());
+    expect(calls, 1);
+  });
+
   test('silence after speech auto-stops; the 3-minute cap too', () async {
     final Future<DictationOutcome> f = await record('s1');
     void level(double db) => rec.levelsCtl.add(db);

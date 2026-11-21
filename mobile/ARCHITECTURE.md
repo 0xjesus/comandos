@@ -75,6 +75,8 @@ await sl.get<Outbox>().enqueue(session: s, pane: p, text: t, transcriptBaseline:
 and clears its input only after that future completes (it completes once the item
 is durable in `outbox.json`). It throws `OutboxRejection` (Spanish `message`) for
 empty / >20000 chars / unpaired / disk failure; keep the text in that case.
+Control characters the desktop refuses (422) are stripped first; `\n` and `\t`
+stay, CR/CRLF become `\n` (as the desktop does).
 
 States: `queued → sending → delivered | failed(failCode) | uncertain`.
 
@@ -83,10 +85,24 @@ States: `queued → sending → delivered | failed(failCode) | uncertain`.
   (timeout, 5xx, 202) the next attempt first asks `GET /session/message?clientMessageId=`.
 - Retry on network/timeout/5xx/202: 1, 2, 5, 10, 30 s, then every 60 s.
   409/429: 0.7, 1, 2, 3, then 5 s. `nudge()` (connectivity back, app resumed) retries now.
+- 409 `prompt_open` (a permission prompt is open in that pane; typing there could
+  answer it): no receipt is kept, so the item stays `queued` with the SAME id and
+  `waitCode: prompt_open`, retried every 3 s ("Esperando a que respondas el
+  permiso"); it goes out by itself once the prompt is answered.
 - No automatic retry on 404 `pane_gone`/`session_gone`, 400/422, 401/403: `failed`.
-  The person picks Reintentar (fresh id, current pane), Editar, or Descartar.
-- Strict FIFO per session: a queued/sending/failed/uncertain head blocks the rest
-  of its session. Other sessions are independent.
+  The person picks Reintentar, Editar, or Descartar. Reintentar KEEPS the id (the
+  desktop keeps no receipt for a rejection; if the message did arrive after all it
+  answers `duplicate`) and targets the current pane (after `pane_gone` a stale pane
+  is dropped). Only "Reenviar" on an `uncertain` item uses a fresh id.
+- Editar: the text goes to the composer. If later messages of that session are
+  waiting, the item stays in place with `editing: true`, holding them ("N mensajes
+  en espera" over the composer) until the composer's next send replaces it
+  (`enqueue(replaces:)`, same queue position) or the person taps "Descartar
+  edición". Without later messages it is simply removed.
+- Strict FIFO per session: a queued/sending/failed/uncertain/editing head blocks
+  the rest of its session. Other sessions are independent.
+- The chat composer cannot send while the session shows a permission prompt
+  ("Responde primero el permiso de arriba"); typing and the draft still work.
 - Old server (404 without `{code}` on the route): legacy `POST /send` once per item,
   persisted as `legacyTried` before the request. Network error/5xx there →
   `uncertain` ("No sé si llegó"), never resent automatically; the outbox checks
@@ -118,6 +134,11 @@ background) in `drafts.json`.
   ACCESS_NETWORK_STATE, CAMERA, RECORD_AUDIO, POST_NOTIFICATIONS,
   FOREGROUND_SERVICE(_REMOTE_MESSAGING), RECEIVE_BOOT_COMPLETED. WAKE_LOCK was
   dropped: wakelock_plus uses FLAG_KEEP_SCREEN_ON, which needs no permission.
+- Backups: `allowBackup="false"` plus `dataExtractionRules` (Android 12+) and
+  `fullBackupContent` that exclude every domain from cloud backup and from
+  device-to-device transfer (`res/xml/`). Tested in `test/android/`.
+- `AtomicJsonFile.read` treats bad JSON, invalid UTF-8 and read errors alike: the
+  file is moved aside (`.corrupt-<ms>`) and the app starts empty.
   Every plugin adds Java/Kotlin (sometimes native) code to the APK: ask before
   adding one; prefer a few lines in `NativeBridge.kt`.
 - Background: after the app is hidden the outbox keeps retrying for 60 s, then
@@ -147,7 +168,12 @@ allow it in Android's settings.
   set (the list shows the banner) and, if the app is hidden, one notification
   says "vuelve a vincular". Pairing again resumes.
 - A server that answers an unchanged watch at once (ignores `wait`) gets a 5 s
-  pause, so the loop cannot spin.
+  pause, so the loop cannot spin. While the app is hidden, rounds start at least
+  4 s apart even when the revision keeps changing (many busy agents).
+- If Android restarts `WatchService` but refuses `startForeground` (Android 12+
+  background limits), the service records it (`takeLost`); the next app open
+  shows "Los avisos en segundo plano se detuvieron; ábrelos de nuevo en Ajustes"
+  and starts the service again.
 
 **Notifications** (`notice_alerts.dart`, pure): `needsHuman` → "<proyecto> te
 espera" + excerpt on the high-importance channel; done → "<proyecto> terminó"

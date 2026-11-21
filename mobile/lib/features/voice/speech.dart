@@ -162,12 +162,17 @@ class SpeechService extends ChangeNotifier implements Speaker {
     }
   }
 
-  /// Plays a local file (earcon) without touching the queue state.
+  /// Plays a local file (earcon) without touching the queue state, then
+  /// gives audio focus back so other apps' audio (music) comes back up.
   Future<void> playFile(String path) async {
     await _halt();
     _idle?.cancel();
-    await _audio.play(path, 1.0);
-    _scheduleIdle();
+    try {
+      await _audio.play(path, 1.0);
+    } finally {
+      await _audio.release();
+      _scheduleIdle();
+    }
   }
 
   Future<void> _halt() async {

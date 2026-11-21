@@ -66,7 +66,6 @@ class _CarModeScreenState extends State<CarModeScreen> {
   String? _boundId;
   ReplyWatcher? _watcher;
   Timer? _recheck;
-  Timer? _keepOutbox;
   Timer? _warm;
   ChatMessage? _excerptOf;
   String _excerpt = '';
@@ -79,9 +78,10 @@ class _CarModeScreenState extends State<CarModeScreen> {
     _sessions.addListener(_onFeed);
     _machine.addListener(_onMachine);
     _appVisible.addListener(_onAppVisible);
-    // Polls while Modo auto is open, also with the screen off (as long as
-    // Android keeps the app alive): it reuses the sessions/chat controllers.
-    _sessions.setVisible(true);
+    // Polls, speaks and listens only while the app is in the foreground
+    // (the wakelock keeps the screen on while Modo auto is open).
+    _sessions.setVisible(_appVisible.value);
+    _machine.setForeground(_appVisible.value);
     if (widget.session != null) _bind(widget.session!, widget.pane);
     // A few seconds in (never delaying the first words): cache the fixed
     // phrases so feedback still speaks without network.
@@ -97,20 +97,21 @@ class _CarModeScreenState extends State<CarModeScreen> {
     _sessions.dispose();
     _unbind();
     _recheck?.cancel();
-    _keepOutbox?.cancel();
     _warm?.cancel();
     _appVisible.removeListener(_onAppVisible);
     unawaited(WakelockPlus.disable().catchError((Object _) {}));
     super.dispose();
   }
 
-  /// The app stops the outbox 60 s after it is hidden; in Modo auto the
-  /// screen may be off on purpose, so keep delivering.
+  /// Hidden (another app on top, screen off): no polling, no speech, no
+  /// listening, no countdown. Back: polls resume and anything pending is
+  /// read. The outbox follows the app's usual background rules.
   void _onAppVisible() {
-    _keepOutbox?.cancel();
-    if (!_appVisible.value) {
-      _keepOutbox = Timer(const Duration(seconds: 61), () => _outbox.setActive(true));
-    }
+    final bool on = _appVisible.value;
+    _machine.setForeground(on);
+    _sessions.setVisible(on);
+    _chat?.setVisible(on);
+    if (!on) _recheck?.cancel();
   }
 
   void _onFeed() {
@@ -142,7 +143,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
       outbox: _outbox,
     );
     c.addListener(_onChat);
-    c.setVisible(true);
+    c.setVisible(_appVisible.value);
   }
 
   void _unbind() {
@@ -161,7 +162,12 @@ class _CarModeScreenState extends State<CarModeScreen> {
     final ReplyWatcher? w = _watcher;
     if (c == null || w == null || !c.loaded) return;
     final bool feedWorking = _machine.current?.state == SessionState.work;
-    _machine.updateCurrent(working: c.working || feedWorking, ask: c.ask, excerpt: _excerptFor(c.messages));
+    _machine.updateCurrent(
+      working: c.working || feedWorking,
+      ask: c.ask,
+      excerpt: _excerptFor(c.messages),
+      pane: c.pane,
+    );
     final ReplyRef? r = w.observe(c.messages, working: c.working, feedWorking: feedWorking);
     if (r != null) {
       _machine.replyCompleted(r);
@@ -359,10 +365,16 @@ class _CarModeScreenState extends State<CarModeScreen> {
         main = Row(children: <Widget>[
           Expanded(child: _BigButton(label: 'Cancelar', color: _C.stop, onTap: m.cancel, height: h)),
           const SizedBox(width: 12),
-          Expanded(child: _BigButton(label: 'Enviar ya', color: _C.go, onTap: m.sendNow, height: h)),
+          Expanded(
+            child: _BigButton(label: m.needsTap ? 'Enviar' : 'Enviar ya', color: _C.go, onTap: m.sendNow, height: h),
+          ),
         ]);
       case CarPhase.choosing:
-        main = _BigButton(label: 'Cancelar', color: _C.stop, onTap: m.cancel, height: h);
+        main = Row(children: <Widget>[
+          Expanded(child: _BigButton(label: 'Cancelar', color: _C.stop, onTap: m.cancel, height: h)),
+          const SizedBox(width: 12),
+          Expanded(child: _BigButton(label: 'Confirmar', color: _C.go, onTap: m.confirmChoice, height: h)),
+        ]);
       case CarPhase.failed:
         main = Row(children: <Widget>[
           Expanded(child: _BigButton(label: 'Descartar', color: _C.panel, textColor: _C.stop, onTap: m.discard, height: h)),

@@ -24,6 +24,13 @@ class Busy extends SendResult {
   const Busy();
 }
 
+/// 409 `prompt_open`: a permission prompt is open in that pane, so the
+/// desktop refused to type (no receipt kept). Retry the same id every few
+/// seconds; it goes out once the prompt is answered.
+class PromptOpen extends SendResult {
+  const PromptOpen();
+}
+
 /// Definitive rejection; nothing was typed. Never auto-retried.
 class Rejected extends SendResult {
   const Rejected(this.code);
@@ -89,6 +96,7 @@ SendResult classifyMessageResponse(ApiResponse r) {
     return const RouteMissing();
   }
   if (s == 405 || s == 501) return const RouteMissing();
+  if (s == 409 && code == WaitCode.promptOpen) return const PromptOpen();
   if (s == 409 || s == 429) return const Busy();
   if (s == 401) return const Rejected(FailCode.unauthorized);
   if (s == 403) return const Rejected(FailCode.forbidden);

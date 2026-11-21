@@ -50,5 +50,11 @@ errors / timeouts / 5xx / rate limits retry 3 times (1 s, 3 s); then
 Orphan audio older than 24 h and pending recordings older than 7 days are
 deleted on the first voice use of each process.
 
+`start(owner, requireSpeech: true)` (Modo auto's automatic rounds only): if the
+silence detector never heard speech, the recording is deleted without being
+transcribed (`DictationNothing`), so silence or road noise is never sent. A
+tapped dictation always transcribes (a quiet voice is not discarded). The
+earcon gives audio focus back right after playing, so music comes back up.
+
 `audio_session` is imported transitively (it is just_audio's dependency) to
 configure focus; declare it in pubspec.yaml to make that explicit.

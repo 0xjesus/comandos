@@ -277,6 +277,41 @@ void main() {
     x.stop();
   });
 
+  test('hidden: at least 4 s between rounds even when the revision keeps changing', () async {
+    bool hidden = false;
+    final NoticeWatcher x = NoticeWatcher(
+      transport: t,
+      cursor: const NoticeCursor(rev: 'r1', after: 1),
+      saveCursor: (NoticeCursor c) async => saved.add(c),
+      onNotices: (List<Notice> ns, Set<String> p) {},
+      onPending: pendings.add,
+      onUnauthorized: () => unauthorized++,
+      timer: timers.call,
+      now: () => nowMs,
+      hidden: () => hidden,
+    )..start();
+    await settle();
+    // Visible: a changed revision is followed at once.
+    nowMs += 300;
+    t.last.ok(w('r2', 1));
+    await settle();
+    expect(t.last.toString(), 'watch(r2,25)');
+    expect(timers.active, isEmpty);
+    // Hidden: busy agents change the revision every 300 ms.
+    hidden = true;
+    nowMs += 300;
+    t.last.ok(w('r3', 1));
+    await settle();
+    expect(x.state, WatcherState.backoff);
+    expect(timers.active.single.delay, const Duration(milliseconds: 3700));
+    final int before = t.calls.length;
+    timers.fire();
+    await settle();
+    expect(t.calls.length, before + 1);
+    expect(t.last.toString(), 'watch(r3,25)');
+    x.stop();
+  });
+
   test('a server that ignores wait does not make the loop spin', () async {
     final NoticeWatcher x = make(cursor: const NoticeCursor(rev: 'r1', after: 1))..start();
     await settle();

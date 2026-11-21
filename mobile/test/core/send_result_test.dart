@@ -16,6 +16,9 @@ void main() {
         isA<Rejected>().having((Rejected r) => r.code, 'code', 'session_gone'));
     expect(c(404, <String, Object?>{'status': 'unknown'}), isA<UnknownReceipt>());
     expect(c(409, <String, Object?>{'code': 'pane_busy'}), isA<Busy>());
+    expect(
+        c(409, <String, Object?>{'ok': false, 'code': 'prompt_open', 'status': 'rejected', 'error': 'x'}),
+        isA<PromptOpen>());
     expect(c(429), isA<Busy>());
     expect(c(422, <String, Object?>{'code': 'invalid'}), isA<Rejected>());
     expect(c(400), isA<Rejected>());

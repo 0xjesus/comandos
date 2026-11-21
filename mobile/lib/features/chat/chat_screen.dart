@@ -197,6 +197,10 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     _say(err ?? 'Enviado Escape: el agente debería detenerse.');
   }
 
+  /// "Editar": the text goes back to the composer. If later messages of
+  /// this session wait behind it, the item stays in the queue holding them
+  /// until the edited text is sent (it takes the item's place) or the
+  /// person discards the edit, so nothing jumps ahead silently.
   Future<void> _edit(OutboxItem item) async {
     final String cur = _text.text;
     final String merged = cur.trim().isEmpty ? item.text : '${item.text}\n${cur.trimLeft()}';
@@ -204,7 +208,15 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     _text.selection = TextSelection.collapsed(offset: merged.length);
     // Durable in the draft before it leaves the outbox.
     await _drafts.setNow(widget.session, merged);
-    await _outbox.discard(item.id);
+    final List<OutboxItem> all = _outbox.itemsFor(widget.session);
+    final int at = all.indexWhere((OutboxItem i) => i.id == item.id);
+    final bool holdsOthers =
+        at >= 0 && all.skip(at + 1).any((OutboxItem i) => i.isPending || i.needsHuman);
+    if (holdsOthers) {
+      await _outbox.beginEdit(item.id);
+    } else {
+      await _outbox.discard(item.id);
+    }
   }
 
   Future<void> _discard(OutboxItem item) async {
@@ -327,19 +339,40 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                 return AskCard(ask: ask, busy: _answering, onAnswer: _answer);
               },
             ),
-            Composer(
-              session: widget.session,
-              pane: () => _chat.pane,
-              baselineFor: _chat.baselineFor,
-              controller: _text,
-              onSent: () {
-                _stick = true;
-                _chat.poke();
-              },
+            ListenableBuilder(
+              listenable: _outbox,
+              builder: (BuildContext context, Widget? _) => _editNote(),
+            ),
+            ListenableBuilder(
+              listenable: _chat,
+              builder: (BuildContext context, Widget? _) => Composer(
+                session: widget.session,
+                pane: () => _chat.pane,
+                baselineFor: _chat.baselineFor,
+                controller: _text,
+                // A message typed into a pane showing a permission prompt
+                // could answer it: send waits until the prompt is gone.
+                sendBlockedReason: _chat.ask != null ? kAnswerPromptFirst : null,
+                onSent: () {
+                  _stick = true;
+                  _chat.poke();
+                },
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// "N mensajes en espera" while a failed message is being edited.
+  Widget _editNote() {
+    final OutboxItem? editing = _outbox.editingFor(widget.session);
+    if (editing == null) return const SizedBox.shrink();
+    final int n = _outbox.heldBehindEdit(widget.session);
+    return EditHoldNote(
+      held: n,
+      onDiscard: () => _outbox.discard(editing.id),
     );
   }
 
@@ -349,7 +382,9 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     }
     final List<ChatMessage> msgs = _chat.messages;
     final int split = _chat.split;
-    final List<OutboxItem> mine = _outbox.itemsFor(widget.session);
+    final List<OutboxItem> all = _outbox.itemsFor(widget.session);
+    // The item being edited lives in the composer now.
+    final List<OutboxItem> mine = all.where((OutboxItem i) => !i.editing).toList();
     final bool working = _chat.working;
     return CustomScrollView(
       controller: _scroll,
@@ -390,7 +425,8 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
           delegate: SliverChildBuilderDelegate(
             (BuildContext context, int i) {
               final OutboxItem item = mine[i];
-              final bool blocked = i > 0 && mine.sublist(0, i).any((OutboxItem e) => !e.isTerminalOk);
+              final int at = all.indexOf(item);
+              final bool blocked = at > 0 && all.sublist(0, at).any((OutboxItem e) => !e.isTerminalOk);
               return OutboxBubble(
                 key: ValueKey<String>('o:${item.createdAtMs}:${item.text.hashCode}'),
                 item: item,

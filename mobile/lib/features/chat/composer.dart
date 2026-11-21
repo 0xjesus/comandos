@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import '../../core/locator.dart';
 import '../../core/outbox/drafts.dart';
 import '../../core/outbox/outbox.dart';
+import '../../core/outbox/outbox_item.dart';
 import '../../ui/theme.dart';
 import '../voice/chat_voice.dart';
 import '../voice/voice.dart';
+
+/// Shown under the composer while a permission prompt is open.
+const String kAnswerPromptFirst = 'Responde primero el permiso de arriba';
 
 /// Bottom text box. The text is persisted as a draft while typing; on send
 /// it goes to the outbox first, and only once that is durable does the box
@@ -19,6 +23,7 @@ class Composer extends StatefulWidget {
     required this.baselineFor,
     required this.onSent,
     required this.controller,
+    this.sendBlockedReason,
   });
 
   final String session;
@@ -28,6 +33,10 @@ class Composer extends StatefulWidget {
 
   /// Owned by the chat screen so "Editar" can put text back.
   final TextEditingController controller;
+
+  /// When set, sending is disabled (typing and the draft still work) and
+  /// this one-line reason shows under the box.
+  final String? sendBlockedReason;
 
   @override
   State<Composer> createState() => _ComposerState();
@@ -73,7 +82,7 @@ class _ComposerState extends State<Composer> {
   }
 
   Future<void> _send() async {
-    if (_sending) return;
+    if (_sending || widget.sendBlockedReason != null) return;
     final String text = _ctl.text;
     if (text.trim().isEmpty) return;
     if (text.length > Outbox.maxChars) {
@@ -83,11 +92,15 @@ class _ComposerState extends State<Composer> {
     }
     setState(() => _sending = true);
     try {
+      // After "Editar" on a failed message, the edited text takes its place
+      // in the queue (ahead of the messages it held).
+      final OutboxItem? editing = _outbox.editingFor(widget.session);
       await _outbox.enqueue(
         session: widget.session,
         pane: widget.pane(),
         text: text,
         transcriptBaseline: widget.baselineFor(text),
+        replaces: editing?.id,
       );
       // Durable in the outbox: now the box may clear. Keep anything typed
       // during the (millisecond) wait.
@@ -108,7 +121,8 @@ class _ComposerState extends State<Composer> {
   Widget build(BuildContext context) {
     final int len = _ctl.text.length;
     final bool tooLong = len > Outbox.maxChars;
-    final bool canSend = !_sending && _ctl.text.trim().isNotEmpty && !tooLong;
+    final String? blocked = widget.sendBlockedReason;
+    final bool canSend = !_sending && _ctl.text.trim().isNotEmpty && !tooLong && blocked == null;
     return Material(
       color: Orbita.bar,
       child: Padding(
@@ -117,6 +131,24 @@ class _ComposerState extends State<Composer> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             if (_voice != null) DictationPanel(owner: widget.session, controller: _ctl),
+            if (blocked != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4, left: 8, right: 8),
+                child: Row(
+                  children: <Widget>[
+                    const Icon(Icons.front_hand_outlined, size: 14, color: Orbita.waiting),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        blocked,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Orbita.waiting, fontSize: 12.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (len > Outbox.maxChars - 2000)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4, right: 8),

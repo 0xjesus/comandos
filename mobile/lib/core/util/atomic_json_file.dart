@@ -20,19 +20,33 @@ class AtomicJsonFile {
   bool _hasPending = false;
   Completer<void>? _pendingDone;
 
-  /// Reads the document. Returns null when it does not exist. A corrupt file
-  /// is moved aside to `<path>.corrupt-<ms>` (never deleted) and null returned.
+  /// Reads the document. Returns null when it does not exist. A file that
+  /// cannot be read as JSON (bad JSON, invalid UTF-8, a read error) is moved
+  /// aside to `<path>.corrupt-<ms>` (never deleted) and null returned, so
+  /// the app starts empty instead of failing at every launch.
   Future<Object?> read() async {
     final File file = File(path);
     if (!await file.exists()) return null;
-    final String text = await file.readAsString();
-    if (text.trim().isEmpty) return null;
     try {
+      final String text = await file.readAsString();
+      if (text.trim().isEmpty) return null;
       return jsonDecode(text);
     } on FormatException {
-      final int ms = DateTime.now().millisecondsSinceEpoch;
-      await file.rename('$path.corrupt-$ms');
+      await _moveAside(file);
       return null;
+    } on FileSystemException {
+      // Invalid UTF-8 surfaces here too ("Failed to decode data").
+      await _moveAside(file);
+      return null;
+    }
+  }
+
+  Future<void> _moveAside(File file) async {
+    final int ms = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await file.rename('$path.corrupt-$ms');
+    } on FileSystemException {
+      // Cannot even move it: the next write replaces it atomically.
     }
   }
 

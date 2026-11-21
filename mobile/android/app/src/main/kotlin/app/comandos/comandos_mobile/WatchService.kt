@@ -23,6 +23,7 @@ class WatchService : Service() {
         private const val ID = 7001
         private const val PREFS = "comandos_watch"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_LOST = "lost"
 
         @Volatile
         var isRunning: Boolean = false
@@ -48,6 +49,23 @@ class WatchService : Service() {
             }
         }
 
+        /**
+         * True once after Android restarted the service but refused to let it
+         * run in the foreground (Android 12+ background-start limits): the
+         * app tells the person on its next open instead of failing silently.
+         */
+        fun takeLost(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val lost = prefs.getBoolean(KEY_LOST, false)
+            if (lost) prefs.edit().putBoolean(KEY_LOST, false).apply()
+            return lost
+        }
+
+        private fun markLost(context: Context) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(KEY_LOST, true).apply()
+        }
+
         fun stop(context: Context) {
             setEnabled(context, false)
             context.stopService(Intent(context, WatchService::class.java))
@@ -68,6 +86,9 @@ class WatchService : Service() {
                 startForeground(ID, buildNotification())
             }
         } catch (e: Exception) {
+            // Typically ForegroundServiceStartNotAllowedException after a
+            // restart by the system: remember it for the next app open.
+            markLost(this)
             stopSelf()
             return START_NOT_STICKY
         }

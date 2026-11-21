@@ -39,11 +39,16 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
     platform.onTap = _handleTap;
     visibleChat.addListener(_onVisibleChat);
     uiReady.addListener(_handleTap);
+    uiReady.addListener(_showLost);
     connection.tokenRejected.addListener(_onTokenRejected);
     connectivity?.addListener(_onConnectivity);
   }
 
   static const int maxShown = 64;
+
+  /// Shown on the next app open after Android stopped the keep-alive service.
+  static const String keepAliveLostMessage =
+      'Los avisos en segundo plano se detuvieron; ábrelos de nuevo en Ajustes';
 
   final NotificationPlatform platform;
   final Connection connection;
@@ -78,6 +83,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   bool _alsoDone = true;
   bool _allowed = true;
   bool _keepAliveRefused = false;
+  bool _keepAliveLost = false;
   bool _asking = false;
   bool _foreground;
   String? _host;
@@ -93,6 +99,9 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
 
   /// Android refused to start the keep-alive service last time.
   bool get keepAliveRefused => _keepAliveRefused;
+
+  /// Android stopped the service in the background; not yet told.
+  bool get keepAliveLost => _keepAliveLost;
   WatcherState get watcherState => _watcher?.state ?? WatcherState.stopped;
   bool get asked => _asked;
 
@@ -132,6 +141,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   void onForegroundChanged(bool foreground) {
     _foreground = foreground;
     if (!foreground || _loading == null) return;
+    unawaited(_checkLost());
     unawaited(_refreshAllowed());
     unawaited(_reconcile());
     _watcher?.nudge();
@@ -208,7 +218,26 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
           }
         }
         _allowed = await platform.notificationsAllowed();
+        await _checkLost();
       }();
+
+  /// Asks Android whether the keep-alive service was stopped in the
+  /// background; if so (and notices are on), tells the person once.
+  Future<void> _checkLost() async {
+    bool lost = false;
+    try {
+      lost = await platform.takeKeepAliveLost();
+    } catch (_) {}
+    if (lost && _enabled) _keepAliveLost = true;
+    _showLost();
+  }
+
+  void _showLost() {
+    final void Function(String, {bool openNotificationSettings})? say = onMessage;
+    if (!_keepAliveLost || say == null || !_foreground || !uiReady.value) return;
+    _keepAliveLost = false;
+    say(keepAliveLostMessage);
+  }
 
   Future<void> _save() async {
     final AtomicJsonFile? doc = _doc;
@@ -257,6 +286,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
         onPending: _onPending,
         onUnauthorized: _onUnauthorized,
         onHealthy: onReachable,
+        hidden: () => !_foreground,
         timer: _timer,
       );
       if (!w.isRunning) w.start();
@@ -370,6 +400,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
     platform.onTap = null;
     visibleChat.removeListener(_onVisibleChat);
     uiReady.removeListener(_handleTap);
+    uiReady.removeListener(_showLost);
     connection.tokenRejected.removeListener(_onTokenRejected);
     connectivity?.removeListener(_onConnectivity);
     super.dispose();

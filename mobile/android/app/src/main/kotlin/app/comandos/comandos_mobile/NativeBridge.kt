@@ -152,6 +152,7 @@ class NativeBridge :
                 result.success(null)
             }
             "watchRunning" -> result.success(WatchService.isRunning)
+            "watchTakeLost" -> result.success(WatchService.takeLost(context))
             "notify" -> {
                 Notifier.show(
                     context,

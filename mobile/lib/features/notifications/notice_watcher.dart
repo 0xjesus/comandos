@@ -95,6 +95,7 @@ class NoticeWatcher {
     required this.onPending,
     required this.onUnauthorized,
     this.onHealthy,
+    this.hidden,
     TimerFactory timer = systemTimer,
     NowMs now = systemNowMs,
   })  : _cursor = cursor,
@@ -117,6 +118,11 @@ class NoticeWatcher {
   /// `wait`), so the loop never spins.
   static const Duration quickReturnPause = Duration(seconds: 5);
 
+  /// Minimum time between the starts of two long-poll rounds while the app
+  /// is hidden, even when the revision keeps changing (20+ busy agents must
+  /// not keep the radio on in the background).
+  static const Duration minHiddenGap = Duration(seconds: 4);
+
   final NoticeTransport transport;
   final Future<void> Function(NoticeCursor cursor) saveCursor;
 
@@ -129,6 +135,9 @@ class NoticeWatcher {
 
   /// A round reached the desktop (used to resume the outbox).
   final void Function()? onHealthy;
+
+  /// True while the app is in the background ([minHiddenGap] applies).
+  final bool Function()? hidden;
   final TimerFactory _timer;
   final NowMs _now;
 
@@ -236,9 +245,13 @@ class NoticeWatcher {
           if (!alive()) return;
         }
         onPending(w.pending.toSet());
-        if (!changed && _now() - started < 1000) {
+        final int took = _now() - started;
+        if (!changed && took < 1000) {
           _state = WatcherState.backoff;
           await _sleep(quickReturnPause);
+        } else if ((hidden?.call() ?? false) && took < minHiddenGap.inMilliseconds) {
+          _state = WatcherState.backoff;
+          await _sleep(Duration(milliseconds: minHiddenGap.inMilliseconds - took));
         }
       } on UnauthorizedException {
         if (!alive()) return;

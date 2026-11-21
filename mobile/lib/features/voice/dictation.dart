@@ -130,6 +130,7 @@ class DictationController extends ChangeNotifier {
   Completer<DictationOutcome>? _done;
   Completer<void>? _abort;
   bool _cancelled = false;
+  bool _requireSpeech = false;
   StreamSubscription<double>? _levels;
   Timer? _cap;
   SilenceDetector? _detector;
@@ -268,10 +269,16 @@ class DictationController extends ChangeNotifier {
   // ---- Recording --------------------------------------------------------------
 
   /// Records for [owner] until [stop], silence or the cap, then transcribes.
-  Future<DictationOutcome> start(String owner) async {
+  ///
+  /// [requireSpeech] (Modo auto's automatic rounds): if no speech was
+  /// detected in the recording, it is deleted without transcribing and the
+  /// result is [DictationNothing], so silence or road noise is never turned
+  /// into a message.
+  Future<DictationOutcome> start(String owner, {bool requireSpeech = false}) async {
     if (_phase != DictationPhase.idle) return const DictationDenied('Ya hay una grabación en curso.');
     _phase = DictationPhase.recording; // claim the mic before any await
     _owner = owner;
+    _requireSpeech = requireSpeech;
     _notices.remove(owner);
     _elapsedMs = 0;
     _level = 0;
@@ -349,6 +356,7 @@ class DictationController extends ChangeNotifier {
   Future<void> stop() async {
     if (_phase != DictationPhase.recording || _current == null) return;
     final PendingTake take = _current!;
+    final bool silent = _requireSpeech && !(_detector?.heardSpeech ?? false);
     _stopSignals();
     _phase = DictationPhase.transcribing;
     _elapsedMs = _now() - _startedMs;
@@ -359,6 +367,12 @@ class DictationController extends ChangeNotifier {
     } catch (_) {}
     _path = null;
     unawaited(_afterRecord?.call());
+    if (silent) {
+      await _forget(take);
+      _notices[take.owner] = 'No se oyó nada.';
+      _finish(const DictationNothing());
+      return;
+    }
     await _transcribeTake(take);
   }
 

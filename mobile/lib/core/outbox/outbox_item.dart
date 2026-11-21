@@ -22,6 +22,17 @@ abstract final class FailCode {
   static const String uncertain = 'uncertain';
 }
 
+/// Why a queued item is waiting (it will go out on its own). See
+/// [OutboxItem.waitCode].
+abstract final class WaitCode {
+  /// 409 `prompt_open`: a permission prompt is open in that pane; typing
+  /// there could answer it. Retried with the same id until it is gone.
+  static const String promptOpen = 'prompt_open';
+}
+
+/// Spanish copy for a [WaitCode].
+const String kWaitingForPrompt = 'Esperando a que respondas el permiso';
+
 /// Spanish explanation of why an item failed or is uncertain.
 String outboxFailureMessage(String? code) {
   switch (code) {
@@ -71,6 +82,8 @@ class OutboxItem {
     this.deliveredAtMs,
     this.transcriptBaseline,
     this.checksLeft = 0,
+    this.waitCode,
+    this.editing = false,
   });
 
   final String id;
@@ -114,6 +127,15 @@ class OutboxItem {
   /// Remaining automatic transcript checks for an uncertain item.
   final int checksLeft;
 
+  /// Why a queued item keeps waiting although the desktop answered (see
+  /// [WaitCode]); null otherwise.
+  final String? waitCode;
+
+  /// The person tapped "Editar" on this failed/uncertain item: its text is
+  /// in the composer. It stays in place (holding the later messages of its
+  /// session) until the edited text replaces it or the person discards it.
+  final bool editing;
+
   bool get isTerminalOk => state == OutboxState.delivered;
   bool get needsHuman => state == OutboxState.failed || state == OutboxState.uncertain;
   bool get isPending => state == OutboxState.queued || state == OutboxState.sending;
@@ -136,6 +158,9 @@ class OutboxItem {
     int? deliveredAtMs,
     int? transcriptBaseline,
     int? checksLeft,
+    String? waitCode,
+    bool clearWaitCode = false,
+    bool? editing,
   }) =>
       OutboxItem(
         id: id ?? this.id,
@@ -155,6 +180,8 @@ class OutboxItem {
         deliveredAtMs: deliveredAtMs ?? this.deliveredAtMs,
         transcriptBaseline: transcriptBaseline ?? this.transcriptBaseline,
         checksLeft: checksLeft ?? this.checksLeft,
+        waitCode: clearWaitCode ? null : (waitCode ?? this.waitCode),
+        editing: editing ?? this.editing,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -175,6 +202,8 @@ class OutboxItem {
         'deliveredAtMs': deliveredAtMs,
         'transcriptBaseline': transcriptBaseline,
         'checksLeft': checksLeft,
+        'waitCode': waitCode,
+        'editing': editing,
       };
 
   static OutboxItem? fromJson(Object? json) {
@@ -205,6 +234,8 @@ class OutboxItem {
       deliveredAtMs: ni('deliveredAtMs'),
       transcriptBaseline: ni('transcriptBaseline'),
       checksLeft: i('checksLeft'),
+      waitCode: s('waitCode'),
+      editing: json['editing'] == true,
     );
   }
 }

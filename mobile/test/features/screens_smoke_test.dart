@@ -16,6 +16,7 @@ import 'package:comandos_mobile/core/outbox/outbox_item.dart';
 import 'package:comandos_mobile/core/outbox/outbox_store.dart';
 import 'package:comandos_mobile/core/polling/app_visibility.dart';
 import 'package:comandos_mobile/features/car/car_mode.dart';
+import 'package:comandos_mobile/features/chat/chat_screen.dart';
 import 'package:comandos_mobile/features/notifications/notifications_controller.dart';
 import 'package:comandos_mobile/features/notifications/notifications_hook.dart';
 import 'package:comandos_mobile/features/sessions/sessions_screen.dart';
@@ -49,10 +50,12 @@ class _NoTimer implements Timer {
 void main() {
   late Directory dir;
   final List<String> posted = <String>[];
+  bool askOpen = true;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('smoke');
     posted.clear();
+    askOpen = true;
     sl.reset();
     final MockClient client = MockClient((http.Request r) async {
       expect(r.headers['X-Comandos-Token'], 'TOKEN');
@@ -84,17 +87,21 @@ void main() {
                 <String, Object?>{'r': 'a', 't': 'Listo. **Todo** bien con `cargo`.\n\n```\ncode\n```'},
                 <String, Object?>{'r': 't', 't': 'Bash · ls\nRead · /a.rs'},
               ],
-              'ask': <String, Object?>{
-                'question': '¿Seguir?',
-                'detail': <Object?>['Bash command'],
-                'options': <Object?>[<String, Object?>{'key': '1', 'label': 'Sí', 'on': true}],
-              },
+              if (askOpen)
+                'ask': <String, Object?>{
+                  'question': '¿Seguir?',
+                  'detail': <Object?>['Bash command'],
+                  'options': <Object?>[<String, Object?>{'key': '1', 'label': 'Sí', 'on': true}],
+                },
             },
           );
         case '/session-seen':
           return http.Response('{"ok":true}', 200);
         case '/session/message':
           posted.add(utf8.decode(r.bodyBytes));
+          if (utf8.decode(r.bodyBytes).contains('"text":"malo"')) {
+            return json(<String, Object?>{'ok': false, 'code': 'invalid', 'status': 'rejected'}, 422);
+          }
           return json(<String, Object?>{'ok': true, 'status': 'delivered', 'duplicate': false});
       }
       return http.Response('{"error":"Not found"}', 404);
@@ -157,8 +164,24 @@ void main() {
     expect(find.text('1. Sí'), findsOneWidget); // permission card
     expect(find.byIcon(Icons.mic_none), findsNothing); // no OpenAI key: mic hidden
 
+    // 15a: while the prompt is open, typing works but sending does not.
+    IconButton sendButton() => tester.widget<IconButton>(
+        find.ancestor(of: find.byIcon(Icons.arrow_upward), matching: find.byType(IconButton)));
     await tester.enterText(find.byType(TextField), 'hola agente');
     await tester.pump();
+    expect(find.text('Responde primero el permiso de arriba'), findsOneWidget);
+    expect(sendButton().onPressed, isNull);
+    expect(sl.get<DraftStore>().get('term-r1'), 'hola agente', reason: 'drafting still works');
+
+    // The prompt is answered (on the desktop): the next poll unblocks sending.
+    askOpen = false;
+    await tester.pump(const Duration(seconds: 3));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pump();
+    expect(find.text('1. Sí'), findsNothing);
+    expect(find.text('Responde primero el permiso de arriba'), findsNothing);
+    expect(sendButton().onPressed, isNotNull);
+    expect(posted, isEmpty);
     await tester.runAsync(() async {
       await tester.tap(find.byTooltip('Enviar'));
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -179,6 +202,59 @@ void main() {
     expect(field.controller!.text, isEmpty);
 
     // Leave the screens so their pollers stop.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('10: Editar on a failed message holds the later ones (note + order)', (WidgetTester tester) async {
+    askOpen = false;
+    // Real-time waits on a condition (not fixed delays): stable under load.
+    Future<void> until(bool Function() ok) async {
+      for (int i = 0; i < 200 && !ok(); i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+        await tester.pump();
+      }
+      expect(ok(), isTrue);
+    }
+
+    final Outbox outbox = sl.get<Outbox>();
+    await tester.runAsync(() async {
+      await outbox.enqueue(session: 'term-r1', pane: '%1', text: 'malo');
+      await outbox.pump();
+      await outbox.enqueue(session: 'term-r1', pane: '%1', text: 'adelante');
+      await outbox.pump();
+    });
+    expect(outbox.items.first.state, OutboxState.failed);
+    expect(posted, hasLength(1), reason: '"adelante" waits behind the failed one');
+
+    await tester.pumpWidget(MaterialApp(
+      theme: buildTheme(),
+      navigatorKey: AppNavigator.key,
+      navigatorObservers: <NavigatorObserver>[AppNavigator.routes],
+      home: const ChatScreen(session: 'term-r1', pane: '%1'),
+    ));
+    await until(() => find.text('Editar').evaluate().isNotEmpty);
+    await tester.ensureVisible(find.text('Editar'));
+    await tester.tap(find.text('Editar'));
+    await until(() => outbox.editingFor('term-r1') != null);
+    expect(find.text('1 mensaje en espera hasta que envíes el texto editado'), findsOneWidget);
+    expect(find.text('Descartar edición'), findsOneWidget);
+    await tester.runAsync(() => outbox.pump());
+    expect(posted, hasLength(1), reason: 'nothing jumps ahead while editing');
+
+    await tester.enterText(find.byType(TextField), 'bueno');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Enviar'));
+    await until(() => outbox.editingFor('term-r1') == null);
+    await tester.runAsync(() => outbox.pump());
+    await until(() => posted.length == 3);
+    await tester.pump();
+    final List<String> texts = <String>[
+      for (final String p in posted.skip(1)) (jsonDecode(p) as Map<String, Object?>)['text']! as String,
+    ];
+    expect(texts, <String>['bueno', 'adelante'], reason: 'the edited text goes first');
+    expect(find.text('Descartar edición'), findsNothing);
+
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });

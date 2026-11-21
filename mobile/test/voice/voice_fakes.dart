@@ -152,6 +152,8 @@ VoiceServices testVoiceServices({
   http.Client? client,
   Recorder? recorder,
   AudioOut? audio,
+  Transcriber? transcribe,
+  Future<void> Function(String owner, String text)? fallback,
 }) {
   final MemorySecretStore secrets = MemorySecretStore();
   if (key != null) secrets.values['comandos.openai.v1'] = key;
@@ -170,10 +172,11 @@ VoiceServices testVoiceServices({
   );
   final DictationController dictation = DictationController(
     recorder: recorder ?? FakeRecorder(),
-    transcribe: (String p, Future<void> a) =>
-        openai.transcribe(p, const SttOptions(model: kDefaultSttModel, language: SttLanguage.es), abort: a),
+    transcribe: transcribe ??
+        (String p, Future<void> a) =>
+            openai.transcribe(p, const SttOptions(model: kDefaultSttModel, language: SttLanguage.es), abort: a),
     dir: () async => '$dir/takes',
-    fallback: (String o, String t) async {},
+    fallback: fallback ?? (String o, String t) async {},
   );
   return VoiceServices(
     keys: keys,

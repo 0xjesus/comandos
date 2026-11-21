@@ -18,6 +18,14 @@ class OutboxRejection implements Exception {
   String toString() => 'OutboxRejection: $message';
 }
 
+/// Removes the control characters the desktop refuses (it answers 422 and
+/// a retry would fail the same way). Line breaks become `\n` (as the
+/// desktop does); `\n` and `\t` are kept.
+String sanitizeOutgoing(String text) => text
+    .replaceAll('\r\n', '\n')
+    .replaceAll('\r', '\n')
+    .replaceAll(RegExp(r'[\u0000-\u0008\u000B-\u001F\u007F-\u009F]'), '');
+
 /// Persistent, idempotent, strictly ordered outgoing message queue.
 ///
 /// Guarantees:
@@ -70,6 +78,9 @@ class Outbox extends ChangeNotifier {
   ];
   static const Duration busyCap = Duration(seconds: 5);
 
+  /// Retry spacing while a permission prompt is open in the pane.
+  static const Duration promptRetry = Duration(seconds: 3);
+
   /// How long a delivered bubble stays if the transcript never shows it.
   static const Duration deliveredLinger = Duration(minutes: 2);
 
@@ -111,6 +122,30 @@ class Outbox extends ChangeNotifier {
       if (i.isPending || i.needsHuman) return i.session;
     }
     return null;
+  }
+
+  /// The item of [session] whose text the person is editing ("Editar"),
+  /// holding the later messages of that session; null when none.
+  OutboxItem? editingFor(String session) {
+    for (final OutboxItem i in _items) {
+      if (i.session == session && i.editing) return i;
+    }
+    return null;
+  }
+
+  /// Messages of [session] waiting behind the one being edited.
+  int heldBehindEdit(String session) {
+    bool behind = false;
+    int n = 0;
+    for (final OutboxItem i in _items) {
+      if (i.session != session) continue;
+      if (i.editing) {
+        behind = true;
+      } else if (behind && (i.isPending || i.needsHuman)) {
+        n++;
+      }
+    }
+    return n;
   }
 
   /// Unsettled (pending + needs human) count for one session.
@@ -191,12 +226,20 @@ class Outbox extends ChangeNotifier {
   ///
   /// [transcriptBaseline] is how many user messages with this exact text the
   /// chat currently shows (lets the chat hide the bubble once it appears).
+  ///
+  /// [replaces]: the id of the item being edited ([beginEdit]); the new
+  /// message takes its place in the queue, ahead of the messages it held.
+  ///
+  /// Control characters the desktop refuses are removed first (`\n` and
+  /// `\t` stay), so a paste never fails for good.
   Future<OutboxItem> enqueue({
     required String session,
     String? pane,
     required String text,
     int? transcriptBaseline,
+    String? replaces,
   }) async {
+    text = sanitizeOutgoing(text);
     if (!_loaded) throw const OutboxRejection('Un momento: todavía estoy cargando.');
     final String host = _host ?? '';
     if (host.isEmpty) {
@@ -229,13 +272,23 @@ class Outbox extends ChangeNotifier {
     );
     // The item joins the in-memory list first so any concurrent write also
     // carries it, but it is not attempted until its own write is durable.
-    _items = <OutboxItem>[..._items, item];
+    final int at = replaces == null
+        ? -1
+        : _items.indexWhere((OutboxItem i) => i.id == replaces && i.editing && i.session == session);
+    final OutboxItem? replaced = at >= 0 ? _items[at] : null;
+    _items = at >= 0
+        ? <OutboxItem>[..._items.sublist(0, at), item, ..._items.sublist(at + 1)]
+        : <OutboxItem>[..._items, item];
     _notDurable.add(item.id);
     try {
       await _store.save(_items);
     } catch (_) {
-      // Not durable: take it back out. The caller keeps the text.
-      _items = _items.where((OutboxItem i) => i.id != item.id).toList();
+      // Not durable: take it back out (and put back what it replaced). The
+      // caller keeps the text.
+      _items = <OutboxItem>[
+        for (final OutboxItem i in _items)
+          if (i.id != item.id) i else ?replaced,
+      ];
       unawaited(_persist());
       throw const OutboxRejection('No pude guardar el mensaje en el teléfono. '
           'Sigue en el cuadro de texto; inténtalo de nuevo.');
@@ -249,17 +302,26 @@ class Outbox extends ChangeNotifier {
 
   /// Person-initiated retry of a failed or uncertain item.
   ///
-  /// A failed item was definitively rejected (nothing typed), and an
-  /// uncertain one is re-sent only because the person chose to; both get a
-  /// fresh clientMessageId so a stored rejection is not replayed. [pane]
-  /// lets the chat target the session's current pane (after `pane_gone`).
+  /// "Reintentar" on a failed item keeps its clientMessageId: the desktop
+  /// keeps no receipt for a rejection, and if the message did arrive after
+  /// all (a timeout whose receipt check was then refused), it answers
+  /// `duplicate` instead of typing it twice. "Reenviar" on an uncertain item
+  /// is the person's explicit resend: a fresh id.
+  ///
+  /// [pane] targets the session's current pane. After `pane_gone`, a pane
+  /// equal to the dead one (or none) is cleared, so the desktop picks the
+  /// session's current pane.
   Future<void> retry(String id, {String? pane}) async {
     final OutboxItem? item = byId(id);
     if (item == null || !item.needsHuman) return;
+    final bool stalePane = item.failCode == FailCode.paneGone && (pane == null || pane == item.pane);
     await _replace(item.copyWith(
-      id: _newId(),
+      id: item.state == OutboxState.uncertain ? _newId() : item.id,
       host: _host ?? item.host,
-      pane: pane,
+      pane: stalePane ? null : pane,
+      clearPane: stalePane,
+      clearWaitCode: true,
+      editing: false,
       state: OutboxState.queued,
       retryStreak: 0,
       nextAttemptAtMs: _now(),
@@ -270,6 +332,16 @@ class Outbox extends ChangeNotifier {
       checksLeft: 0,
     ), oldId: id);
     _kick();
+  }
+
+  /// "Editar" on a failed / uncertain item: its text goes to the composer,
+  /// and the item stays where it is, holding the later messages of its
+  /// session, until the edited text replaces it (`enqueue(replaces:)`) or
+  /// the person discards it. Nothing jumps ahead silently.
+  Future<void> beginEdit(String id) async {
+    final OutboxItem? item = byId(id);
+    if (item == null || !item.needsHuman || item.editing) return;
+    await _replace(item.copyWith(editing: true));
   }
 
   /// Removes an item (after the person confirmed), or after its text was put
@@ -354,6 +426,7 @@ class Outbox extends ChangeNotifier {
         continue; // delivered items never block the queue
       }
       if (!sessionsSeen.add(i.session)) continue; // not the head of its session
+      if (i.editing) continue; // the person is rewriting it: the session waits
       if (_notDurable.contains(i.id)) continue;
       if (_inFlight.containsKey(i.session)) continue;
       if (i.state == OutboxState.failed) continue; // blocked until the person acts
@@ -397,7 +470,9 @@ class Outbox extends ChangeNotifier {
     int? earliest;
     for (final OutboxItem i in _items) {
       int? due;
-      if (i.state == OutboxState.queued && !_inFlight.containsKey(i.session)) {
+      if (i.editing) {
+        due = null;
+      } else if (i.state == OutboxState.queued && !_inFlight.containsKey(i.session)) {
         due = i.nextAttemptAtMs;
       } else if (i.state == OutboxState.uncertain &&
           i.checksLeft > 0 &&
@@ -450,7 +525,7 @@ class Outbox extends ChangeNotifier {
     // The item may have been discarded meanwhile.
     final OutboxItem? current = byId(item.id);
     if (current == null) return;
-    item = current;
+    item = result is PromptOpen ? current : current.copyWith(clearWaitCode: true);
     final int now = _now();
 
     switch (result) {
@@ -466,6 +541,15 @@ class Outbox extends ChangeNotifier {
         ));
       case InProgress():
         await _requeue(item, 'Tu equipo lo está escribiendo…', ambiguous: true);
+      case PromptOpen():
+        // Nothing typed, no receipt: same id again in a few seconds.
+        await _replace(item.copyWith(
+          state: OutboxState.queued,
+          waitCode: WaitCode.promptOpen,
+          retryStreak: 0,
+          nextAttemptAtMs: now + promptRetry.inMilliseconds,
+          lastError: kWaitingForPrompt,
+        ));
       case Busy():
         await _replace(item.copyWith(
           state: OutboxState.queued,
@@ -556,7 +640,7 @@ class Outbox extends ChangeNotifier {
     final int? count =
         await _transport.countUserMessages(item.session, item.pane, item.text);
     final OutboxItem? current = byId(item.id);
-    if (current == null || current.state != OutboxState.uncertain) return;
+    if (current == null || current.state != OutboxState.uncertain || current.editing) return;
     final int? base = current.transcriptBaseline;
     if (count != null && base != null && count > base) {
       // It arrived. Show it as delivered until the chat sees it too.

@@ -243,7 +243,7 @@ void main() {
       expect(h.transport.sends.last, 'send:id-2:A:a2');
     });
 
-    test('manual retry after a rejection uses a fresh id and the new pane', () async {
+    test('6: Reintentar on a failed item keeps its id (and takes the new pane)', () async {
       final Harness h = Harness();
       await h.start();
       h.transport.sendResults.add(const Rejected(FailCode.paneGone));
@@ -251,9 +251,138 @@ void main() {
       await h.outbox.pump();
       await h.outbox.retry('id-1', pane: '%3');
       await h.outbox.pump();
-      expect(h.only().id, 'id-2');
+      expect(h.only().id, 'id-1', reason: 'no receipt for a rejection: a duplicate is answered as such');
       expect(h.only().pane, '%3');
       expect(h.only().state, OutboxState.delivered);
+      expect(h.transport.sends, <String>['send:id-1:A:a1', 'send:id-1:A:a1']);
+    });
+
+    test('6: a timeout that did arrive, then a refused receipt check: Reintentar is answered duplicate', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.add(const TransientFailure('tiempo agotado'));
+      h.transport.lookupResults.add(const Rejected(FailCode.unauthorized)); // token changed
+      await h.outbox.enqueue(session: 'A', text: 'despliega');
+      await h.outbox.pump();
+      h.advance(const Duration(seconds: 1));
+      await h.outbox.pump();
+      expect(h.only().state, OutboxState.failed);
+      h.transport.sendResults.add(const Delivered(duplicate: true));
+      await h.outbox.retry('id-1');
+      await h.outbox.pump();
+      expect(h.transport.sends, <String>['send:id-1:A:despliega', 'send:id-1:A:despliega']);
+      expect(h.only().state, OutboxState.delivered);
+    });
+
+    test('6: Reenviar on an uncertain item is an explicit resend: fresh id', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.add(const Uncertain());
+      await h.outbox.enqueue(session: 'A', text: 'x');
+      await h.outbox.pump();
+      expect(h.only().state, OutboxState.uncertain);
+      await h.outbox.retry('id-1');
+      await h.outbox.pump();
+      expect(h.only().id, 'id-2');
+      expect(h.only().state, OutboxState.delivered);
+    });
+
+    test('11: Reintentar after pane_gone drops the dead pane', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.addAll(<SendResult>[
+        const Rejected(FailCode.paneGone),
+        const Rejected(FailCode.paneGone),
+      ]);
+      await h.outbox.enqueue(session: 'A', pane: '%9', text: 'a1');
+      await h.outbox.pump();
+      // The chat has not learned the new pane yet: it still says %9.
+      await h.outbox.retry('id-1', pane: '%9');
+      expect(h.only().pane, isNull, reason: 'the desktop picks the session\'s current pane');
+      await h.outbox.pump();
+      await h.outbox.retry('id-1');
+      expect(h.only().pane, isNull);
+    });
+
+    test('10: Editar holds the later messages until the edited text takes its place', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.add(const Rejected(FailCode.invalid));
+      await h.outbox.enqueue(session: 'A', text: 'no borres nada');
+      await h.outbox.pump();
+      await h.outbox.enqueue(session: 'A', text: 'adelante');
+      await h.outbox.enqueue(session: 'A', text: 'y luego publica');
+      await h.outbox.beginEdit('id-1');
+      expect(h.outbox.editingFor('A')!.id, 'id-1');
+      expect(h.outbox.heldBehindEdit('A'), 2);
+      h.advance(const Duration(minutes: 5));
+      await h.outbox.pump();
+      expect(h.transport.sends, hasLength(1), reason: 'nothing jumps ahead while editing');
+
+      await h.outbox.enqueue(session: 'A', text: 'no borres nada, por favor', replaces: 'id-1');
+      expect(h.outbox.items.map((OutboxItem i) => i.text),
+          <String>['no borres nada, por favor', 'adelante', 'y luego publica']);
+      expect(h.outbox.editingFor('A'), isNull);
+      await h.outbox.pump();
+      expect(h.transport.sends.skip(1), <String>[
+        'send:id-4:A:no borres nada, por favor',
+        'send:id-2:A:adelante',
+        'send:id-3:A:y luego publica',
+      ]);
+    });
+
+    test('10: discarding the edit releases the queue', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.add(const Rejected(FailCode.invalid));
+      await h.outbox.enqueue(session: 'A', text: 'a1');
+      await h.outbox.pump();
+      await h.outbox.enqueue(session: 'A', text: 'a2');
+      await h.outbox.beginEdit('id-1');
+      await h.outbox.pump();
+      expect(h.transport.sends, hasLength(1));
+      await h.outbox.discard('id-1');
+      await h.outbox.pump();
+      expect(h.transport.sends.last, 'send:id-2:A:a2');
+    });
+
+    test('14: control characters are stripped before queueing (\\n and \\t stay)', () async {
+      final Harness h = Harness();
+      await h.start();
+      await h.outbox.enqueue(session: 'A', text: 'ho\u0007la\r\nmun\u001bdo\tfin\u0085\u007f\rx');
+      expect(h.only().text, 'hola\nmundo\tfin\nx');
+      await expectLater(
+        h.outbox.enqueue(session: 'A', text: '\u0000\u0001\u0002'),
+        throwsA(isA<OutboxRejection>()),
+      );
+    });
+
+    test('15: prompt_open keeps the same id, waits, and goes out once the prompt is gone', () async {
+      final Harness h = Harness();
+      await h.start();
+      h.transport.sendResults.addAll(<SendResult>[const PromptOpen(), const PromptOpen()]);
+      await h.outbox.enqueue(session: 'A', text: 'sigue');
+      await h.outbox.enqueue(session: 'A', text: 'después');
+      await h.outbox.pump();
+      expect(h.only, throwsStateError);
+      final OutboxItem first = h.outbox.byId('id-1')!;
+      expect(first.state, OutboxState.queued);
+      expect(first.waitCode, WaitCode.promptOpen);
+      expect(first.lastError, kWaitingForPrompt);
+      expect(first.ambiguous, isFalse, reason: 'refused: no receipt to ask for');
+      expect(first.nextAttemptAtMs - h.nowMs, Outbox.promptRetry.inMilliseconds);
+      h.advance(Outbox.promptRetry);
+      await h.outbox.pump();
+      h.advance(Outbox.promptRetry);
+      await h.outbox.pump(); // the prompt was answered: delivered
+      expect(h.transport.sends, <String>[
+        'send:id-1:A:sigue',
+        'send:id-1:A:sigue',
+        'send:id-1:A:sigue',
+        'send:id-2:A:después',
+      ]);
+      expect(h.outbox.byId('id-1')!.state, OutboxState.delivered);
+      expect(h.outbox.byId('id-1')!.waitCode, isNull);
     });
 
     test('401 and 422 fail without retry', () async {
@@ -458,6 +587,39 @@ void main() {
       expect(h.only().state, OutboxState.uncertain);
       await h.outbox.pump();
       expect(h.transport.calls.where((String c) => !c.startsWith('count')), isEmpty);
+    });
+
+    test('13: a file with invalid UTF-8 is moved aside; the app starts empty', () async {
+      final String path = '${dir.path}/outbox.json';
+      await File(path).writeAsBytes(<int>[0x7b, 0xff, 0xfe, 0x22, 0xc3, 0x28, 0x7d]);
+      final List<OutboxItem> items = await FileOutboxStore(path).load();
+      expect(items, isEmpty);
+      final List<String> names =
+          dir.listSync().map((FileSystemEntity e) => e.uri.pathSegments.last).toList();
+      expect(names.any((String n) => n.startsWith('outbox.json.corrupt-')), isTrue);
+      // Drafts too.
+      final String drafts = '${dir.path}/drafts.json';
+      await File(drafts).writeAsBytes(<int>[0xff, 0xff, 0xff]);
+      final DraftStore d = DraftStore(drafts);
+      await d.load();
+      expect(d.get('A'), '');
+      d.dispose();
+    });
+
+    test('an item being edited survives a restart', () async {
+      final String path = '${dir.path}/outbox.json';
+      final Harness first = Harness(store: FileOutboxStore(path));
+      await first.start();
+      first.transport.sendResults.add(const Rejected(FailCode.invalid));
+      await first.outbox.enqueue(session: 'A', text: 'a1');
+      await first.outbox.pump();
+      await first.outbox.enqueue(session: 'A', text: 'a2');
+      await first.outbox.beginEdit('id-1');
+      final Harness second = Harness(store: FileOutboxStore(path));
+      await second.start();
+      expect(second.outbox.editingFor('A')!.text, 'a1');
+      await second.outbox.pump();
+      expect(second.transport.sends, isEmpty);
     });
 
     test('a corrupt file is moved aside, not deleted', () async {

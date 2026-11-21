@@ -35,6 +35,15 @@ class FakePlatform implements NotificationPlatform {
     return grant;
   }
 
+  bool lost = false;
+
+  @override
+  Future<bool> takeKeepAliveLost() async {
+    final bool l = lost;
+    lost = false;
+    return l;
+  }
+
   @override
   Future<bool> startKeepAlive() async => keepAlive = true;
   @override
@@ -221,6 +230,34 @@ void main() {
     expect(opened, <String>['term-r7|%3']);
   });
 
+  test('keep-alive stopped by Android in the background: one notice on the next open', () async {
+    final List<String> said = <String>[];
+    await c.onPaired();
+    await c.setEnabled(true);
+    c.dispose();
+    platform.lost = true; // WatchService could not start in the foreground
+    c = NotificationsController(
+      platform: platform,
+      connection: connection,
+      file: () async => AtomicJsonFile('${dir.path}/notifications.json'),
+      visibleChat: visibleChat,
+      uiReady: uiReady,
+      openChat: (String s, String? p) {},
+      transport: transport,
+      timer: timers.call,
+      onMessage: (String m, {bool openNotificationSettings = false}) => said.add(m),
+    );
+    await c.onPaired(); // app opened (boot): the list is not up yet
+    expect(said, isEmpty);
+    uiReady.value = true;
+    expect(said, <String>[NotificationsController.keepAliveLostMessage]);
+    c.onForegroundChanged(false);
+    c.onForegroundChanged(true);
+    await settle();
+    expect(said, hasLength(1), reason: 'once');
+    expect(platform.keepAlive, isTrue, reason: 'and the service is started again');
+  });
+
   test('asks once after pairing; "Ahora no" is remembered', () async {
     int asked = 0;
     c.dispose();
@@ -240,7 +277,7 @@ void main() {
     );
     await c.onPaired();
     timers.fire();
-    await settle();
+    await until(() => asked == 1 && c.asked);
     expect(asked, 1);
     expect(c.asked, isTrue);
     expect(c.enabled, isFalse);

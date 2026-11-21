@@ -57,6 +57,10 @@ abstract class NotificationPlatform {
 
   /// Starts the keep-alive foreground service. False when Android refused.
   Future<bool> startKeepAlive();
+
+  /// True (once) when Android restarted the keep-alive service but did not
+  /// let it run in the foreground, so background notices stopped.
+  Future<bool> takeKeepAliveLost();
   Future<void> stopKeepAlive();
   Future<void> show(LocalAlert alert);
   Future<void> cancel(String tag);
@@ -118,6 +122,9 @@ class NativeChannel implements NotificationPlatform {
 
   @override
   Future<bool> startKeepAlive() async => await _call<bool>('watchStart') ?? false;
+
+  @override
+  Future<bool> takeKeepAliveLost() async => await _call<bool>('watchTakeLost') ?? false;
 
   @override
   Future<void> stopKeepAlive() => _call<void>('watchStop');

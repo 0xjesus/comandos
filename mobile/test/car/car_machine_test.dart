@@ -16,6 +16,11 @@ class FakePorts implements CarPorts {
   @override
   bool continuous = false;
   bool autoSpeak = true;
+
+  /// What [speak] / [speakReply] report when [autoSpeak] (false = TTS failed).
+  bool speakOk = true;
+  final List<bool> requireSpeech = <bool>[];
+  final List<(String?, String)> answerBindings = <(String?, String)>[];
   SendOutcome sendResult = const SendOutcome(SendKind.delivered);
   String? answerError;
 
@@ -39,8 +44,10 @@ class FakePorts implements CarPorts {
   }
 
   @override
-  Future<DictationOutcome> listen(String session, {required VoidCallback onTranscribing}) {
+  Future<DictationOutcome> listen(String session,
+      {required VoidCallback onTranscribing, bool requireSpeech = false}) {
     log.add('listen:$session');
+    this.requireSpeech.add(requireSpeech);
     this.onTranscribing = onTranscribing;
     return (listening = Completer<DictationOutcome>()).future;
   }
@@ -66,9 +73,12 @@ class FakePorts implements CarPorts {
   @override
   Future<void> discard(String takeId) async => discarded.add(takeId);
 
+  @override
+  void releaseDictation() => log.add('release');
+
   Future<bool> _talk(String what) {
     spoken.add(what);
-    if (autoSpeak) return Future<bool>.value(true);
+    if (autoSpeak) return Future<bool>.value(speakOk);
     return (speaking = Completer<bool>()).future;
   }
 
@@ -103,8 +113,9 @@ class FakePorts implements CarPorts {
   Future<void> saveDraft(String session, String text) async => drafts.add((session, text));
 
   @override
-  Future<String?> answer(String session, String optionKey) async {
+  Future<String?> answer(String session, String optionKey, {String? pane, required String promptSig}) async {
     answers.add((session, optionKey));
+    answerBindings.add((pane, promptSig));
     return answerError;
   }
 
@@ -424,5 +435,258 @@ void main() {
     test('describeOptions', () {
       expect(describeOptions(three), startsWith('Opción uno: sí. Opción dos: Yes, and'));
     });
+  });
+
+  // ---- Safety (review findings) ------------------------------------------------
+
+  const AskPrompt three = AskPrompt(question: '¿Ejecutar rm?', options: <AskOption>[
+    AskOption(key: '1', label: 'Yes'),
+    AskOption(key: '2', label: "Yes, and don't ask again"),
+    AskOption(key: '3', label: 'No, and tell Claude what to do differently'),
+  ]);
+  const AskPrompt other = AskPrompt(question: '¿Borrar la base?', options: <AskOption>[
+    AskOption(key: '1', label: 'Yes'),
+    AskOption(key: '2', label: 'No'),
+  ]);
+
+  /// Prompt shown and read aloud, then Hablar.
+  Future<void> promptThenTalk(AskPrompt p, {String? pane}) async {
+    m.updateCurrent(working: false, ask: p, pane: pane);
+    await flush();
+    unawaited(m.talk());
+    await flush();
+    expect(m.phase, CarPhase.listening);
+  }
+
+  test('1: "No, espera una cosa" and "dame un segundo" answer nothing', () async {
+    await promptThenTalk(three);
+    ports.hear(const DictationText('No, espera una cosa'));
+    await flush();
+    expect(m.phase, isNot(CarPhase.choosing));
+    ports.hear(const DictationText('dame un segundo')); // the re-ask listens again
+    await flush();
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.answers, isEmpty);
+    expect(ports.spoken.where((String x) => x.startsWith('No entendí')), hasLength(2));
+  });
+
+  test('2: no read-back heard → no countdown, nothing sent until a tap', () async {
+    ports.speakOk = false; // TTS failed (429, no network, focus lost)
+    await speakAndSend('borra la rama');
+    expect(m.phase, CarPhase.confirming);
+    expect(m.needsTap, isTrue);
+    expect(clock.pending, 0, reason: 'no timer armed');
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.sent, isEmpty);
+    expect(m.status, 'Toca Enviar o Cancelar');
+    await m.sendNow(); // the tap
+    expect(ports.sent.single.$3, 'borra la rama');
+  });
+
+  test('2: Callar during the read-back also waits for a tap', () async {
+    ports.autoSpeak = false;
+    unawaited(m.talk());
+    await flush();
+    ports.hear(const DictationText('hola'));
+    await flush();
+    expect(ports.spoken.last, 'Envío: hola');
+    m.hush();
+    await flush();
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.sent, isEmpty);
+    expect(m.phase, CarPhase.confirming);
+    expect(m.needsTap, isTrue);
+  });
+
+  test('2: an option whose read-back failed waits for Confirmar', () async {
+    await promptThenTalk(three);
+    ports.speakOk = false;
+    ports.hear(const DictationText('opción tres'));
+    await flush();
+    expect(m.phase, CarPhase.choosing);
+    expect(m.needsTap, isTrue);
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.answers, isEmpty);
+    await m.confirmChoice();
+    expect(ports.answers, <(String, String)>[('s1', '3')]);
+  });
+
+  test('3: a prompt replaced during the countdown is not answered; the new one is read', () async {
+    await promptThenTalk(three, pane: '%1');
+    ports.hear(const DictationText('uno'));
+    await flush();
+    expect(m.phase, CarPhase.choosing);
+    m.updateCurrent(working: false, ask: other, pane: '%1');
+    await flush();
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.answers, isEmpty);
+    expect(m.phase, isNot(CarPhase.choosing));
+    expect(ports.spoken, contains('¿Borrar la base? Opción uno: sí. Opción dos: no.'));
+  });
+
+  test('3: a pane change during the countdown cancels the choice', () async {
+    await promptThenTalk(three, pane: '%1');
+    ports.hear(const DictationText('uno'));
+    await flush();
+    m.updateCurrent(working: false, ask: three, pane: '%2');
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.answers, isEmpty);
+  });
+
+  test('3: the answer carries the prompt and pane it was chosen for', () async {
+    await promptThenTalk(three, pane: '%4');
+    ports.hear(const DictationText('la tercera'));
+    await flush();
+    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.answers, <(String, String)>[('s1', '3')]);
+    expect(ports.answerBindings.single, ('%4', three.signature));
+  });
+
+  test('3: no automatic session switch while listening, confirming or answering', () async {
+    unawaited(m.talk());
+    await flush();
+    m.updateSessions(<CarSession>[s('s2', SessionState.work)]); // s1 missing from one snapshot
+    expect(m.currentId, 's1');
+    ports.hear(const DictationText('para s1'));
+    await flush();
+    m.updateSessions(<CarSession>[s('s2', SessionState.work)]);
+    expect(m.currentId, 's1');
+    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.sent.single.$1, 's1');
+    // Idle again: now it may move on.
+    m.updateSessions(<CarSession>[s('s2', SessionState.work)]);
+    expect(m.currentId, 's2');
+  });
+
+  test('4: speech before the prompt appeared is never an answer (nor a message)', () async {
+    unawaited(m.talk());
+    await flush();
+    m.updateCurrent(working: false, ask: three); // the prompt appears while listening
+    await flush();
+    ports.hear(const DictationText('No, primero revisa los logs'));
+    await flush();
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.answers, isEmpty);
+    expect(ports.sent, isEmpty);
+    expect(ports.drafts, <(String, String)>[('s1', 'No, primero revisa los logs')]);
+    expect(ports.spoken, contains('¿Ejecutar rm? ${describeOptions(three.options)}'));
+  });
+
+  test('4: a prompt on screen but not read to the end is not answered by speech', () async {
+    ports.autoSpeak = false;
+    m.updateCurrent(working: false, ask: three);
+    await flush();
+    m.hush(); // cut the reading
+    ports.autoSpeak = true;
+    unawaited(m.talk());
+    await flush();
+    ports.hear(const DictationText('uno'));
+    await flush();
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.answers, isEmpty);
+    expect(ports.sent, isEmpty, reason: 'a prompt is open: never a normal message either');
+    expect(ports.drafts.single.$2, 'uno');
+  });
+
+  test('15c: a prompt appearing during the send countdown keeps the text as a draft', () async {
+    await speakAndSend('despliega');
+    expect(m.phase, CarPhase.confirming);
+    m.updateCurrent(working: false, ask: three);
+    await flush();
+    await clock.elapse(const Duration(seconds: 10));
+    expect(ports.sent, isEmpty);
+    expect(ports.drafts, <(String, String)>[('s1', 'despliega')]);
+    expect(ports.spoken, contains('Hay un permiso abierto. Tu mensaje quedó como borrador.'));
+  });
+
+  test('5: messages go to the pane the chat reads', () async {
+    m.updateCurrent(working: false, pane: '%7');
+    await speakAndSend('hola');
+    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.sent.single.$2, '%7');
+  });
+
+  test('7: a queue blocked by an earlier message is reported as such', () async {
+    ports.sendResult = const SendOutcome(SendKind.blocked);
+    await speakAndSend('hola');
+    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.spoken.last, 'Hay un mensaje anterior sin resolver. Ábrelo en el chat.');
+    expect(m.notice, isNot(contains('Sin conexión')));
+  });
+
+  test('8: in the background nothing speaks, listens or counts down; back, it resumes', () async {
+    ports.autoSpeak = false;
+    m.replyCompleted(const ReplyRef('r1', 'Larga'));
+    await flush();
+    expect(m.phase, CarPhase.reading);
+    m.setForeground(false);
+    expect(ports.log, contains('stopSpeaking'));
+    expect(m.phase, CarPhase.idle);
+    final int spokenBefore = ports.spoken.length;
+    m.replyCompleted(const ReplyRef('r2', 'Otra'));
+    m.updateCurrent(working: false, ask: three);
+    await flush();
+    expect(ports.spoken.length, spokenBefore, reason: 'silent while hidden');
+    await m.talk();
+    expect(ports.listening, isNull, reason: 'no listening while hidden');
+    m.setForeground(true);
+    await flush();
+    expect(ports.spoken.last, 'REPLY:Otra');
+  });
+
+  test('8: hidden mid-dictation stops recording; the text waits for a tap', () async {
+    unawaited(m.talk());
+    await flush();
+    m.setForeground(false);
+    expect(ports.log, contains('stopListening'));
+    ports.hear(const DictationText('algo'));
+    await flush();
+    await clock.elapse(const Duration(seconds: 30));
+    expect(m.phase, CarPhase.confirming);
+    expect(m.needsTap, isTrue);
+    expect(ports.sent, isEmpty);
+  });
+
+  test('8: hidden during the countdown cancels it', () async {
+    await speakAndSend('algo');
+    m.setForeground(false);
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.sent, isEmpty);
+    expect(m.needsTap, isTrue);
+  });
+
+  test('9: spoken answers and re-asks release the dictation, never as a draft', () async {
+    await promptThenTalk(three);
+    ports.hear(const DictationText('pues no sé'));
+    await flush();
+    expect(ports.log.where((String x) => x == 'release'), hasLength(1));
+    ports.hear(const DictationText('opción tres'));
+    await flush();
+    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.log.where((String x) => x == 'release'), hasLength(2));
+    expect(ports.answers.single.$2, '3');
+    m.dispose();
+    expect(ports.drafts, isEmpty);
+  });
+
+  test('continuous: automatic rounds drop silence; two empty rounds stop the loop', () async {
+    ports.continuous = true;
+    m.replyCompleted(const ReplyRef('a', 'Uno.'));
+    await flush();
+    expect(ports.requireSpeech.last, isTrue);
+    ports.hear(const DictationNothing());
+    await flush();
+    m.replyCompleted(const ReplyRef('b', 'Dos.'));
+    await flush();
+    ports.hear(const DictationNothing());
+    await flush();
+    final int listens = ports.requireSpeech.length;
+    m.replyCompleted(const ReplyRef('c', 'Tres.'));
+    await flush();
+    expect(ports.spoken.last, 'REPLY:Tres.');
+    expect(ports.requireSpeech.length, listens, reason: 'loop stopped');
+    unawaited(m.talk()); // the button restarts it; a tap never drops silence
+    await flush();
+    expect(ports.requireSpeech.last, isFalse);
   });
 }

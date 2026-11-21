@@ -89,8 +89,19 @@ class LiveCarPorts implements CarPorts {
   }
 
   @override
-  Future<DictationOutcome> listen(String session, {required VoidCallback onTranscribing}) =>
-      _watch(session, () => _d.start(session), onTranscribing);
+  Future<DictationOutcome> listen(String session,
+      {required VoidCallback onTranscribing, bool requireSpeech = false}) async {
+    // A text still held here was neither sent nor released: keep it as a
+    // draft before a new dictation takes over (its recording is then let
+    // go, never orphaned).
+    final String? owner = _sinkOwner;
+    final String? held = _held;
+    if (owner != null && held != null && _release != null) await saveDraft(owner, held);
+    return _watch(session, () => _d.start(session, requireSpeech: requireSpeech), onTranscribing);
+  }
+
+  @override
+  void releaseDictation() => _releaseHeld();
 
   @override
   void stopListening() => unawaited(_d.stop());
@@ -121,12 +132,15 @@ class LiveCarPorts implements CarPorts {
   @override
   Future<SendOutcome> send(String session, String? pane, String text) async {
     final OutboxItem item;
+    // The pane whose replies are being read: the chat's, when it is open
+    // for this session (the feed's pane may be another one).
+    final ChatController? chat = _chat()?.session == session ? _chat() : null;
     try {
       item = await _outbox.enqueue(
         session: session,
-        pane: pane,
+        pane: chat?.pane ?? pane,
         text: text,
-        transcriptBaseline: _chat()?.session == session ? _chat()?.baselineFor(text) : null,
+        transcriptBaseline: chat?.baselineFor(text),
       );
     } on OutboxRejection catch (e) {
       await saveDraft(session, text);
@@ -140,8 +154,21 @@ class LiveCarPorts implements CarPorts {
     return _delivery(item.id);
   }
 
-  /// Waits a few seconds to tell "Enviado" from "se enviará al volver la red".
+  /// An earlier message of the item's session that waits for the person
+  /// (failed, uncertain, being edited): the item cannot go out on its own.
+  bool _blockedByEarlier(OutboxItem item) {
+    for (final OutboxItem i in _outbox.itemsFor(item.session)) {
+      if (i.id == item.id) return false;
+      if (i.needsHuman) return true;
+    }
+    return false;
+  }
+
+  /// Waits a few seconds to tell "Enviado" from "se enviará al volver la
+  /// red", and says so when the message is stuck behind an earlier one.
   Future<SendOutcome> _delivery(String id) async {
+    final OutboxItem? first = _outbox.byId(id);
+    if (first != null && _blockedByEarlier(first)) return const SendOutcome(SendKind.blocked);
     if (_connectivity?.online.value == false) return const SendOutcome(SendKind.queuedOffline);
     final Completer<SendOutcome> done = Completer<SendOutcome>();
     void check() {
@@ -151,6 +178,10 @@ class LiveCarPorts implements CarPorts {
         done.complete(const SendOutcome(SendKind.delivered));
       } else if (i.needsHuman) {
         done.complete(SendOutcome(SendKind.failed, outboxFailureMessage(i.failCode)));
+      } else if (_blockedByEarlier(i)) {
+        done.complete(const SendOutcome(SendKind.blocked));
+      } else if (i.waitCode == WaitCode.promptOpen) {
+        done.complete(const SendOutcome(SendKind.waitingPrompt));
       } else if (i.state == OutboxState.queued && i.lastError != null) {
         done.complete(SendOutcome(SendKind.queuedOffline, i.lastError!));
       }
@@ -186,9 +217,12 @@ class LiveCarPorts implements CarPorts {
   }
 
   @override
-  Future<String?> answer(String session, String optionKey) async {
+  Future<String?> answer(String session, String optionKey, {String? pane, required String promptSig}) async {
     final ChatController? c = _chat();
-    if (c == null || c.session != session) return 'La sesión cambió; vuelve a intentarlo.';
+    if (c == null || c.session != session) return 'La sesión cambió; no respondí.';
+    if (c.ask?.signature != promptSig || (pane != null && c.pane != pane)) {
+      return 'La pregunta cambió; no respondí.';
+    }
     return c.answer(optionKey);
   }
 
