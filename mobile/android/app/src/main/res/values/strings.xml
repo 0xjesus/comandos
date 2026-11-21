@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ComandOS</string>
+    <string name="watch_title">ComandOS · atento a tus sesiones</string>
+    <string name="watch_text">Te aviso cuando un agente te espere, termine o falle.</string>
+    <string name="channel_attention">Te espera</string>
+    <string name="channel_attention_desc">Un agente necesita tu respuesta para seguir.</string>
+    <string name="channel_done">Terminó o falló</string>
+    <string name="channel_done_desc">Un agente terminó su turno o tuvo un error.</string>
+    <string name="channel_watch">Atento en segundo plano</string>
+    <string name="channel_watch_desc">Aviso fijo mientras ComandOS vigila tus sesiones.</string>
+    <string name="scan_hint">Apunta al código QR de «Remoto» en tu equipo</string>
+</resources>

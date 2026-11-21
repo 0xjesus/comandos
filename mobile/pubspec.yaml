@@ -1,0 +1,37 @@
+name: comandos_mobile
+description: "ComandOS for Android: sessions, chat and a never-lose-a-message outbox."
+publish_to: 'none'
+
+# versionName+versionCode for Android.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.3
+
+# Keep this list short: every plugin adds Java/Kotlin code, sometimes native
+# libraries, to the APK. Notifications, the keep-alive service and the QR
+# scanner are the app's own Kotlin code (android/app/src/main/kotlin).
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.6.0
+  flutter_secure_storage: ^11.2.0
+  path_provider: ^2.1.6
+  connectivity_plus: ^7.3.1
+  uuid: ^4.6.0
+  # Voice and car mode.
+  record: ^6.2.1
+  just_audio: ^0.10.6
+  # Audio focus (ducking while reading, pausing while recording).
+  audio_session: ^0.2.4
+  wakelock_plus: ^1.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

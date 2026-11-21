@@ -1,0 +1,133 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:comandos_mobile/core/api/api_client.dart';
+import 'package:comandos_mobile/core/config/credential_store.dart';
+import 'package:comandos_mobile/core/config/paired_server.dart';
+import 'package:comandos_mobile/core/connection.dart';
+import 'package:comandos_mobile/core/locator.dart';
+import 'package:comandos_mobile/core/outbox/drafts.dart';
+import 'package:comandos_mobile/core/outbox/message_transport.dart';
+import 'package:comandos_mobile/core/outbox/outbox.dart';
+import 'package:comandos_mobile/core/outbox/outbox_store.dart';
+import 'package:comandos_mobile/core/polling/app_visibility.dart';
+import 'package:comandos_mobile/features/car/car_mode_screen.dart';
+import 'package:comandos_mobile/features/voice/voice_services.dart';
+import 'package:comandos_mobile/ui/theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import '../voice/voice_fakes.dart';
+
+const PairedServer server = PairedServer(host: 'equipo.ejemplo.ts.net', token: 'TOKEN');
+
+http.Response _json(Object body) => http.Response.bytes(utf8.encode(jsonEncode(body)), 200,
+    headers: <String, String>{'content-type': 'application/json; charset=utf-8'});
+
+class _NoTimer implements Timer {
+  @override
+  void cancel() {}
+  @override
+  bool get isActive => false;
+  @override
+  int get tick => 0;
+}
+
+void main() {
+  late Directory dir;
+
+  setUp(() async {
+    dir = await Directory.systemTemp.createTemp('car');
+    sl.reset();
+    final MockClient client = MockClient((http.Request r) async {
+      switch (r.url.path) {
+        case '/session-feed':
+          return _json(<String, Object?>{
+            'now': 1000.0,
+            'sessions': <Object?>[
+              <String, Object?>{'session': 's1', 'label': 'Pagos con un nombre bastante largo', 'state': 'work', 'ts': 990.0, 'pane': '%1'},
+              <String, Object?>{'session': 's2', 'label': 'Docs', 'state': 'idle', 'ts': 100.0},
+            ],
+          });
+        case '/chat/transcript':
+          return _json(<String, Object?>{
+            'ok': true, 'pane': '%1', 'token': 't1', 'age': 5,
+            'messages': <Object?>[
+              <String, Object?>{'r': 'u', 't': 'revisa'},
+              <String, Object?>{'r': 'a', 't': 'Revisé todo. ${'Texto largo de respuesta. ' * 30}'},
+            ],
+          });
+        case '/session-seen':
+          return http.Response('{"ok":true}', 200);
+      }
+      return http.Response('{}', 404);
+    });
+    final MemoryCredentialStore creds = MemoryCredentialStore()..value = server;
+    final Connection connection =
+        Connection(creds, apiFactory: (PairedServer s) => ComandosApi(s, client: client));
+    await connection.load();
+    final Outbox outbox = Outbox(
+      store: MemoryOutboxStore(),
+      transport: ApiMessageTransport(() => connection.api),
+      timer: (Duration d, void Function() cb) => _NoTimer(),
+    );
+    await outbox.load();
+    sl
+      ..register<AppVisibility>(AppVisibility())
+      ..register<Connection>(connection)
+      ..register<Outbox>(outbox)
+      ..register<DraftStore>(DraftStore('${dir.path}/drafts.json'));
+  });
+
+  tearDown(() async {
+    sl.reset();
+    VoiceServices.instance = null;
+    await dir.delete(recursive: true);
+  });
+
+  Future<void> pumpCar(WidgetTester tester, Size size, {String? key = 'sk-test-0000000000000000000000abcd'}) async {
+    VoiceServices.instance = testVoiceServices(dir: dir.path, key: key);
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: const CarModeScreen(session: 's1')));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 80)));
+    await tester.pump();
+    await tester.pump();
+  }
+
+  Future<void> leave(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 40)); // the idle player release timer (30 s)
+  }
+
+  testWidgets('portrait: huge controls, session, status, no overflow', (WidgetTester tester) async {
+    await pumpCar(tester, const Size(400, 820));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Hablar'), findsOneWidget);
+    expect(find.text('Callar'), findsOneWidget);
+    expect(find.text('Detener'), findsOneWidget);
+    expect(find.text('Pagos con un nombre bastante largo'), findsOneWidget);
+    expect(find.text('Trabajando…'), findsOneWidget);
+    expect(tester.getSize(find.ancestor(of: find.text('Hablar'), matching: find.byType(SizedBox)).first).height,
+        greaterThanOrEqualTo(96));
+    await leave(tester);
+  });
+
+  testWidgets('landscape fits too', (WidgetTester tester) async {
+    await pumpCar(tester, const Size(820, 380));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Hablar'), findsOneWidget);
+    await leave(tester);
+  });
+
+  testWidgets('without a key it leads to the voice settings', (WidgetTester tester) async {
+    await pumpCar(tester, const Size(400, 820), key: null);
+    expect(find.text('Configurar la voz'), findsOneWidget);
+    expect(find.text('Hablar'), findsNothing);
+    await leave(tester);
+  });
+}

@@ -1,0 +1,220 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import '../../core/api/api_client.dart';
+import '../../core/api/api_errors.dart';
+import '../../core/connection.dart';
+import '../../core/models/ask_prompt.dart';
+import '../../core/models/transcript.dart';
+import '../../core/outbox/message_transport.dart';
+import '../../core/outbox/outbox.dart';
+import '../../core/polling/poller.dart';
+import 'transcript_merge.dart';
+
+/// State of one open chat. Polls `POST /chat/transcript` every 2 s while
+/// visible, merges the window into a bounded local list, and feeds the
+/// outbox the user messages it sees (to settle delivered/uncertain bubbles).
+///
+/// Message layout for the scroll view: [messages] is split at [split].
+/// Entries before it render above the scroll anchor (they never move when
+/// new ones arrive), entries from it on render below.
+class ChatController extends ChangeNotifier {
+  ChatController({
+    required this.session,
+    String? pane,
+    required Connection connection,
+    required Outbox outbox,
+  })  : _pane = pane,
+        _connection = connection,
+        _outbox = outbox {
+    _poller = Poller(interval: interval, task: _tick);
+  }
+
+  static const Duration interval = Duration(seconds: 2);
+
+  /// Max messages kept in memory for one chat.
+  static const int cap = 300;
+
+  /// "Working" while the transcript changed this recently and the last
+  /// message is not the assistant's (same rule as the web client).
+  static const int workingAgeSec = 90;
+
+  final String session;
+  final Connection _connection;
+  final Outbox _outbox;
+  late final Poller _poller;
+
+  String? _pane;
+  String _token = '';
+  List<ChatMessage> _messages = const <ChatMessage>[];
+  List<ChatMessage> _window = const <ChatMessage>[];
+  int _split = 0;
+  int? _age;
+  int _ageAtMs = 0;
+  AskPrompt? _ask;
+  String? _agent;
+  bool _loaded = false;
+  bool _gone = false;
+  ApiException? _error;
+  int _errors = 0;
+  bool _visible = false;
+  bool _seenSent = false;
+  bool _lastWorking = false;
+
+  /// Bumps when the message list changed (for stick-to-bottom logic).
+  final ValueNotifier<int> listVersion = ValueNotifier<int>(0);
+
+  String? get pane => _pane;
+  List<ChatMessage> get messages => _messages;
+  int get split => _split;
+  AskPrompt? get ask => _ask;
+  String? get agent => _agent;
+  bool get loaded => _loaded;
+
+  /// The session no longer exists on the desktop.
+  bool get gone => _gone;
+  ApiException? get error => _error;
+
+  bool get working {
+    final int? age = _age;
+    if (age == null) return false;
+    final int elapsed = ((DateTime.now().millisecondsSinceEpoch - _ageAtMs) / 1000).floor();
+    if (age + elapsed >= workingAgeSec) return false;
+    return _messages.isNotEmpty && _messages.last.role != ChatRole.assistant;
+  }
+
+  /// How many user messages equal [text] in the server's current window.
+  /// Passed to the outbox at enqueue time.
+  int? baselineFor(String text) => _loaded ? countMatchingUserMessages(_window, text) : null;
+
+  void setVisible(bool visible) {
+    if (_visible == visible) return;
+    _visible = visible;
+    if (visible && !_gone) {
+      _poller.start();
+    } else {
+      _poller.stop();
+    }
+  }
+
+  /// Fetch right now (after sending, after answering a prompt).
+  void poke() => _poller.poke();
+
+  Future<Duration?> _tick() async {
+    final ComandosApi? api = _connection.api;
+    if (api == null) return const Duration(seconds: 10);
+    if (!_seenSent) {
+      _seenSent = true;
+      unawaited(api.sessionSeen(session).catchError((Object _) {}));
+    }
+    try {
+      final TranscriptResponse r = await api.transcript(session: session, pane: _pane, since: _token);
+      _errors = 0;
+      final bool hadError = _error != null;
+      _error = null;
+      _apply(r, force: hadError);
+      return null;
+    } on BusyException {
+      // "Chat busy" (429): at most 2 transcripts run at once on the desktop.
+      return const Duration(seconds: 3);
+    } on NotFoundException {
+      _gone = true;
+      _error = const NotFoundException(message: 'Esta sesión ya no existe en tu equipo.');
+      _poller.stop();
+      notifyListeners();
+      return null;
+    } on ApiException catch (e) {
+      _errors++;
+      _error = e;
+      if (e is UnauthorizedException) _connection.tokenRejected.value = true;
+      notifyListeners();
+      return errorBackoff(_errors, base: interval);
+    } catch (_) {
+      _errors++;
+      _error = const BadResponseException();
+      notifyListeners();
+      return errorBackoff(_errors, base: interval);
+    }
+  }
+
+  void _apply(TranscriptResponse r, {bool force = false}) {
+    bool notify = force || !_loaded;
+    _loaded = true;
+    if (r.pane != null && r.pane != _pane) {
+      _pane = r.pane;
+      notify = true;
+    }
+    if (r.age != null) {
+      _age = r.age;
+      _ageAtMs = DateTime.now().millisecondsSinceEpoch;
+    }
+    final String? oldAsk = _ask?.signature;
+    _ask = r.ask;
+    if (oldAsk != _ask?.signature) notify = true;
+    if (r.agent != null) _agent = r.agent;
+    _token = r.token;
+
+    // An empty answer without an agent while we already show messages is a
+    // transient gap (agent restarting, transcript rotating): keep the chat
+    // instead of blanking it until the next poll.
+    final bool transientGap = r.messages.isEmpty && r.agent == null && _messages.isNotEmpty;
+    if (!r.unchanged && !transientGap) {
+      _window = r.messages;
+      final MergeOutcome m = mergeTranscript(_messages, r.messages, cap: cap);
+      if (m.changed) {
+        _messages = m.messages;
+        _split = m.reset ? _messages.length : (_split - m.dropped).clamp(0, _messages.length);
+        listVersion.value++;
+        notify = true;
+      }
+      _outbox.observeTranscript(session, <String>[
+        for (final ChatMessage msg in _window)
+          if (msg.role == ChatRole.user) msg.text,
+      ]);
+    }
+    if (working != _lastWorking) {
+      _lastWorking = working;
+      notify = true;
+    }
+    if (notify) notifyListeners();
+  }
+
+  /// Answers the permission menu: digit, then Enter 250 ms later.
+  Future<String?> answer(String option) async {
+    final ComandosApi? api = _connection.api;
+    if (api == null) return 'Sin vincular.';
+    try {
+      await api.answerAsk(session: session, pane: _pane, option: option);
+      _ask = null;
+      notifyListeners();
+      poke();
+      return null;
+    } on ApiException catch (e) {
+      return e.userMessage;
+    }
+  }
+
+  /// Interrupts the agent (Escape).
+  Future<String?> interrupt() async {
+    final ComandosApi? api = _connection.api;
+    if (api == null) return 'Sin vincular.';
+    try {
+      await api.key(session: session, pane: _pane, key: 'Escape');
+      poke();
+      return null;
+    } on ApiException catch (e) {
+      return e.userMessage;
+    }
+  }
+
+  @override
+  void dispose() {
+    _poller.stop();
+    listVersion.dispose();
+    // Drop the cache of a closed chat right away.
+    _messages = const <ChatMessage>[];
+    _window = const <ChatMessage>[];
+    super.dispose();
+  }
+}
