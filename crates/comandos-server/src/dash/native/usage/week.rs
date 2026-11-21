@@ -252,3 +252,84 @@ fn build(input: &WeekInput<'_>) -> Answer {
     let result = analytics_week::build_week(input).map_err(|_| failure())?;
     Reply::json(StatusCode::OK, &result).map_err(|_| Fault::Decline)
 }
+
+/// GET `/usage/board`: el tablero de Ajustes › Consumos (proyectos → sesiones
+/// y la semana de cada cuenta). Ruta solo nativa: sin carril de uso responde
+/// 503 en vez de declinar a un heredado que no la tiene.
+pub async fn board(native: &Native) -> Answer {
+    use comandos_core::usage_board::{self, BoardInput, DAYS};
+    if !native.usage.enabled() {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "Consumos no disponible");
+    }
+    let now = (native.options().clock)() as f64 / 1000.0;
+    // 14 días de la tabla; la semana de cada cuenta cabe dentro.
+    let since = now - (DAYS as f64 + 1.0) * 86400.0;
+    let sidebar_since = match analytics_week::sidebar_since(now, 0, analytics_week::TZ) {
+        Ok(at) => at.max(now - LOOKBACK_S),
+        Err(_) => return Err(failure()),
+    };
+    let read = native
+        .usage
+        .with(move |u| {
+            let mut rows = WeekRows::new(now);
+            usage_read::each_week_row(&u.conn, sidebar_since, true, |kind, row| match kind {
+                WeekRow::Turn => rows.push_turn(row),
+                WeekRow::Span => rows.push_span(row),
+            })?;
+            let (turns, spans) = usage_read::board_rows(&u.conn, since)?;
+            // Ventanas que aún no reinician: su última lectura guardada.
+            let stored = usage_read::quota_snapshots(&u.conn, now as i64)?;
+            Ok::<_, ReadError>((rows, turns, spans, stored))
+        })
+        .await?;
+    let (rows, turns, spans, stored) = read.map_err(read_fault)?;
+    let _ = native.limits.get(&native.refresh_deps());
+    let mut limits: Vec<Value> = native
+        .limits
+        .current()
+        .rows
+        .into_iter()
+        .map(Value::Object)
+        .collect();
+    // Si el proveedor no contesta (p. ej. 429 tras un reinicio), la cuenta
+    // conserva su última lectura en vez de desaparecer del tablero.
+    let key = |row: &Value| {
+        let get = |k: &str| row.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let account = match get("account").as_str() {
+            "" | "unknown" => "main".to_owned(),
+            other => other.to_owned(),
+        };
+        (get("provider"), account, get("window"), get("scope"))
+    };
+    let live: std::collections::HashSet<_> = limits.iter().map(key).collect();
+    for mut row in stored {
+        if !live.contains(&key(&row))
+            && let Some(map) = row.as_object_mut()
+        {
+            map.insert("stale".into(), Value::Bool(true));
+            limits.push(row);
+        }
+    }
+    tokio::task::spawn_blocking(move || {
+        let accounts = analytics_week::sidebar_week(&WeekInput {
+            now,
+            offset: 0,
+            limits: &limits,
+            rows: &rows,
+            snapshots: &[],
+            records: &[],
+            tz_name: analytics_week::TZ,
+        })
+        .map_err(|_| failure())?;
+        let board = usage_board::build(&BoardInput {
+            now,
+            limits: &limits,
+            accounts: &accounts,
+            turns: &turns,
+            spans: &spans,
+        });
+        read_reply(&board)
+    })
+    .await
+    .map_err(|_| failure())?
+}

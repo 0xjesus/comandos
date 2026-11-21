@@ -604,3 +604,32 @@ async fn sidebar_timing_against_the_full_week() {
     );
     native.shutdown().await;
 }
+
+/// GET `/usage/board`: proyectos de los turnos sembrados, solo JSON nativo.
+#[tokio::test]
+async fn usage_board_lists_projects_from_the_turns() {
+    let home = TestHome::new("usage-board");
+    let now = NOW_MS / 1000;
+    seed_many_turns(&home, now, 400);
+    let mut opts = home.options();
+    opts.clock = Arc::new(|| NOW_MS);
+    let native = Arc::new(Native::new(opts));
+    let board = reply_json(
+        native
+            .dispatch(
+                NativeRoute::Usage(UsageRoute::Board),
+                &week_request("/usage/board"),
+            )
+            .await
+            .unwrap(),
+        "board",
+    );
+    let projects = board["projects"].as_array().unwrap();
+    assert!(!projects.is_empty(), "{board}");
+    for p in projects {
+        assert!(p["newTokens"].as_i64().unwrap() >= 0);
+        assert_eq!(p["spark"].as_array().unwrap().len(), 14);
+    }
+    assert_eq!(board["days"].as_array().unwrap().len(), 14);
+    native.shutdown().await;
+}

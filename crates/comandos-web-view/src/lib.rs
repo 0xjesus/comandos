@@ -47,3 +47,4 @@ pub mod index_page;
 
 pub mod theme_preferences;
 pub mod user_themes;
+pub mod usage_board;

@@ -132,22 +132,28 @@
     <span data-icon="close"></span>
   </button>
   <nav class="mtabs" role="tablist">
-    <button class="mtab active" data-mtab="appearance"><span data-icon="sparkles" data-size="13"></span> Apariencia</button>
-    <button class="mtab" data-mtab="notif"><span data-icon="bell" data-size="13"></span> Notificaciones</button>
+    <button class="mtab active" data-mtab="usage"><span data-icon="timer" data-size="13"></span> Consumos</button>
+    <button class="mtab" data-mtab="appearance"><span data-icon="sparkles" data-size="13"></span> Temas</button>
     <button class="mtab" data-mtab="term"><span data-icon="terminal" data-size="13"></span> Terminal</button>
-    <button class="mtab" data-mtab="dash"><span data-icon="layers" data-size="13"></span> Tablero</button>
+    <button class="mtab" data-mtab="notif"><span data-icon="bell" data-size="13"></span> Avisos</button>
+    <button class="mtab" data-mtab="dash"><span data-icon="settings" data-size="13"></span> General</button>
   </nav>
 
-  <div class="mtab-pane active" data-mpane="appearance">
+  <!-- ========= Consumos ========= -->
+  <div class="mtab-pane active" data-mpane="usage">
+    <div id="usage-board" class="usage-board" aria-live="polite"><div class="desc">Cargando consumos…</div></div>
+  </div>
+
+  <!-- ========= Temas ========= -->
+  <div class="mtab-pane" data-mpane="appearance">
     <div class="set"><label>Elige una atmósfera</label><div class="desc">Clic en un tema para aplicarlo y editar sus colores, su acabado y sus botones. Dashboard, terminal, chrome y avisos usan la misma identidad.</div></div>
     <div id="theme-gallery" class="theme-gallery" role="radiogroup" aria-label="Temas"></div>
   </div>
 
-  <!-- ========= Notificaciones + Idioma ========= -->
+  <!-- ========= Avisos ========= -->
   <div class="mtab-pane" data-mpane="notif">
     <div class="set"><label for="vol">Volumen (voz y chime)</label>
       <input type="range" id="vol" class="solid" min="0" max="100" value="60"></div>
-    <div class="set switch"><label>Worktrees automáticos (repo ocupado → sesión aislada)</label><button class="cfg" data-key="AUTO_WORKTREE" role="switch"></button></div>
     <div class="set switch"><label>Avisar al terminar</label><button class="cfg" data-key="NOTIFY_ON_DONE" role="switch"></button></div>
     <div class="set switch"><label>Avisar al pedir atencion</label><button class="cfg" data-key="NOTIFY_ON_ATTENTION" role="switch"></button></div>
     <div class="set switch"><label>Voz (anuncia el proyecto)</label><button id="sw-voice" role="switch"></button></div>
@@ -178,13 +184,8 @@
         <button class="test" id="push-disable" type="button" hidden>Desactivar</button>
       </div>
       <div class="desc">Solo llegan si ningún CommandOS está visible desde hace 2 minutos. Con la pantalla bloqueada se ve el proyecto y un título breve; el detalle, al abrir la app. El sonido lo decide Android.</div></div>
-
-    <h3 style="margin-top:24px">Idioma / Language</h3>
-    <div class="set" style="display:flex;gap:8px">
-      <button class="test lang-btn" data-lang="auto">Auto</button>
-      <button class="test lang-btn" data-lang="es">Español</button>
-      <button class="test lang-btn" data-lang="en">English</button>
-    </div>
+    <div class="set switch"><label>Notificaciones del navegador</label>
+      <button id="sw-notif" role="switch"></button></div>
   </div>
 
   <!-- ========= Terminal ========= -->
@@ -233,18 +234,23 @@
       <label for="pf-opacity">Opacidad del fondo: <span id="pf-opacity-v">100</span>%</label>
       <input type="range" id="pf-opacity" class="solid" min="30" max="100" value="100">
     </div>
-    <div class="desc" style="margin-top:-4px">Cambios se aplican al abrir una pestaña nueva. Reabre las existentes para verlos.</div>
+    <div class="desc" style="margin-top:-4px">Valen para todos los temas. En la app se ven al momento; en el navegador, al abrir una pestaña nueva.</div>
   </div>
 
-  <!-- ========= Tablero ========= -->
+  <!-- ========= General ========= -->
   <div class="mtab-pane" data-mpane="dash">
-  <div class="set switch"><label>Notificaciones del navegador</label>
-    <button id="sw-notif" role="switch"></button></div>
+  <h3>Idioma / Language</h3>
+  <div class="set" style="display:flex;gap:8px">
+    <button class="test lang-btn" data-lang="auto">Auto</button>
+    <button class="test lang-btn" data-lang="es">Español</button>
+    <button class="test lang-btn" data-lang="en">English</button>
+  </div>
+  <div class="set switch"><label>Worktrees automáticos (repo ocupado → sesión aislada)</label><button class="cfg" data-key="AUTO_WORKTREE" role="switch"></button></div>
   <div class="set">
     <label for="poll">Refresco: <span id="poll-v">2</span> s</label>
     <input type="range" id="poll" class="solid" min="1" max="10" value="2">
   </div>
-  </div><!-- /mtab-pane dash -->
+  </div><!-- /mtab-pane general -->
  </div><!-- /modal-panel -->
 </div><!-- /#settings -->
 

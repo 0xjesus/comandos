@@ -200,7 +200,10 @@ impl App {
         let ticket = scope.ticket();
         let view = page.view.clone();
         let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        {
+        // The centre panels (Settings, Remote, Servers, Sovereignty) bring
+        // their own close button and title: a second bar with another X made
+        // them look like a page inside a page. Esc still closes the window.
+        if !center {
             container.style_context().add_class("mosaic-zoom");
             let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             head.style_context().add_class("mosaic-head");

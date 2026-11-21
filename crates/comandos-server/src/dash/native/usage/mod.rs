@@ -27,6 +27,7 @@ pub enum UsageRoute {
     OptimizationPlans,
     Accounts,
     State,
+    Board,
 }
 
 pub const ROUTES: &[Entry] = &[
@@ -65,6 +66,11 @@ pub const ROUTES: &[Entry] = &[
         key: Key::Path("/usage/state"),
         route: NativeRoute::Usage(UsageRoute::State),
     },
+    Entry {
+        verb: Verb::Get,
+        key: Key::Path("/usage/board"),
+        route: NativeRoute::Usage(UsageRoute::Board),
+    },
 ];
 
 pub async fn answer(native: &Arc<Native>, route: UsageRoute, request: &Request) -> Answer {
@@ -76,6 +82,7 @@ pub async fn answer(native: &Arc<Native>, route: UsageRoute, request: &Request) 
         UsageRoute::Providers => providers::answer_providers(native).await,
         UsageRoute::OptimizationPlans => providers::answer_plans(native).await,
         UsageRoute::Accounts => providers::answer_accounts(native, request).await,
+        UsageRoute::Board => week::board(native).await,
     }
 }
 

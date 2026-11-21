@@ -80,6 +80,7 @@ pub mod components {
     pub(crate) mod session_feed;
     pub mod theme_preferences;
     pub mod ui_sounds;
+    pub mod usage_board_web;
     #[cfg(target_arch = "wasm32")]
     pub(crate) mod web_support;
     pub mod work_marks;

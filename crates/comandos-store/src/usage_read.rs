@@ -419,6 +419,67 @@ fn keyed_each(
 }
 
 /// `quota_snapshots` (cc_usage.py:2036).
+/// Turnos y tramos desde `since` para el tablero de Consumos, con los tokens
+/// por clase (la caché leída aparte) y la sesión de cada turno.
+pub fn board_rows(
+    conn: &Connection,
+    since: f64,
+) -> Result<(
+    Vec<comandos_core::usage_board::Turn>,
+    Vec<comandos_core::usage_board::Span>,
+)> {
+    use comandos_core::usage_board::{Span, Turn};
+    fn text(row: &Row<'_>, i: usize) -> rusqlite::Result<String> {
+        Ok(row.get::<_, Option<String>>(i)?.unwrap_or_default())
+    }
+    fn num(row: &Row<'_>, i: usize) -> rusqlite::Result<f64> {
+        Ok(match row.get_ref(i)? {
+            ValueRef::Integer(n) => n as f64,
+            ValueRef::Real(f) => f,
+            _ => 0.0,
+        })
+    }
+    let mut turns = Vec::new();
+    let mut stmt = conn.prepare(
+        "select provider, harness_account, git_root, pane_pwd, tmux_session, turn_finished_at, \
+         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model \
+         from usage_turns where turn_finished_at >= ?",
+    )?;
+    let mut cursor = stmt.query(params![since])?;
+    while let Some(row) = cursor.next()? {
+        turns.push(Turn {
+            provider: text(row, 0)?,
+            account: text(row, 1)?,
+            git_root: text(row, 2)?,
+            pane_pwd: text(row, 3)?,
+            session: text(row, 4)?,
+            at: num(row, 5)?,
+            input: num(row, 6)? as i64,
+            output: num(row, 7)? as i64,
+            cache_read: num(row, 8)? as i64,
+            cache_write: num(row, 9)? as i64,
+            model: text(row, 10)?,
+        });
+    }
+    let mut spans = Vec::new();
+    let mut stmt = conn.prepare(
+        "select provider, account, git_root, session_id, started_at, finished_at \
+         from usage_spans where finished_at >= ?",
+    )?;
+    let mut cursor = stmt.query(params![since])?;
+    while let Some(row) = cursor.next()? {
+        spans.push(Span {
+            provider: text(row, 0)?,
+            account: text(row, 1)?,
+            git_root: text(row, 2)?,
+            session: text(row, 3)?,
+            started: num(row, 4)?,
+            finished: num(row, 5)?,
+        });
+    }
+    Ok((turns, spans))
+}
+
 pub fn quota_snapshots(conn: &Connection, since: i64) -> Result<Vec<Value>> {
     let mut stmt = conn.prepare(
         "select provider, account, win, scope, resets_at, percent from usage_quota_snapshots \

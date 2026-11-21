@@ -1097,6 +1097,8 @@ mod web {
         Ok(())
     }
     pub fn mount_tabs() -> Result<(), JsValue> {
+        // Ajustes › Consumos vive en las pestañas de Ajustes: se monta con ellas.
+        crate::components::usage_board_web::mount()?;
         publish("activateMtab", |a| {
             activate(a.get(0), a.get(1))?;
             Ok(JsValue::UNDEFINED)
@@ -1163,6 +1165,7 @@ mod web {
         Ok(())
     }
     pub fn attach_tabs() -> Result<(), JsValue> {
+        crate::components::usage_board_web::attach()?;
         wire_tabs(doc())
     }
     pub fn attach_ranges() -> Result<(), JsValue> {
