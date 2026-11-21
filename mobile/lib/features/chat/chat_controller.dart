@@ -13,19 +13,15 @@ import '../../core/polling/poller.dart';
 import 'transcript_merge.dart';
 
 /// State of one open chat. Polls `POST /chat/transcript` every 2 s while
-/// visible, merges the window into a bounded local list, and feeds the
-/// outbox the user messages it sees (to settle delivered/uncertain bubbles).
-///
-/// Message layout for the scroll view: [messages] is split at [split].
-/// Entries before it render above the scroll anchor (they never move when
-/// new ones arrive), entries from it on render below.
+/// visible, shows exactly the window the server answers (as the web page
+/// does), and feeds the outbox the user messages it sees (to settle
+/// delivered/uncertain bubbles).
 class ChatController extends ChangeNotifier {
   ChatController({
     required this.session,
     String? pane,
     required Connection connection,
     required Outbox outbox,
-    this.cap = 300,
   })  : _pane = pane,
         _connection = connection,
         _outbox = outbox {
@@ -34,9 +30,11 @@ class ChatController extends ChangeNotifier {
 
   static const Duration interval = Duration(seconds: 2);
 
-  /// Max messages kept in memory for one chat (the web view keeps only the
-  /// server's window of 80; car mode keeps more).
-  final int cap;
+  /// How many answers in a row may say «no agent here» before the chat
+  /// believes it (the agent restarting or its transcript rotating look the
+  /// same for a moment). After that it shows what the server says, as the
+  /// web does, instead of an old conversation that no longer moves.
+  static const int gapPolls = 2;
 
   /// "Working" while the transcript changed this recently and the last
   /// message is not the assistant's (same rule as the web client).
@@ -50,8 +48,7 @@ class ChatController extends ChangeNotifier {
   String? _pane;
   String _token = '';
   List<ChatMessage> _messages = const <ChatMessage>[];
-  List<ChatMessage> _window = const <ChatMessage>[];
-  int _split = 0;
+  int _gaps = 0;
   int? _age;
   int _ageAtMs = 0;
   AskPrompt? _ask;
@@ -71,8 +68,8 @@ class ChatController extends ChangeNotifier {
   final ValueNotifier<int> listVersion = ValueNotifier<int>(0);
 
   String? get pane => _pane;
+  /// The server's latest window (≤ 80 messages), oldest first.
   List<ChatMessage> get messages => _messages;
-  int get split => _split;
   AskPrompt? get ask => _ask;
   String? get agent => _agent;
   bool get loaded => _loaded;
@@ -94,7 +91,7 @@ class ChatController extends ChangeNotifier {
 
   /// How many user messages equal [text] in the server's current window.
   /// Passed to the outbox at enqueue time.
-  int? baselineFor(String text) => _loaded ? countMatchingUserMessages(_window, text) : null;
+  int? baselineFor(String text) => _loaded ? countMatchingUserMessages(_messages, text) : null;
 
   void setVisible(bool visible) {
     if (_visible == visible) return;
@@ -117,8 +114,7 @@ class ChatController extends ChangeNotifier {
     _pane = pane;
     _token = '';
     _messages = const <ChatMessage>[];
-    _window = const <ChatMessage>[];
-    _split = 0;
+    _gaps = 0;
     _loaded = false;
     _ask = null;
     _agent = null;
@@ -184,26 +180,32 @@ class ChatController extends ChangeNotifier {
     final String? oldAsk = _ask?.signature;
     _ask = r.ask;
     if (oldAsk != _ask?.signature) notify = true;
-    if (r.agent != null) _agent = r.agent;
     _token = r.token;
 
-    // An empty answer without an agent while we already show messages is a
-    // transient gap (agent restarting, transcript rotating): keep the chat
-    // instead of blanking it until the next poll.
-    final bool transientGap = r.messages.isEmpty && r.agent == null && _messages.isNotEmpty;
-    if (!r.unchanged && !transientGap) {
-      _window = r.messages;
-      final MergeOutcome m = mergeTranscript(_messages, r.messages, cap: cap);
-      if (m.changed) {
-        _messages = m.messages;
-        _split = m.reset ? _messages.length : (_split - m.dropped).clamp(0, _messages.length);
-        listVersion.value++;
-        notify = true;
+    if (!r.unchanged) {
+      // «No agent here» while a conversation shows: a short gap keeps the
+      // chat (agent restarting, transcript rotating); a lasting one is the
+      // truth, and the chat says so instead of staying on old messages.
+      final bool gap = r.agent == null && r.messages.isEmpty && _messages.isNotEmpty;
+      if (gap && _gaps < gapPolls) {
+        _gaps++;
+      } else {
+        _gaps = 0;
+        if (r.agent != _agent) {
+          _agent = r.agent;
+          notify = true;
+        }
+        final WindowUpdate w = adoptWindow(_messages, r.messages);
+        if (w.changed) {
+          _messages = w.messages;
+          listVersion.value++;
+          notify = true;
+        }
+        _outbox.observeTranscript(session, <String>[
+          for (final ChatMessage msg in _messages)
+            if (msg.role == ChatRole.user) msg.text,
+        ]);
       }
-      _outbox.observeTranscript(session, <String>[
-        for (final ChatMessage msg in _window)
-          if (msg.role == ChatRole.user) msg.text,
-      ]);
     }
     if (working != _lastWorking) {
       _lastWorking = working;
@@ -277,7 +279,6 @@ class ChatController extends ChangeNotifier {
     listVersion.dispose();
     // Drop the cache of a closed chat right away.
     _messages = const <ChatMessage>[];
-    _window = const <ChatMessage>[];
     super.dispose();
   }
 }

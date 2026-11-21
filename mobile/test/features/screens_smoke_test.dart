@@ -235,7 +235,7 @@ void main() {
     ));
     await until(() => find.text('Editar').evaluate().isNotEmpty);
     // At the bottom of the feed, where a new failed message shows.
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
+    await tester.drag(find.byKey(const ValueKey<String>('cv-feed')), const Offset(0, -3000));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Editar'));
     await until(() => outbox.editingFor('term-r1') != null);

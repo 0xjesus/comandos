@@ -1,82 +1,54 @@
 import '../../core/models/transcript.dart';
 
-/// Result of merging a fresh transcript window into what the chat shows.
-class MergeOutcome {
-  const MergeOutcome({
-    required this.messages,
-    required this.changed,
-    required this.reset,
-    required this.dropped,
-  });
+/// What the chat shows after a fresh answer of `POST /chat/transcript`.
+class WindowUpdate {
+  const WindowUpdate(this.messages, {required this.changed});
 
+  /// Exactly the server's window, in its order.
   final List<ChatMessage> messages;
 
-  /// Anything differs from before.
+  /// Anything differs from what was shown before.
   final bool changed;
-
-  /// No overlap was found: the list was replaced wholesale.
-  final bool reset;
-
-  /// How many messages were removed from the front (cap).
-  final int dropped;
 }
 
-/// True when [next] is [prev] grown in place (consecutive tool calls are
-/// merged into one entry that gains lines).
-bool _grewFrom(ChatMessage prev, ChatMessage next) {
-  if (prev.role != next.role) return false;
-  final String p = prev.text.endsWith('…') ? prev.text.substring(0, prev.text.length - 1) : prev.text;
-  return p.isNotEmpty && next.text.startsWith(p);
-}
-
-/// Merges [incoming] (the server's latest ≤80-message tail) into [current].
+/// Takes the server's latest window as the whole chat, like the web page does
+/// (`chat_view.rs`: `me.messages.replace(messages)`).
 ///
-/// The server has no message ids, so alignment is by content: find the
-/// longest suffix of [current] that equals a prefix of [incoming] (the last
-/// overlapping entry may have grown in place). Equal messages keep their
-/// existing objects, so their widgets and render caches survive. Older
-/// messages that slid out of the server window are kept, up to [cap].
-MergeOutcome mergeTranscript(List<ChatMessage> current, List<ChatMessage> incoming, {int cap = 300}) {
-  if (current.isEmpty || incoming.isEmpty) {
-    final bool changed = current.length != incoming.length;
-    final List<ChatMessage> list =
-        incoming.length > cap ? incoming.sublist(incoming.length - cap) : incoming;
-    return MergeOutcome(messages: list, changed: changed, reset: true, dropped: 0);
-  }
-  final int maxOverlap = current.length < incoming.length ? current.length : incoming.length;
-  for (int j = maxOverlap; j >= 1; j--) {
-    final int s = current.length - j;
-    bool ok = true;
-    bool grew = false;
-    for (int i = 0; i < j; i++) {
-      final ChatMessage a = current[s + i];
-      final ChatMessage b = incoming[i];
-      if (a.sameAs(b)) continue;
-      if (i == j - 1 && _grewFrom(a, b)) {
-        grew = true;
-        continue;
+/// The result always has the content and order of [incoming], never more.
+/// The server sends no message ids and its window is a byte tail, so its
+/// start moves freely (a group of tool calls loses lines from the top, the
+/// same tool line repeats many times): lining windows up by content to keep
+/// older messages pasted the same window twice and left the chat anchored on
+/// an old answer. Nothing is kept from [current] except object identity:
+/// an unchanged message keeps its object, so its widget, its parsed markdown
+/// and an edit made on its card survive the poll. Each old object is reused
+/// at most once (two equal messages stay two objects).
+WindowUpdate adoptWindow(List<ChatMessage> current, List<ChatMessage> incoming) {
+  if (current.length == incoming.length) {
+    bool same = true;
+    for (int i = 0; i < current.length; i++) {
+      if (!current[i].sameAs(incoming[i])) {
+        same = false;
+        break;
       }
-      ok = false;
-      break;
     }
-    if (!ok) continue;
-    if (!grew && j == incoming.length) {
-      return MergeOutcome(messages: current, changed: false, reset: false, dropped: 0);
-    }
-    final List<ChatMessage> merged = <ChatMessage>[
-      ...current.sublist(0, current.length - (grew ? 1 : 0)),
-      if (grew) incoming[j - 1],
-      ...incoming.sublist(j),
-    ];
-    final int dropped = merged.length > cap ? merged.length - cap : 0;
-    return MergeOutcome(
-      messages: dropped > 0 ? merged.sublist(dropped) : merged,
-      changed: true,
-      reset: false,
-      dropped: dropped,
-    );
+    if (same) return WindowUpdate(current, changed: false);
   }
-  final List<ChatMessage> list =
-      incoming.length > cap ? incoming.sublist(incoming.length - cap) : incoming;
-  return MergeOutcome(messages: list, changed: true, reset: true, dropped: 0);
+  final Map<int, List<ChatMessage>> pool = <int, List<ChatMessage>>{};
+  for (final ChatMessage m in current) {
+    (pool[m.hash] ??= <ChatMessage>[]).add(m);
+  }
+  ChatMessage keep(ChatMessage next) {
+    final List<ChatMessage>? old = pool[next.hash];
+    if (old == null) return next;
+    for (int i = 0; i < old.length; i++) {
+      if (old[i].sameAs(next)) return old.removeAt(i);
+    }
+    return next;
+  }
+
+  return WindowUpdate(
+    List<ChatMessage>.unmodifiable(<ChatMessage>[for (final ChatMessage m in incoming) keep(m)]),
+    changed: true,
+  );
 }

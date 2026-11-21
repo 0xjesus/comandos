@@ -28,6 +28,7 @@ import 'markdown.dart';
 import 'message_view.dart';
 import 'outbox_bubble.dart';
 import 'pane_rows.dart';
+import 'pinned_scroll.dart';
 import 'term_keys.dart';
 import 'terminal_tools.dart';
 
@@ -117,15 +118,13 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     pane: savedPanes[session],
     connection: _connection,
     outbox: _outbox,
-    // The web draws the server's window (≤80 messages); nothing older.
-    cap: 80,
   );
   late final PaneTracker _panes = PaneTracker(session: session, connection: _connection);
   late final TermKeys _keys = TermKeys(connection: _connection);
   late final TextEditingController _text = TextEditingController(text: _drafts.get(session));
   final FocusNode _focus = FocusNode(debugLabel: 'cv-compose');
-  final ScrollController _scroll = ScrollController();
-  final GlobalKey _centerKey = GlobalKey(debugLabel: 'cv-center');
+  late final PinnedScrollController _scroll =
+      PinnedScrollController(shouldPin: () => _stick && _edits.editing == null);
   final BubbleEdits _edits = BubbleEdits();
 
   /// One widget instance per message object: an unchanged message returns
@@ -145,7 +144,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
   Offset? _swipeFrom;
   bool _swipeCancelled = false;
 
-  Widget _view(ChatMessage m) => _views[m] ??= MessageView(m, key: ObjectKey(m), edits: _edits);
+  Widget _view(ChatMessage m) => _views[m] ??= RepaintBoundary(child: MessageView(m, edits: _edits));
 
   /// The pane the dock targets: the one chosen here, else what the server read.
   String? get _pane => savedPanes[session] ?? _chat.pane;
@@ -180,7 +179,11 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
   @override
   void didUpdateWidget(_SessionBody old) {
     super.didUpdateWidget(old);
-    if (old.view.terminal != w.terminal) _syncVisible();
+    if (old.view.terminal != w.terminal) {
+      // Back from the terminal: the chat opens on its latest message.
+      if (!w.terminal) _stick = true;
+      _syncVisible();
+    }
   }
 
   @override
@@ -296,14 +299,14 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     if (_stick) _jumpToBottomSoon();
   }
 
+  /// Layout already keeps a reader who is at the end there
+  /// ([PinnedScrollController]); this brings back one who is not (their own
+  /// message just went out, the keyboard came up).
   void _jumpToBottomSoon() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      // Lazily built children may correct the extent once laid out.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _scroll.hasClients && _stick) _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      });
+      final ScrollPosition p = _scroll.position;
+      if (p.pixels != p.maxScrollExtent) _scroll.jumpTo(p.maxScrollExtent);
     });
   }
 
@@ -454,6 +457,8 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
 
   void _toggleMore() {
     _edits.finishOpen();
+    // Older messages open above; what is on screen stays where it is.
+    if (!_expanded) _scroll.keepDistanceFromBottomOnce();
     setState(() => _expanded = !_expanded);
   }
 
@@ -553,9 +558,6 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     final bool working = _chat.working && ask == null;
     final int folded = foldIndex(msgs);
     final int from = _expanded ? 0 : folded;
-    final int split = _chat.split.clamp(0, msgs.length);
-    final int olderCount = split > from ? split - from : 0;
-    final int newerFrom = split > from ? split : from;
     final bool more = folded > 0;
     String? empty;
     if (_chat.noAgent) {
@@ -565,95 +567,59 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     } else if (msgs.isEmpty && mine.isEmpty) {
       empty = 'Sin conversación todavía. Escribe abajo o vuelve a la terminal.';
     }
-    const EdgeInsets side = EdgeInsets.symmetric(horizontal: 12);
-    Widget gap(Widget child) => Padding(padding: const EdgeInsets.only(top: 12), child: child);
-    return CustomScrollView(
+    // `.cv-feed`: one column, top to bottom, 12 px between its pieces: the
+    // «Ver N anteriores» pill, the server's window from the last answer on,
+    // what this phone is still sending, the open prompt, the typing dots.
+    // Built whole (the window is 80 messages at most and folded to a few):
+    // exact sizes are what keeps the end pinned and the reading place still.
+    final List<Widget> column = <Widget>[];
+    void add(Widget child, {Key? key}) => column.add(
+          Padding(key: key, padding: EdgeInsets.only(top: column.isEmpty ? 0 : 12), child: child),
+        );
+    if (more) {
+      add(_MorePill(label: moreLabel(folded, expanded: _expanded), onTap: _toggleMore), key: const ValueKey<String>('cv-more'));
+    }
+    for (int i = from; i < msgs.length; i++) {
+      add(_view(msgs[i]), key: ObjectKey(msgs[i]));
+    }
+    if (empty != null) {
+      add(_EmptyNote(empty), key: const ValueKey<String>('cv-empty'));
+    }
+    for (final OutboxItem item in mine) {
+      final int at = all.indexOf(item);
+      final bool blocked = at > 0 && all.sublist(0, at).any((OutboxItem e) => !e.isTerminalOk);
+      add(
+        OutboxBubble(
+          item: item,
+          blocked: blocked,
+          onRetry: () => _outbox.retry(item.id, pane: _pane),
+          onEdit: () => _editOutbox(item),
+          onDiscard: () => _outbox.discard(item.id),
+          onArrived: () => _outbox.confirmArrived(item.id),
+        ),
+        key: ValueKey<String>('o:${item.id}'),
+      );
+    }
+    if (ask != null) {
+      add(
+        AskCard(ask: ask, busy: _answering, onAnswer: (AskOption o) => _answer(ask, o)),
+        key: ValueKey<String>(ask.signature),
+      );
+    }
+    if (working) add(const TypingBubble(), key: const ValueKey<String>('cv-typing'));
+    // Nothing but the note: centred in the feed (`.cv-empty{margin:auto}`).
+    if (empty != null && column.length == 1) {
+      return Center(child: Padding(padding: const EdgeInsets.all(24), child: _EmptyNote(empty)));
+    }
+    return SingleChildScrollView(
+      key: const ValueKey<String>('cv-feed'),
       controller: _scroll,
-      center: _centerKey,
-      anchor: 1.0,
-      slivers: <Widget>[
-        // Older messages grow upwards from the anchor; arrivals below never
-        // move them, which keeps the reading position when scrolled up.
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (BuildContext context, int i) {
-                if (i < olderCount) {
-                  final Widget v = _view(msgs[split - 1 - i]);
-                  return i == olderCount - 1 && !more ? v : gap(v);
-                }
-                return _MorePill(label: moreLabel(folded, expanded: _expanded), onTap: _toggleMore);
-              },
-              childCount: olderCount + (more ? 1 : 0),
-            ),
-          ),
-        ),
-        SliverPadding(
-          key: _centerKey,
-          padding: side,
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (BuildContext context, int i) {
-                final Widget v = _view(msgs[newerFrom + i]);
-                return olderCount == 0 && !more && i == 0 ? v : gap(v);
-              },
-              childCount: msgs.length - newerFrom,
-            ),
-          ),
-        ),
-        if (empty != null)
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 32 * 8.0),
-                  child: Text(empty,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontFamily: Orbita.sans, fontSize: 14, height: 1.4, color: Orbita.dim)),
-                ),
-              ),
-            ),
-          ),
-        SliverPadding(
-          padding: side,
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (BuildContext context, int i) {
-                final OutboxItem item = mine[i];
-                final int at = all.indexOf(item);
-                final bool blocked = at > 0 && all.sublist(0, at).any((OutboxItem e) => !e.isTerminalOk);
-                return gap(OutboxBubble(
-                  key: ValueKey<String>('o:${item.id}'),
-                  item: item,
-                  blocked: blocked,
-                  onRetry: () => _outbox.retry(item.id, pane: _pane),
-                  onEdit: () => _editOutbox(item),
-                  onDiscard: () => _outbox.discard(item.id),
-                  onArrived: () => _outbox.confirmArrived(item.id),
-                ));
-              },
-              childCount: mine.length,
-            ),
-          ),
-        ),
-        if (ask != null)
-          SliverPadding(
-            padding: side,
-            sliver: SliverToBoxAdapter(
-              child: gap(AskCard(
-                key: ValueKey<String>(ask.signature),
-                ask: ask,
-                busy: _answering,
-                onAnswer: (AskOption o) => _answer(ask, o),
-              )),
-            ),
-          ),
-        if (working) SliverPadding(padding: side, sliver: SliverToBoxAdapter(child: gap(const TypingBubble()))),
-        const SliverToBoxAdapter(child: SizedBox(height: 20)),
-      ],
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: column,
+      ),
     );
   }
 
@@ -792,6 +758,24 @@ class _Head extends StatelessWidget {
 }
 
 /// `.cv-more`: the pill that unfolds the older messages.
+/// `.cv-empty`: why the feed has no conversation.
+class _EmptyNote extends StatelessWidget {
+  const _EmptyNote(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 32 * 8.0),
+        child: Text(text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontFamily: Orbita.sans, fontSize: 14, height: 1.4, color: Orbita.dim)),
+      ),
+    );
+  }
+}
+
 class _MorePill extends StatelessWidget {
   const _MorePill({required this.label, required this.onTap});
   final String label;

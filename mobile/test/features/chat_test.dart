@@ -60,50 +60,77 @@ http.Response _json(Object body, [int status = 200]) => http.Response.bytes(utf8
     headers: <String, String>{'content-type': 'application/json; charset=utf-8'});
 
 void main() {
-  group('mergeTranscript', () {
-    test('first load resets', () {
-      final MergeOutcome m = mergeTranscript(<ChatMessage>[], <ChatMessage>[u('1'), a('2')]);
-      expect(m.reset, isTrue);
-      expect(m.messages, hasLength(2));
+  group('adoptWindow', () {
+    List<String> texts(List<ChatMessage> l) => <String>[for (final ChatMessage m in l) m.text];
+
+    test('the chat is exactly the server window', () {
+      final WindowUpdate w = adoptWindow(<ChatMessage>[], <ChatMessage>[u('1'), a('2')]);
+      expect(w.changed, isTrue);
+      expect(texts(w.messages), <String>['1', '2']);
     });
 
-    test('appends new messages and keeps existing objects', () {
+    test('an unchanged message keeps its object (widget, markdown, edit)', () {
       final List<ChatMessage> cur = <ChatMessage>[u('1'), a('2')];
-      final MergeOutcome m = mergeTranscript(cur, <ChatMessage>[u('1'), a('2'), u('3')]);
-      expect(m.reset, isFalse);
-      expect(m.messages.map((ChatMessage x) => x.text), <String>['1', '2', '3']);
-      expect(identical(m.messages[0], cur[0]), isTrue);
+      final WindowUpdate w = adoptWindow(cur, <ChatMessage>[u('1'), a('2'), u('3')]);
+      expect(texts(w.messages), <String>['1', '2', '3']);
+      expect(identical(w.messages[0], cur[0]), isTrue);
+      expect(identical(w.messages[1], cur[1]), isTrue);
     });
 
-    test('keeps messages that slid out of the server window', () {
+    test('a window that moved on drops what left it, and still reuses objects', () {
       final List<ChatMessage> cur = <ChatMessage>[u('1'), a('2'), u('3')];
-      final MergeOutcome m = mergeTranscript(cur, <ChatMessage>[a('2'), u('3'), a('4')]);
-      expect(m.messages.map((ChatMessage x) => x.text), <String>['1', '2', '3', '4']);
+      final WindowUpdate w = adoptWindow(cur, <ChatMessage>[a('2'), u('3'), a('4')]);
+      expect(texts(w.messages), <String>['2', '3', '4'], reason: 'nothing older than the window, like the web');
+      expect(identical(w.messages[0], cur[1]), isTrue);
+      expect(identical(w.messages[1], cur[2]), isTrue);
     });
 
-    test('a tool entry that grew in place is replaced, not duplicated', () {
+    test('a tool group that grew is replaced, not duplicated', () {
       final List<ChatMessage> cur = <ChatMessage>[u('1'), tool('Bash · ls')];
-      final MergeOutcome m =
-          mergeTranscript(cur, <ChatMessage>[u('1'), tool('Bash · ls\nRead · /a.rs'), a('ok')]);
-      expect(m.messages.map((ChatMessage x) => x.text), <String>['1', 'Bash · ls\nRead · /a.rs', 'ok']);
+      final WindowUpdate w = adoptWindow(cur, <ChatMessage>[u('1'), tool('Bash · ls\nRead · /a.rs'), a('ok')]);
+      expect(texts(w.messages), <String>['1', 'Bash · ls\nRead · /a.rs', 'ok']);
     });
 
     test('identical window is unchanged', () {
       final List<ChatMessage> cur = <ChatMessage>[u('1'), a('2')];
-      final MergeOutcome m = mergeTranscript(cur, <ChatMessage>[u('1'), a('2')]);
-      expect(m.changed, isFalse);
-      expect(identical(m.messages, cur), isTrue);
+      final WindowUpdate w = adoptWindow(cur, <ChatMessage>[u('1'), a('2')]);
+      expect(w.changed, isFalse);
+      expect(identical(w.messages, cur), isTrue);
     });
 
-    test('no overlap replaces everything; the cap drops the oldest', () {
-      final MergeOutcome m = mergeTranscript(<ChatMessage>[u('x')], <ChatMessage>[a('y'), a('z')]);
-      expect(m.reset, isTrue);
-      final List<ChatMessage> many = <ChatMessage>[for (int i = 0; i < 10; i++) u('$i')];
-      final MergeOutcome capped =
-          mergeTranscript(many, <ChatMessage>[...many.sublist(5), u('10'), u('11')], cap: 10);
-      expect(capped.dropped, 2);
-      expect(capped.messages.first.text, '2');
-      expect(capped.messages.last.text, '11');
+    test('two equal messages stay two objects', () {
+      final List<ChatMessage> cur = <ChatMessage>[tool('Bash · git status')];
+      final WindowUpdate w =
+          adoptWindow(cur, <ChatMessage>[tool('Bash · git status'), a('ok'), tool('Bash · git status')]);
+      expect(identical(w.messages[0], cur[0]), isTrue);
+      expect(identical(w.messages[0], w.messages[2]), isFalse);
+    });
+
+    // 2.0.0 lined windows up by content to keep older messages. The server
+    // window is a byte tail: its first tool group loses lines as it moves and
+    // the same tool line repeats, so the old window matched by its last line
+    // and the new one was pasted whole after it: the chat repeated itself.
+    test('a window whose first tool group lost lines is never pasted twice', () {
+      const String same = 'Bash · cd /srv/app && git status';
+      final List<ChatMessage> cur = <ChatMessage>[tool('Read · /a.rs\n$same'), a('Reviso el estado.'), tool(same)];
+      final List<ChatMessage> next = <ChatMessage>[
+        tool(same),
+        a('Reviso el estado.'),
+        tool('$same\nRead · /b.rs'),
+        u('sigue'),
+      ];
+      final WindowUpdate w = adoptWindow(cur, next);
+      expect(texts(w.messages), texts(next));
+      expect(w.messages.where((ChatMessage m) => m.text == 'Reviso el estado.'), hasLength(1));
+    });
+
+    // With no answer left in the window the web starts at the last prompt;
+    // 2.0.0 kept the old answer and showed everything after it again.
+    test('no answer in the window: nothing is kept from before', () {
+      final List<ChatMessage> cur = <ChatMessage>[u('hazlo'), a('Respuesta vieja'), tool('Bash · ls')];
+      final WindowUpdate w = adoptWindow(cur, <ChatMessage>[tool('Bash · ls\nBash · make'), u('y ahora esto')]);
+      expect(texts(w.messages), <String>['Bash · ls\nBash · make', 'y ahora esto']);
+      expect(foldIndex(w.messages), 1);
     });
   });
 
@@ -535,7 +562,7 @@ void main() {
       calls.clear();
       ScaffoldMessenger.of(tester.element(find.byType(SessionView))).clearSnackBars();
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
+      await tester.drag(find.byKey(const ValueKey<String>('cv-feed')), const Offset(0, -3000));
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byTooltip('2. No'));

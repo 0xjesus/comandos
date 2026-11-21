@@ -16,6 +16,13 @@ phone layout (`crates/comandos-web-view/src/index_page.css`, `index_page_body.ht
 - `features/chat/session_view.dart` (`SessionView`): header, chat feed or live
   terminal, and the dock (pane chips, key row, composer). `ChatScreen` is a thin
   route around it kept for tests.
+  The chat is the server's window and nothing else: every changed answer of
+  `/chat/transcript` replaces the list (`adoptWindow`; only object identity is
+  kept, for widgets and parsed markdown), as `chat_view.rs` does. Never line
+  windows up by content to keep older messages: the window is a byte tail, its
+  first tool group loses lines and tool lines repeat, so 2.0.0 pasted windows
+  twice and stayed on an old answer. The feed is one column built whole;
+  `PinnedScrollController` keeps its end in view inside layout.
 - `features/new_session/` and `features/usage/`: the "Nueva sesión" wizard and the
   "Consumos" summary, with the wizard rules ported from the web.
 - `features/webpanel/`: the live terminal and the rarely used panels (Ajustes,
@@ -265,7 +272,8 @@ asked by the activity; denied → the screen says so and offers Android settings
 - JSON bodies under 384 KB are decoded inline (spawning an isolate for the
   common 8–80 KB bodies cost more than decoding them).
 - Polls that change nothing rebuild nothing (see Rules). A transcript answer
-  with no agent and no messages no longer blanks an open chat (transient gap).
+  with no agent and no messages does not blank an open chat for two polls
+  (transient gap); if it lasts, the chat says «sin agente», as the web does.
 - Opening/closing a chat 25 times leaves no listener, timer or visible-chat
   state behind (`test/features/rebuild_and_lifecycle_test.dart`).
 - In the background only the optional watcher (and the outbox while it has
