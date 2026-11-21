@@ -4,6 +4,29 @@ Native Flutter client for the ComandOS dashboard, reached over Tailscale HTTPS
 (`https://<host>.ts.net`) with the dashboard token in `X-Comandos-Token`.
 Android only, minSdk 26. No Firebase, no analytics, no code generation.
 
+## 2.0: a native copy of the mobile web
+
+Since 2.0 the app has no design of its own: every screen copies the dashboard's
+phone layout (`crates/comandos-web-view/src/index_page.css`, `index_page_body.html`,
+`crates/comandos-web/src/components/`). When the web changes, the app follows it.
+
+- `features/shell/` is the single screen (`AppShell`): nav keys, tab chips, the side
+  panel (topbar keys, Sesiones | Consumos, filters, feed) or the open session.
+  `ShellController.openSession` is how notifications and car mode select a session.
+- `features/chat/session_view.dart` (`SessionView`): header, chat feed or live
+  terminal, and the dock (pane chips, key row, composer). `ChatScreen` is a thin
+  route around it kept for tests.
+- `features/new_session/` and `features/usage/`: the "Nueva sesión" wizard and the
+  "Consumos" summary, with the wizard rules ported from the web.
+- `features/webpanel/`: the live terminal and the rarely used panels (Ajustes,
+  Servidores, Remoto, Resúmenes, snippets) are the dashboard's own pages in a
+  WebView created on demand (one at most, released 30 s after leaving).
+- `ui/web_kit.dart`: the web's controls (`WebButton`, `WebChip`, `WebIcons`…).
+  Fonts are bundled: Inter and Ubuntu Sans Mono.
+
+Sections below that describe the old screens (sessions list, chat app bar) are
+historical; the outbox, voice, car mode and notifications sections still apply.
+
 ## Layout
 
 ```

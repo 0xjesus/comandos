@@ -18,8 +18,6 @@ import 'package:comandos_mobile/core/polling/app_visibility.dart';
 import 'package:comandos_mobile/features/car/car_mode.dart';
 import 'package:comandos_mobile/features/chat/chat_screen.dart';
 import 'package:comandos_mobile/features/notifications/notifications_hook.dart';
-import 'package:comandos_mobile/features/sessions/session_row.dart';
-import 'package:comandos_mobile/features/sessions/sessions_screen.dart';
 import 'package:comandos_mobile/features/voice/voice.dart';
 import 'package:comandos_mobile/ui/theme.dart';
 import 'package:flutter/material.dart';
@@ -149,45 +147,26 @@ void main() {
     await dir.delete(recursive: true);
   });
 
+  // The chat as a route of its own (the shell embeds the same SessionView).
+  void pushChat(String session, String pane) {
+    AppNavigator.key.currentState!.push<void>(MaterialPageRoute<void>(
+      builder: (_) => ChatScreen(session: session, pane: pane),
+    ));
+  }
+
   Future<void> app(WidgetTester tester) => tester.pumpWidget(MaterialApp(
         theme: buildTheme(),
         navigatorKey: AppNavigator.key,
         navigatorObservers: <NavigatorObserver>[AppNavigator.routes],
-        home: const SessionsScreen(),
+        // The shell's own feed/rebuild test lives in shell_feed_test.dart;
+        // these chat tests only need a home route under the chat.
+        home: const Scaffold(),
       ));
-
-  testWidgets('sessions: an unchanged poll rebuilds nothing; a change rebuilds one row',
-      (WidgetTester tester) async {
-    await app(tester);
-    await tester.pump();
-    await tester.pump();
-    expect(find.byType(SessionRow), findsNWidgets(5));
-
-    int total = 0;
-    int rows = 0;
-    widgets.debugOnRebuildDirtyWidget = (Element e, bool _) {
-      total++;
-      if (e.widget is SessionRow) rows++;
-    };
-    // Two polls (2.5 s each) with the same content; only `now` moved.
-    await tester.pump(const Duration(milliseconds: 2600));
-    await tester.pump(const Duration(milliseconds: 2600));
-    expect(total, 0, reason: 'an identical poll must not rebuild any widget');
-
-    reply = 'Otra respuesta';
-    await tester.pump(const Duration(milliseconds: 2600));
-    await tester.pump();
-    expect(rows, 1, reason: 'only the session that changed rebuilds its row');
-
-    widgets.debugOnRebuildDirtyWidget = null;
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 3));
-  });
 
   testWidgets('chat: an unchanged transcript poll rebuilds nothing', (WidgetTester tester) async {
     await app(tester);
     await tester.pump();
-    AppNavigator.openChat('term-r1', pane: '%1');
+    pushChat('term-r1', '%1');
     await tester.pumpAndSettle();
     await tester.pump();
     expect(find.text('mensaje 29 con negrita'), findsOneWidget);
@@ -214,7 +193,7 @@ void main() {
     final int outboxBase = outbox.listeners;
 
     for (int i = 0; i < 25; i++) {
-      AppNavigator.openChat('term-r${i % 5}', pane: '%${i % 5}');
+      pushChat('term-r${i % 5}', '%${i % 5}');
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 2100)); // one transcript poll
       expect(find.byType(ChatScreen), findsOneWidget);

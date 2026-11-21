@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'features/chat/chat_screen.dart';
 import 'features/pairing/pairing_screen.dart';
-import 'features/sessions/sessions_screen.dart';
+import 'features/shell/app_shell.dart';
+import 'features/shell/shell_controller.dart';
 import 'features/settings/settings_screen.dart';
 
 /// Global navigation entry points. Usable without a BuildContext (e.g. from a
@@ -22,24 +22,11 @@ abstract final class AppNavigator {
   /// True once the sessions list has been shown (navigation is ready).
   static final ValueNotifier<bool> homeShown = ValueNotifier<bool>(false);
 
-  /// Opens (or brings back) the chat of [session]. If that chat is already
-  /// the top route, nothing happens.
+  /// Shows [session] in the shell (from a notification tap or car mode).
+  /// Works before the shell is mounted: it opens once the shell appears.
   static Future<void> openChat(String session, {String? pane, String? label}) async {
-    final NavigatorState? nav = _nav;
-    if (nav == null) return;
-    bool alreadyTop = false;
-    nav.popUntil((Route<dynamic> r) {
-      if (r.settings.name == ChatScreen.routeName && r.settings.arguments == session) {
-        alreadyTop = true;
-        return true;
-      }
-      return r.isFirst || r.settings.name == SessionsScreen.routeName;
-    });
-    if (alreadyTop) return;
-    await nav.push<void>(MaterialPageRoute<void>(
-      settings: RouteSettings(name: ChatScreen.routeName, arguments: session),
-      builder: (_) => ChatScreen(session: session, pane: pane, label: label),
-    ));
+    _nav?.popUntil((Route<dynamic> r) => r.isFirst || r.settings.name == AppShell.routeName);
+    ShellController.openSession(session, pane: pane);
   }
 
   /// Replaces the whole stack with the sessions list.
@@ -48,8 +35,8 @@ abstract final class AppNavigator {
     if (nav == null) return;
     nav.pushAndRemoveUntil<void>(
       MaterialPageRoute<void>(
-        settings: const RouteSettings(name: SessionsScreen.routeName),
-        builder: (_) => const SessionsScreen(),
+        settings: const RouteSettings(name: AppShell.routeName),
+        builder: (_) => const AppShell(),
       ),
       (Route<dynamic> _) => false,
     );

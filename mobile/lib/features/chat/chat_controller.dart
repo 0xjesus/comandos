@@ -25,6 +25,7 @@ class ChatController extends ChangeNotifier {
     String? pane,
     required Connection connection,
     required Outbox outbox,
+    this.cap = 300,
   })  : _pane = pane,
         _connection = connection,
         _outbox = outbox {
@@ -33,8 +34,9 @@ class ChatController extends ChangeNotifier {
 
   static const Duration interval = Duration(seconds: 2);
 
-  /// Max messages kept in memory for one chat.
-  static const int cap = 300;
+  /// Max messages kept in memory for one chat (the web view keeps only the
+  /// server's window of 80; car mode keeps more).
+  final int cap;
 
   /// "Working" while the transcript changed this recently and the last
   /// message is not the assistant's (same rule as the web client).
@@ -62,6 +64,9 @@ class ChatController extends ChangeNotifier {
   bool _seenSent = false;
   bool _lastWorking = false;
 
+  /// Bumps when the target pane changes: an answer for the old pane is dropped.
+  int _gen = 0;
+
   /// Bumps when the message list changed (for stick-to-bottom logic).
   final ValueNotifier<int> listVersion = ValueNotifier<int>(0);
 
@@ -71,6 +76,9 @@ class ChatController extends ChangeNotifier {
   AskPrompt? get ask => _ask;
   String? get agent => _agent;
   bool get loaded => _loaded;
+
+  /// Loaded, and the pane has no Claude/Codex transcript (a plain terminal).
+  bool get noAgent => _loaded && _agent == null && _messages.isEmpty;
 
   /// The session no longer exists on the desktop.
   bool get gone => _gone;
@@ -101,6 +109,27 @@ class ChatController extends ChangeNotifier {
   /// Fetch right now (after sending, after answering a prompt).
   void poke() => _poller.poke();
 
+  /// Reads another pane of the session as chat (the dock's pane chips). Null
+  /// or the same pane: nothing changes.
+  void setPane(String? pane) {
+    if (pane == null || pane.isEmpty || pane == _pane) return;
+    _gen++;
+    _pane = pane;
+    _token = '';
+    _messages = const <ChatMessage>[];
+    _window = const <ChatMessage>[];
+    _split = 0;
+    _loaded = false;
+    _ask = null;
+    _agent = null;
+    _age = null;
+    _error = null;
+    _errors = 0;
+    listVersion.value++;
+    notifyListeners();
+    if (_visible && !_gone) _poller.poke();
+  }
+
   Future<Duration?> _tick() async {
     final ComandosApi? api = _connection.api;
     if (api == null) return const Duration(seconds: 10);
@@ -108,8 +137,11 @@ class ChatController extends ChangeNotifier {
       _seenSent = true;
       unawaited(api.sessionSeen(session).catchError((Object _) {}));
     }
+    final int gen = _gen;
     try {
       final TranscriptResponse r = await api.transcript(session: session, pane: _pane, since: _token);
+      // The pane changed while this was in flight: its answer is for the old one.
+      if (gen != _gen) return Duration.zero;
       _errors = 0;
       final bool hadError = _error != null;
       _error = null;
@@ -193,6 +225,37 @@ class ChatController extends ChangeNotifier {
     } on ApiException catch (e) {
       return e.userMessage;
     }
+  }
+
+  /// Answers the prompt the person saw: reads the pane again first and only
+  /// types the digit if the same prompt (same question, detail and options)
+  /// is still open in the same pane, so a tap never lands on a prompt that
+  /// replaced it. Null when answered, else a Spanish reason.
+  Future<String?> answerPrompt(AskPrompt shown, AskOption option) async {
+    final ComandosApi? api = _connection.api;
+    if (api == null) return 'Sin vincular.';
+    final String? pane = _pane;
+    final int gen = _gen;
+    try {
+      final TranscriptResponse fresh = await api.transcript(session: session, pane: pane, since: _token);
+      if (gen != _gen) return 'Cambiaste de pane; no respondí.';
+      final AskPrompt? now = fresh.ask;
+      if (now == null) {
+        _ask = null;
+        notifyListeners();
+        poke();
+        return 'Ese permiso ya no está abierto.';
+      }
+      if (now.signature != shown.signature || (pane != null && fresh.pane != null && fresh.pane != pane)) {
+        _ask = now;
+        notifyListeners();
+        return 'El permiso cambió; revisa las opciones otra vez.';
+      }
+      if (!now.options.any((AskOption o) => o.key == option.key)) return 'Esa opción ya no está.';
+    } on ApiException catch (e) {
+      return e.userMessage;
+    }
+    return answer(option.key);
   }
 
   /// Interrupts the agent (Escape).

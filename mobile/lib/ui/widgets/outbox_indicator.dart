@@ -6,7 +6,8 @@ import '../theme.dart';
 import 'banner_strip.dart';
 
 /// Always-visible strip when anything is pending or needs the person:
-/// "2 mensajes por enviar" / "1 mensaje no se envió". Tap opens that chat.
+/// "2 mensajes por enviar" / "1 mensaje necesita tu decisión". Tap opens that
+/// session. Accent `--err` when a decision is needed, `--working` otherwise.
 class OutboxIndicator extends StatelessWidget {
   const OutboxIndicator({super.key, required this.outbox, required this.onOpen});
 
@@ -31,7 +32,6 @@ class OutboxIndicator extends StatelessWidget {
         return BannerStrip(
           text: text,
           color: attention > 0 ? Orbita.err : Orbita.working,
-          icon: attention > 0 ? Icons.error_outline : Icons.schedule,
           onTap: () => onOpen(session),
         );
       },

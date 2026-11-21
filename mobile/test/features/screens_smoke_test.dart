@@ -19,7 +19,6 @@ import 'package:comandos_mobile/features/car/car_mode.dart';
 import 'package:comandos_mobile/features/chat/chat_screen.dart';
 import 'package:comandos_mobile/features/notifications/notifications_controller.dart';
 import 'package:comandos_mobile/features/notifications/notifications_hook.dart';
-import 'package:comandos_mobile/features/sessions/sessions_screen.dart';
 import 'package:comandos_mobile/features/voice/voice.dart';
 import 'package:comandos_mobile/features/voice/voice_services.dart';
 import 'package:comandos_mobile/ui/theme.dart';
@@ -139,51 +138,52 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  testWidgets('sessions list → chat → send goes through the outbox', (WidgetTester tester) async {
+  testWidgets('chat → send goes through the outbox', (WidgetTester tester) async {
+    // The sessions half of this flow (feed → tap) is covered by shell_feed_test.dart.
     await tester.pumpWidget(MaterialApp(
       theme: buildTheme(),
       navigatorKey: AppNavigator.key,
       navigatorObservers: <NavigatorObserver>[AppNavigator.routes],
-      home: const SessionsScreen(),
+      home: const Scaffold(),
     ));
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
-    await tester.pump();
-
-    expect(find.text('Te espera · 1'), findsOneWidget);
-    expect(find.text('El resto · 1'), findsOneWidget);
-    expect(find.text('Pagos'), findsOneWidget);
-    expect(find.text('Te pregunta'), findsOneWidget);
-
-    await tester.tap(find.text('Pagos'));
+    AppNavigator.key.currentState!.push<void>(MaterialPageRoute<void>(
+      builder: (_) => const ChatScreen(session: 'term-r1', pane: '%1', label: 'Pagos'),
+    ));
     await tester.pumpAndSettle();
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('revisa las reglas'), findsOneWidget);
-    expect(find.text('1. Sí'), findsOneWidget); // permission card
-    expect(find.byIcon(Icons.mic_none), findsNothing); // no OpenAI key: mic hidden
+    // Folded like the web: the last answer and what followed it.
+    expect(find.text('revisa las reglas'), findsNothing);
+    expect(find.text('Ver 1 mensaje anterior', skipOffstage: false), findsOneWidget);
+    expect(find.text('Bash · ls'), findsOneWidget);
+    expect(find.byTooltip('1. Sí'), findsOneWidget); // permission card
+    expect(find.byTooltip('Dictar'), findsNothing); // no OpenAI key: mic hidden
 
     // 15a: while the prompt is open, typing works but sending does not.
-    IconButton sendButton() => tester.widget<IconButton>(
-        find.ancestor(of: find.byIcon(Icons.arrow_upward), matching: find.byType(IconButton)));
-    await tester.enterText(find.byType(TextField), 'hola agente');
+    final Finder composer = find.byType(TextField).last;
+    await tester.enterText(composer, 'hola agente');
     await tester.pump();
     expect(find.text('Responde primero el permiso de arriba'), findsOneWidget);
-    expect(sendButton().onPressed, isNull);
+    await tester.tap(find.byTooltip('Enviar; vacío envía Enter'));
+    await tester.pump();
+    expect(posted, isEmpty, reason: 'refused while the prompt is open');
+    expect(sl.get<Outbox>().items, isEmpty);
     expect(sl.get<DraftStore>().get('term-r1'), 'hola agente', reason: 'drafting still works');
+    ScaffoldMessenger.of(tester.element(find.byType(TextField).last)).clearSnackBars();
 
     // The prompt is answered (on the desktop): the next poll unblocks sending.
     askOpen = false;
     await tester.pump(const Duration(seconds: 3));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await tester.pump();
-    expect(find.text('1. Sí'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('1. Sí'), findsNothing);
     expect(find.text('Responde primero el permiso de arriba'), findsNothing);
-    expect(sendButton().onPressed, isNotNull);
     expect(posted, isEmpty);
     await tester.runAsync(() async {
-      await tester.tap(find.byTooltip('Enviar'));
+      await tester.tap(find.byTooltip('Enviar; vacío envía Enter'));
       await Future<void>.delayed(const Duration(milliseconds: 100));
       await sl.get<Outbox>().pump();
     });
@@ -197,8 +197,8 @@ void main() {
     expect(body['submit'], isTrue);
     expect((body['clientMessageId']! as String).length, 36);
     expect(sl.get<Outbox>().items.single.state, OutboxState.delivered);
-    expect(find.text('Entregado'), findsOneWidget);
-    final TextField field = tester.widget(find.byType(TextField));
+    expect(find.text('Entregado ✓'), findsOneWidget);
+    final TextField field = tester.widget(composer);
     expect(field.controller!.text, isEmpty);
 
     // Leave the screens so their pollers stop.
@@ -234,7 +234,9 @@ void main() {
       home: const ChatScreen(session: 'term-r1', pane: '%1'),
     ));
     await until(() => find.text('Editar').evaluate().isNotEmpty);
-    await tester.ensureVisible(find.text('Editar'));
+    // At the bottom of the feed, where a new failed message shows.
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -3000));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Editar'));
     await until(() => outbox.editingFor('term-r1') != null);
     expect(find.text('1 mensaje en espera hasta que envíes el texto editado'), findsOneWidget);
@@ -242,9 +244,9 @@ void main() {
     await tester.runAsync(() => outbox.pump());
     expect(posted, hasLength(1), reason: 'nothing jumps ahead while editing');
 
-    await tester.enterText(find.byType(TextField), 'bueno');
+    await tester.enterText(find.byType(TextField).last, 'bueno');
     await tester.pump();
-    await tester.tap(find.byTooltip('Enviar'));
+    await tester.tap(find.byTooltip('Enviar; vacío envía Enter'));
     await until(() => outbox.editingFor('term-r1') == null);
     await tester.runAsync(() => outbox.pump());
     await until(() => posted.length == 3);

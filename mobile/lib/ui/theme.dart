@@ -17,8 +17,13 @@ abstract final class Orbita {
   static const Color working = Color(0xFF7AA5FF);
   static const Color err = Color(0xFFFF7580);
 
-  /// Platform monospace (no bundled fonts).
-  static const String mono = 'monospace';
+  static const Color onBrand = Color(0xFF080B11);
+  static const Color glow = Color(0xFF141B2E);
+  static const Color code = Color(0xFFA3C0FF);
+
+  /// Same faces as the web dashboard: `--sans` and `--mono` (bundled).
+  static const String sans = 'Inter';
+  static const String mono = 'UbuntuSansMono';
 }
 
 /// Minimum touch target.
@@ -48,6 +53,7 @@ ThemeData buildTheme() {
     useMaterial3: true,
     colorScheme: scheme,
     brightness: Brightness.dark,
+    fontFamily: Orbita.sans,
     scaffoldBackgroundColor: Orbita.bg,
     canvasColor: Orbita.bg,
     // Ripple is cheaper than the sparkle shader (no first-tap compile jank).

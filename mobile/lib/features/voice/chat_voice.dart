@@ -5,12 +5,18 @@ import 'package:flutter/material.dart';
 import '../../core/locator.dart';
 import '../../core/outbox/drafts.dart';
 import '../../ui/theme.dart';
+import '../../ui/web_kit.dart';
 import '../chat/chat_controller.dart';
 import 'dictation.dart';
 import 'openai_key_store.dart';
 import 'reply_watcher.dart';
 import 'voice.dart';
 import 'voice_services.dart';
+
+// The voice controls of the chat, drawn like the web page's own controls
+// (`#cv-dock .cv-compose` and `.cv-act`): the mic is a round 44 px key left of
+// the send button, read-aloud is one more button next to «Copiar». The voice
+// engine (dictation, speech, settings) is unchanged.
 
 /// Composer mic: tap to record, tap again to stop. Hidden without a key.
 class DictationMic extends StatelessWidget {
@@ -31,25 +37,48 @@ class DictationMic extends StatelessWidget {
           builder: (BuildContext context, Widget? _) {
             final DictationController d = v.dictation;
             final bool mine = d.activeOwner == owner;
+            final Widget key;
             if (mine && d.phase == DictationPhase.recording) {
-              return IconButton(
+              key = WebButton(
                 tooltip: 'Terminar dictado',
-                onPressed: d.stop,
-                icon: const Icon(Icons.stop_circle, color: Orbita.err),
+                onTap: d.stop,
+                size: 44,
+                radius: 22,
+                lip: 2,
+                face: Orbita.err,
+                ink: Colors.white,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(3)),
+                ),
+              );
+            } else if (mine && d.phase == DictationPhase.transcribing) {
+              key = const WebButton(
+                tooltip: 'Transcribiendo',
+                size: 44,
+                radius: 22,
+                lip: 2,
+                face: Orbita.bg,
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Orbita.dim),
+                ),
+              );
+            } else {
+              key = WebButton(
+                tooltip: 'Dictar',
+                onTap: d.busy ? null : () => unawaited(d.start(owner)),
+                size: 44,
+                radius: 22,
+                lip: 2,
+                face: Orbita.bg,
+                ink: Orbita.dim,
+                child: const WebIcon(WebIcons.mic, size: 20, semanticLabel: 'Dictar'),
               );
             }
-            if (mine && d.phase == DictationPhase.transcribing) {
-              return const SizedBox(
-                width: kTouch,
-                height: kTouch,
-                child: Padding(padding: EdgeInsets.all(14), child: CircularProgressIndicator(strokeWidth: 2)),
-              );
-            }
-            return IconButton(
-              tooltip: 'Dictar',
-              onPressed: d.busy ? null : () => unawaited(d.start(owner)),
-              icon: const Icon(Icons.mic_none, color: Orbita.dim),
-            );
+            return Padding(padding: const EdgeInsets.only(right: 8), child: key);
           },
         );
       },
@@ -72,6 +101,7 @@ class DictationPanel extends StatefulWidget {
 
 class _DictationPanelState extends State<DictationPanel> {
   final VoiceServices _v = VoiceServices.instance;
+  String? _confirmDiscard;
 
   @override
   void initState() {
@@ -83,6 +113,15 @@ class _DictationPanelState extends State<DictationPanel> {
 
   void _onKey() {
     if (_v.keys.status.value.present) unawaited(_v.dictation.load());
+  }
+
+  @override
+  void didUpdateWidget(DictationPanel old) {
+    super.didUpdateWidget(old);
+    if (old.owner != widget.owner) {
+      _v.dictation.detach(old.owner, _insert);
+      _v.dictation.attach(widget.owner, _insert);
+    }
   }
 
   @override
@@ -115,101 +154,109 @@ class _DictationPanelState extends State<DictationPanel> {
         final String? notice = d.noticeFor(widget.owner);
         final List<Widget> rows = <Widget>[
           if (mine && d.phase == DictationPhase.recording)
-            _row(
-              <Widget>[
-                const Icon(Icons.fiber_manual_record, color: Orbita.err, size: 14),
-                const SizedBox(width: 6),
-                Text('Escuchando ${clockText(d.elapsed)}', style: const TextStyle(color: Orbita.text)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: LinearProgressIndicator(
-                      value: d.level,
-                      minHeight: 6,
-                      backgroundColor: Orbita.line,
-                      color: Orbita.done,
-                    ),
-                  ),
-                ),
-                TextButton(onPressed: d.cancel, child: const Text('Cancelar')),
-              ],
-            ),
+            _row(<Widget>[
+              Container(
+                width: 9,
+                height: 9,
+                decoration: const BoxDecoration(color: Orbita.err, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 8),
+              Text('Escuchando ${clockText(d.elapsed)}', style: _text),
+              const SizedBox(width: 10),
+              Expanded(child: _Level(level: d.level)),
+              const SizedBox(width: 8),
+              _key('Cancelar', d.cancel),
+            ]),
           if (mine && d.phase == DictationPhase.transcribing)
             _row(<Widget>[
-              const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Orbita.dim)),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(d.attempt > 1 ? 'Transcribiendo… (intento ${d.attempt} de 3)' : 'Transcribiendo…',
-                    style: const TextStyle(color: Orbita.text)),
+                child: Text(d.attempt > 1 ? 'Transcribiendo… (intento ${d.attempt} de 3)' : 'Transcribiendo…', style: _text),
               ),
-              TextButton(onPressed: d.cancel, child: const Text('Cancelar')),
+              _key('Cancelar', d.cancel),
             ]),
           if (notice != null)
             _row(<Widget>[
-              Expanded(child: Text(notice, style: const TextStyle(color: Orbita.waiting))),
-              IconButton(
-                tooltip: 'Cerrar',
-                onPressed: () => d.clearNotice(widget.owner),
-                icon: const Icon(Icons.close, size: 18),
-              ),
+              Expanded(child: Text(notice, style: _text.copyWith(color: Orbita.waiting))),
+              _key('Cerrar', () => d.clearNotice(widget.owner)),
             ]),
           if (pending.isNotEmpty)
             _row(<Widget>[
               Expanded(
                 child: Text(
-                  'No se pudo transcribir${pending.length > 1 ? ' (${pending.length} grabaciones)' : ''}: '
-                  '${pending.first.message ?? ''}',
-                  style: const TextStyle(color: Orbita.err),
+                  _confirmDiscard == pending.first.id
+                      ? '¿Descartar la grabación? Se borra el audio y no se transcribe.'
+                      : 'No se pudo transcribir${pending.length > 1 ? ' (${pending.length} grabaciones)' : ''}: '
+                          '${pending.first.message ?? ''}',
+                  style: _text.copyWith(color: Orbita.err),
                 ),
               ),
-              TextButton(
-                onPressed: d.busy ? null : () => unawaited(d.retry(pending.first.id)),
-                child: const Text('Reintentar'),
-              ),
-              TextButton(
-                onPressed: () => _confirmDiscard(pending.first),
-                style: TextButton.styleFrom(foregroundColor: Orbita.err),
-                child: const Text('Descartar'),
-              ),
+              if (_confirmDiscard == pending.first.id) ...<Widget>[
+                _key('No', () => setState(() => _confirmDiscard = null)),
+                const SizedBox(width: 6),
+                _key('Descartar', () {
+                  final String id = pending.first.id;
+                  setState(() => _confirmDiscard = null);
+                  unawaited(d.discard(id));
+                }, danger: true),
+              ] else ...<Widget>[
+                _key('Reintentar', d.busy ? null : () => unawaited(d.retry(pending.first.id))),
+                const SizedBox(width: 6),
+                _key('Descartar', () => setState(() => _confirmDiscard = pending.first.id), danger: true),
+              ],
             ]),
         ];
         if (rows.isEmpty) return const SizedBox.shrink();
         return Padding(
-          padding: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
           child: Column(mainAxisSize: MainAxisSize.min, children: rows),
         );
       },
     );
   }
 
-  Future<void> _confirmDiscard(PendingTake t) async {
-    final bool? ok = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext c) => AlertDialog(
-        backgroundColor: Orbita.panel,
-        title: const Text('¿Descartar la grabación?'),
-        content: const Text('Se borra el audio y no se transcribe.'),
-        actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancelar')),
-          TextButton(
-            onPressed: () => Navigator.of(c).pop(true),
-            style: TextButton.styleFrom(foregroundColor: Orbita.err),
-            child: const Text('Descartar'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) await _v.dictation.discard(t.id);
-  }
+  static const TextStyle _text = TextStyle(fontFamily: Orbita.sans, fontSize: 13, color: Orbita.text);
+
+  Widget _key(String label, VoidCallback? onTap, {bool danger = false}) => WebButton(
+        onTap: onTap,
+        face: Orbita.bg,
+        ink: danger ? Orbita.err : Orbita.text,
+        radius: 10,
+        lip: 2,
+        minHeight: 36,
+        child: Text(label, style: const TextStyle(fontFamily: Orbita.sans, fontSize: 13, fontWeight: FontWeight.w600)),
+      );
 
   Widget _row(List<Widget> children) => Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.only(left: 10),
-        decoration: BoxDecoration(color: Orbita.panel, borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+        decoration: BoxDecoration(
+          color: Orbita.bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Orbita.line2),
+        ),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: kTouch),
+          constraints: const BoxConstraints(minHeight: 44),
           child: Row(children: children),
+        ),
+      );
+}
+
+/// Microphone level: a 6 px bar in `--done` over `--line`.
+class _Level extends StatelessWidget {
+  const _Level({required this.level});
+  final double level;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        key: const ValueKey<String>('dictation-level'),
+        height: 6,
+        decoration: BoxDecoration(color: Orbita.line, borderRadius: BorderRadius.circular(3)),
+        alignment: Alignment.centerLeft,
+        child: FractionallySizedBox(
+          widthFactor: level.clamp(0.0, 1.0),
+          child: Container(decoration: BoxDecoration(color: Orbita.done, borderRadius: BorderRadius.circular(3))),
         ),
       );
 }
@@ -217,39 +264,78 @@ class _DictationPanelState extends State<DictationPanel> {
 /// "0:07", "1:23".
 String clockText(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
 
-/// App-bar button shown only while something is being read aloud.
-class SpeechStopButton extends StatelessWidget {
-  const SpeechStopButton({super.key});
+/// «Leer» next to «Copiar» on an answer; «Callar» while it is being read.
+/// Hidden when no [Speaker] is registered. Without a key, speaking leads to
+/// Ajustes › Voz (the voice engine decides).
+class ReadAloudAct extends StatelessWidget {
+  const ReadAloudAct({super.key, required this.text});
+
+  final String text;
+
+  /// The text being read by a tap here (so only its card says «Callar»).
+  static String? _reading;
 
   @override
   Widget build(BuildContext context) {
-    if (sl.maybe<Speaker>() == null) return const SizedBox.shrink();
-    final VoiceServices v = VoiceServices.instance;
+    final Speaker? speaker = sl.maybe<Speaker>();
+    if (speaker == null) return const SizedBox.shrink();
+    final VoiceServices? v = VoiceServices.existing;
+    Widget button(bool speaking) => SelectionContainer.disabled(
+          child: WebButton(
+            tooltip: speaking ? 'Callar' : 'Leer en voz alta',
+            onTap: () {
+              if (speaking) {
+                _reading = null;
+                unawaited(speaker.stop());
+              } else {
+                _reading = text;
+                unawaited(speaker.speak(text));
+              }
+            },
+            face: Orbita.bg,
+            ink: Orbita.text,
+            radius: 12,
+            lip: 2,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                WebIcon(speaking ? WebIcons.volumeOff : WebIcons.volumeOn, size: 16, color: Orbita.text),
+                const SizedBox(width: 6),
+                Text(speaking ? 'Callar' : 'Leer',
+                    style: const TextStyle(fontFamily: Orbita.sans, fontSize: 13.5, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+        );
+    if (v == null) return button(false);
     return ListenableBuilder(
       listenable: v.speech,
-      builder: (BuildContext context, Widget? _) => v.speech.speaking
-          ? IconButton(
-              tooltip: 'Callar',
-              onPressed: v.speech.stop,
-              icon: const Icon(Icons.volume_off, color: Orbita.waiting),
-            )
-          : const SizedBox.shrink(),
+      builder: (BuildContext context, Widget? _) => button(v.speech.speaking && _reading == text),
     );
   }
 }
 
-/// Menu entry for the chat: "Leer respuestas nuevas" with a check mark.
-PopupMenuEntry<String>? autoReadMenuItem(String session) {
-  if (sl.maybe<Speaker>() == null) return null;
-  final VoiceServices v = VoiceServices.instance;
-  return CheckedPopupMenuItem<String>(
-    value: autoReadMenuValue,
-    checked: v.keys.status.value.present && v.settings.autoReads(session),
-    child: const Text('Leer respuestas nuevas'),
-  );
-}
+/// «Leer nuevas» at the end of the dock's key row: reads each new answer of
+/// this session aloud (on = pressed). Hidden when no [Speaker] is registered.
+class AutoReadKey extends StatelessWidget {
+  const AutoReadKey({super.key, required this.session, required this.builder});
 
-const String autoReadMenuValue = 'voice-autoread';
+  final String session;
+
+  /// Draws the key like its neighbours: (label, pressed, onTap).
+  final Widget Function(String label, bool on, VoidCallback onTap) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    if (sl.maybe<Speaker>() == null) return const SizedBox.shrink();
+    final VoiceServices? v = VoiceServices.existing;
+    bool on() => v != null && v.keys.status.value.present && v.settings.autoReads(session);
+    Widget key() => builder('Leer nuevas', on(), () => unawaited(toggleAutoRead(context, session)));
+    if (v == null) return key();
+    return ListenableBuilder(listenable: v.settings, builder: (BuildContext context, Widget? _) => key());
+  }
+}
 
 Future<void> toggleAutoRead(BuildContext context, String session) async {
   final VoiceServices v = VoiceServices.instance;
@@ -262,8 +348,8 @@ Future<void> toggleAutoRead(BuildContext context, String session) async {
   await v.settings.setAutoRead(session, on);
   if (!on) await v.speech.stop();
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
+  ScaffoldMessenger.maybeOf(context)
+    ?..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(
       content: Text(on
           ? 'Leeré en voz alta cada respuesta nueva de esta sesión (${v.settings.value.autoReadMode.label.toLowerCase()}).'
@@ -288,6 +374,7 @@ class _ChatAutoReaderState extends State<ChatAutoReader> {
   ReplyWatcher? _watcher;
   Timer? _recheck;
   bool _on = false;
+  bool _attached = false;
 
   @override
   void initState() {
@@ -296,6 +383,7 @@ class _ChatAutoReaderState extends State<ChatAutoReader> {
     final VoiceServices v = _v = VoiceServices.instance;
     unawaited(v.ready().then((_) {
       if (!mounted) return;
+      _attached = true;
       v.settings.addListener(_onSettings);
       widget.chat.addListener(_onChat);
       _onSettings();
@@ -305,8 +393,10 @@ class _ChatAutoReaderState extends State<ChatAutoReader> {
   @override
   void dispose() {
     _recheck?.cancel();
-    _v?.settings.removeListener(_onSettings);
-    widget.chat.removeListener(_onChat);
+    if (_attached) {
+      _v?.settings.removeListener(_onSettings);
+      widget.chat.removeListener(_onChat);
+    }
     super.dispose();
   }
 

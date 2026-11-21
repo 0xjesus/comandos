@@ -65,29 +65,27 @@ void main() {
     expect(c.sessions.first.signature, isNot(a.sessions.first.signature));
   });
 
-  test('sections: Te espera, Trabajando, Sin leer, then the rest, newest first', () {
+  test('feed layout: «Te espera» pinned oldest first, the rest in time buckets newest first', () {
     final SessionFeed feed = SessionFeed.tryParse(jsonDecode(feedJson))!;
-    final List<SessionSection> sections = buildSections(feed.sessions);
-    expect(sections.map((SessionSection s) => s.kind), <SectionKind>[
-      SectionKind.waiting,
-      SectionKind.working,
-      SectionKind.unread,
-      SectionKind.rest,
-    ]);
-    expect(sections[0].sessions.map((SessionSummary s) => s.session), <String>['term-r2', 'term-r5']);
-    expect(sections[1].sessions.single.session, 'term-r3');
-    expect(sections[2].sessions.single.session, 'term-r4');
-    expect(sections[3].sessions.map((SessionSummary s) => s.session), <String>['term-r1', 'term-r6']);
-    expect(sections.map((SessionSection s) => s.kind.title),
-        <String>['Te espera', 'Trabajando', 'Sin leer', 'El resto']);
+    // Day starts 1 h before `now`: r6 (≈3 h ago) falls in «Antes».
+    final FeedLayout lay = feedLayout(feed.sessions, FeedChip.all, feed.now, feed.now - 3600 - 1);
+    expect(lay.pinned.map((SessionSummary s) => s.session), <String>['term-r5', 'term-r2']);
+    expect(lay.groups.map(((FeedGroup, List<SessionSummary>) g) => g.$1),
+        <FeedGroup>[FeedGroup.now, FeedGroup.lastHour, FeedGroup.before]);
+    expect(lay.groups[0].$2.single.session, 'term-r3'); // 10 s ago
+    expect(lay.groups[1].$2.map((SessionSummary s) => s.session), <String>['term-r4', 'term-r1']);
+    expect(lay.groups[2].$2.single.session, 'term-r6');
+    expect(FeedGroup.values.map((FeedGroup g) => g.label), <String>['Ahora', 'Última hora', 'Hoy', 'Antes']);
   });
 
-  test('search filters by label, ignoring case and accents; empty sections vanish', () {
+  test('feed chips filter and count like the web', () {
     final SessionFeed feed = SessionFeed.tryParse(jsonDecode(feedJson))!;
-    final List<SessionSection> s = buildSections(feed.sessions, query: 'DUENO');
-    expect(s.single.kind, SectionKind.rest);
-    expect(s.single.sessions.single.label, 'Dueño');
-    expect(buildSections(feed.sessions, query: 'zzz'), isEmpty);
+    final FeedCounts c = feedCounts(feed.sessions);
+    expect(<int>[c.all, c.unread, c.perm, c.work, c.waiting], <int>[6, 3, 1, 1, 2]);
+    final FeedLayout perm = feedLayout(feed.sessions, FeedChip.perm, feed.now, 0);
+    expect(perm.pinned.single.session, 'term-r2');
+    expect(perm.groups, isEmpty);
+    expect(feedLayout(feed.sessions, FeedChip.work, feed.now, 0).groups.single.$2.single.session, 'term-r3');
   });
 
   test('parses the chat transcript shapes', () {

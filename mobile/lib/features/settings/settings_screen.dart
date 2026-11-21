@@ -1,3 +1,4 @@
+import '../webpanel/web_panel.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_navigator.dart';
@@ -54,6 +55,7 @@ class SettingsScreen extends StatelessWidget {
     if (ok != true) return;
     await sl.get<NotificationsHook>().onUnpaired();
     await sl.get<Connection>().unpair();
+    await clearWebData();
     AppNavigator.showPairing();
   }
 

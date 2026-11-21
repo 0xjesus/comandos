@@ -3,7 +3,7 @@ description: "ComandOS for Android: sessions, chat and a never-lose-a-message ou
 publish_to: 'none'
 
 # versionName+versionCode for Android.
-version: 1.0.1+2
+version: 2.0.0+3
 
 environment:
   sdk: ^3.10.3
@@ -27,6 +27,8 @@ dependencies:
   # Audio focus (ducking while reading, pausing while recording).
   audio_session: ^0.2.4
   wakelock_plus: ^1.6.1
+  # Live terminal and the rarely used panels reuse the dashboard's own page.
+  webview_flutter: ^4.13.0
 
 dev_dependencies:
   flutter_test:
@@ -35,3 +37,18 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Same faces as the web dashboard (--sans / --mono).
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.otf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.otf
+          weight: 700
+    - family: UbuntuSansMono
+      fonts:
+        - asset: assets/fonts/UbuntuSansMono.ttf

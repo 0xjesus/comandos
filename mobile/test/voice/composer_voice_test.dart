@@ -71,17 +71,17 @@ void main() {
     // Its disk scan is memoised: run it in the real zone first.
     await tester.runAsync(() => v.dictation.load());
     await pumpComposer(tester);
-    expect(find.byIcon(Icons.mic_none), findsOneWidget);
+    expect(find.byTooltip('Dictar'), findsOneWidget);
 
     // Real I/O (files) must run in the real zone: tap inside runAsync.
     await tester.runAsync(() async {
-      await tester.tap(find.byIcon(Icons.mic_none));
+      await tester.tap(find.byTooltip('Dictar'));
       await waitFor(() => rec.path != null);
     });
     await tester.pump();
     expect(find.textContaining('Escuchando'), findsOneWidget);
     expect(find.byTooltip('Terminar dictado'), findsOneWidget);
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('dictation-level')), findsOneWidget);
 
     await tester.runAsync(() async {
       await v.dictation.cancel(); // what Cancelar calls
@@ -98,7 +98,7 @@ void main() {
   testWidgets('no key: no mic', (WidgetTester tester) async {
     VoiceServices.instance = testVoiceServices(dir: dir.path);
     await pumpComposer(tester);
-    expect(find.byIcon(Icons.mic_none), findsNothing);
+    expect(find.byTooltip('Dictar'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 }

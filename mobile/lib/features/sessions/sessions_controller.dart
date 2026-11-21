@@ -7,11 +7,12 @@ import '../../core/api/api_errors.dart';
 import '../../core/connection.dart';
 import '../../core/models/session_feed.dart';
 import '../../core/polling/poller.dart';
-import '../../ui/format.dart';
+import 'sections.dart';
 
-/// Polls `/session-feed` every 2.5 s while visible. Keeps the previous
-/// [SessionSummary] instance when a session's signature did not change, so
-/// rows can be reused without rebuilding.
+/// Polls `/session-feed` every 2.5 s while visible (the web's `POLL_MS`). Keeps
+/// the previous [SessionSummary] instance when a session's signature did not
+/// change, so rows can be reused without rebuilding. Used by the shell (feed,
+/// tab chips) and by Modo auto.
 class SessionsController extends ChangeNotifier {
   SessionsController(this._connection) {
     _poller = Poller(interval: interval, task: _tick);
@@ -106,7 +107,7 @@ class SessionsController extends ChangeNotifier {
       _error?.runtimeType ?? '',
       _error?.userMessage ?? '',
       if (f != null)
-        for (final SessionSummary s in f.sessions) ...<Object>[s, relativeTime(f.now, s.ts)],
+        for (final SessionSummary s in f.sessions) ...<Object>[s, feedAgo(f.now, s.ts)],
     ];
   }
 
@@ -129,13 +130,73 @@ class SessionsController extends ChangeNotifier {
       now: fresh.now,
       sessions: <SessionSummary>[
         for (final SessionSummary s in fresh.sessions)
-          if (byId[s.session] case final SessionSummary prev when prev.signature == s.signature)
+          if (byId[s.session] case final SessionSummary prev when feedSignature(prev) == feedSignature(s))
             prev
           else
             s,
       ],
     );
   }
+
+  /// The feed entry of [session], if the last poll had it.
+  SessionSummary? entry(String session) {
+    for (final SessionSummary s in _feed?.sessions ?? const <SessionSummary>[]) {
+      if (s.session == session) return s;
+    }
+    return null;
+  }
+
+  String _seenSession = '';
+  int _seenAt = 0;
+
+  /// `POST /session-seen` for the session on screen, with the web's local effect
+  /// (unread off, seen moved) until the next poll confirms it. [onlyIfNew]: skip
+  /// when nothing new happened since it was last seen. Throttled to one post per
+  /// session every 2 s, like the web.
+  void markSeen(String session, {bool onlyIfNew = true}) {
+    final SessionFeed? f = _feed;
+    final ComandosApi? api = _connection.api;
+    if (f == null || api == null) return;
+    final int i = f.sessions.indexWhere((SessionSummary s) => s.session == session);
+    if (i < 0) return;
+    final SessionSummary e = f.sessions[i];
+    if (onlyIfNew && !feedNeedsSeen(e)) return;
+    final int at = DateTime.now().millisecondsSinceEpoch;
+    if (_seenSession == session && at - _seenAt < 2000) return;
+    _seenSession = session;
+    _seenAt = at;
+    final double seen = <double>[e.seen, f.now, e.ts].reduce((double a, double b) => a > b ? a : b);
+    final SessionSummary next = SessionSummary(
+      session: e.session,
+      label: e.label,
+      state: e.state,
+      unread: e.state.waitsForHuman && e.unread,
+      ts: e.ts,
+      seen: seen,
+      pane: e.pane,
+      panes: e.panes,
+      agent: e.agent,
+      model: e.model,
+      prompt: e.prompt,
+      reply: e.reply,
+      ask: e.ask,
+      paneList: e.paneList,
+    );
+    _feed = SessionFeed(
+      now: f.now,
+      sessions: <SessionSummary>[...f.sessions]..[i] = next,
+    );
+    unawaited(api.sessionSeen(session).then((_) {}, onError: (Object _) {}));
+    final List<Object> shown = _viewKey();
+    if (!_sameView(shown, _shown)) {
+      _shown = shown;
+      notifyListeners();
+    }
+  }
+
+  /// Everything the feed row, the tab chip and the cv-head draw from an entry.
+  static String feedSignature(SessionSummary s) => '${s.signature}\u0001${s.prompt}\u0001${s.seen}'
+      '\u0001${s.panes}\u0001${s.paneList.map((PaneSummary p) => p.model).join(',')}';
 
   @override
   void dispose() {
