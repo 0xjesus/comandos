@@ -450,6 +450,19 @@ async fn post(native: &Arc<Native>, request: &Request) -> Answer {
     }
     let pane = pane.to_owned();
     let in_mode = in_mode.trim() == "1";
+    // Un menú de permiso abierto: pegar texto y pulsar Enter ahí elegiría la
+    // opción resaltada (normalmente «Yes»). Se rechaza sin recibo: el mismo id
+    // puede reintentarse cuando la persona haya respondido el permiso.
+    if let Ok(screen) = native.options().tmux.run(&["capture-pane", "-p", "-t", &pane]).await
+        && screen.ok
+        && super::chat::ask(&screen.stdout).is_some()
+    {
+        return rejected(
+            StatusCode::CONFLICT,
+            "prompt_open",
+            "La sesión espera que respondas un permiso; respóndelo antes de enviar.",
+        );
+    }
     if !native.typing.locks.acquire(&pane) {
         // Quizá es el mismo id, que otra petición está entregando.
         if let Some(receipt) = native.messages.find(&message.id) {

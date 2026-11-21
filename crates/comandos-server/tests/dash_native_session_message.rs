@@ -185,3 +185,34 @@ async fn multi_line_text_arrives_intact_and_submit_false_waits_in_the_input_line
     assert_eq!(read(&out[0]), "uno\ndos\ntres\n");
     front.stop().await;
 }
+
+/// Con un menú de permiso en pantalla no se escribe: el Enter elegiría la
+/// opción resaltada. Rechazo sin recibo, para reintentar con el mismo id.
+#[tokio::test]
+async fn an_open_permission_prompt_refuses_the_message() {
+    if !tmux_available() {
+        return;
+    }
+    let home = TestHome::new("msg-prompt");
+    let out = home.root.join("out-prompt");
+    let script = format!(
+        "printf 'Allow command?\\n› 1. Yes\\n  2. No\\n'; cat > {}",
+        out.display()
+    );
+    run_tmux(
+        &home,
+        &["new-session", "-d", "-s", "s1", "-x", "120", "-y", "30", &script],
+    );
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let legacy = FakeLegacy::start().await;
+    let front = front(&home, legacy.port, home.options()).await;
+    let body = r#"{"clientMessageId":"p1","session":"s1","text":"sigue con lo otro"}"#;
+    let (status, refused) = post(front.port, body).await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(refused["code"], "prompt_open");
+    assert_eq!(refused["status"], "rejected");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(read(&out), "", "nothing was typed into the prompt");
+    assert_eq!(lookup(front.port, "p1").await.0, 404, "no receipt: same id can retry");
+    front.stop().await;
+}
