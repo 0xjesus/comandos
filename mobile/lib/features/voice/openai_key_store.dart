@@ -64,26 +64,72 @@ class MemorySecretStore implements SecretStore {
 
 /// The OpenAI key, kept only in the Android Keystore-backed secure storage
 /// (and in memory while the app runs). Never logged, never shown.
+///
+/// With no key on the phone it asks the paired desktop ([desktop]: `GET
+/// /voice/openai-key`, over the same private, token-checked connection as
+/// everything else) and keeps what it gets, so voice works without pasting
+/// anything. The key never ships inside the APK. Clearing the key in
+/// Ajustes stops that until a key is saved again.
 class OpenAiKeyStore {
-  OpenAiKeyStore([SecretStore? store]) : _store = store ?? const PlatformSecretStore();
+  OpenAiKeyStore([SecretStore? store, this.desktop]) : _store = store ?? const PlatformSecretStore();
 
   static const String _name = 'comandos.openai.v1';
+  static const String _declinedName = 'comandos.openai.desktop-off.v1';
+
+  /// How long to wait before asking the desktop again after it did not answer.
+  static const Duration retryAfter = Duration(seconds: 60);
+
   final SecretStore _store;
+
+  /// The paired desktop's key, or null (no answer, no key there).
+  final Future<String?> Function()? desktop;
+
   String? _key;
+  bool _declined = false;
   Future<void>? _loading;
+  Future<void>? _asking;
+  DateTime? _askedAt;
 
   final ValueNotifier<KeyStatus> status = ValueNotifier<KeyStatus>(KeyStatus.unknown);
 
-  Future<void> load() => _loading ??= _load();
+  /// Loads the stored key; without one, asks the desktop (at most once a
+  /// minute while it does not answer).
+  Future<void> load() async {
+    await (_loading ??= _load());
+    if (_key != null || _declined || desktop == null) return;
+    final DateTime? at = _askedAt;
+    if (_asking == null && at != null && DateTime.now().difference(at) < retryAfter) return;
+    await (_asking ??= _askDesktop().whenComplete(() => _asking = null));
+  }
 
   Future<void> _load() async {
     try {
       final String? k = await _store.read(_name);
       _key = (k == null || k.isEmpty) ? null : k;
+      _declined = (await _store.read(_declinedName)) == '1';
     } catch (_) {
       _key = null; // no plugin (tests) or unreadable keystore entry
     }
     status.value = _statusOf(_key);
+  }
+
+  Future<void> _askDesktop() async {
+    _askedAt = DateTime.now();
+    String? found;
+    try {
+      final String? raw = await desktop!().timeout(const Duration(seconds: 10));
+      found = raw == null ? null : extractOpenAiKey(raw);
+    } catch (_) {
+      found = null;
+    }
+    if (found == null || _key != null || _declined) return;
+    try {
+      await _store.write(_name, found);
+    } catch (_) {
+      // Unwritable keystore: still usable while the app runs.
+    }
+    _key = found;
+    status.value = _statusOf(found);
   }
 
   static KeyStatus _statusOf(String? k) =>
@@ -97,15 +143,20 @@ class OpenAiKeyStore {
 
   /// Stores a key already normalised by [extractOpenAiKey].
   Future<void> save(String key) async {
-    await load();
+    await (_loading ??= _load());
     await _store.write(_name, key);
+    await _store.delete(_declinedName);
+    _declined = false;
     _key = key;
     status.value = _statusOf(key);
   }
 
+  /// Forgets the key and stops taking the desktop's.
   Future<void> clear() async {
-    await load();
+    await (_loading ??= _load());
     await _store.delete(_name);
+    await _store.write(_declinedName, '1');
+    _declined = true;
     _key = null;
     status.value = KeyStatus.none;
   }

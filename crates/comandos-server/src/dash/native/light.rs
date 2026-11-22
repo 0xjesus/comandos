@@ -28,6 +28,7 @@ pub enum LightRoute {
     ActiveTab,
     TmuxMouseGet,
     TmuxMouseSet,
+    VoiceKey,
 }
 
 const fn entry(verb: Verb, key: Key, route: LightRoute) -> Entry {
@@ -49,6 +50,7 @@ pub const ROUTES: &[Entry] = &[
         Key::ExactOrQuery("/tmux-mouse"),
         LightRoute::TmuxMouseGet,
     ),
+    entry(Verb::Get, Key::Path("/voice/openai-key"), LightRoute::VoiceKey),
     entry(Verb::Post, Key::Raw("/prefs-set"), LightRoute::PrefsSet),
     entry(
         Verb::Post,
@@ -85,6 +87,7 @@ pub async fn answer(native: &Native, route: LightRoute, request: &Request) -> An
                 Err(message) => mouse_error(&message),
             }
         }
+        LightRoute::VoiceKey => voice_key(&native.options().home),
         LightRoute::TmuxMouseSet => {
             let data = data(request)?;
             // `SESSION_RE.match(sess)` con un no-str es TypeError → 500.
@@ -105,6 +108,46 @@ pub async fn answer(native: &Native, route: LightRoute, request: &Request) -> An
                 Some(message) => mouse_error(&message),
             }
         }
+    }
+}
+
+/// Donde vive la llave de OpenAI de la voz de la app de Android: solo en
+/// este archivo del equipo (0600) y en el almacén seguro del teléfono; nunca
+/// en el APK ni en el repositorio.
+pub const VOICE_KEY_FILE: &str = ".config/comandos/openai.key";
+
+/// GET `/voice/openai-key`: la llave de la voz para la app ya vinculada
+/// (con el token del panel, como cualquier otra ruta), que la guarda en su
+/// almacén seguro. Quien tiene el token ya controla las terminales del
+/// equipo: esta ruta no le da nada que no pudiera leer. Sin archivo, o con
+/// algo que no parece una llave, 404. Nunca se anota en ningún registro.
+fn voice_key(home: &Path) -> Answer {
+    let key = std::fs::read_to_string(home.join(VOICE_KEY_FILE))
+        .ok()
+        .and_then(|text| openai_key_in(&text));
+    let Some(key) = key else {
+        return error(StatusCode::NOT_FOUND, "No hay llave de OpenAI en tu equipo");
+    };
+    let mut answer = Reply::json(StatusCode::OK, &json!({"key": key}))
+        .map_err(|_| Fault::Error(HandlerError::Failure))?;
+    answer.headers.insert(
+        http::header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store"),
+    );
+    Ok(answer)
+}
+
+/// La única llave `sk-…` de `text` (admite `OPENAI_API_KEY=…`, comillas y
+/// saltos de línea), o `None` si no hay exactamente una.
+fn openai_key_in(text: &str) -> Option<String> {
+    let mut found: Vec<&str> = text
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .filter(|word| word.starts_with("sk-") && word.len() >= 19)
+        .collect();
+    found.dedup();
+    match found.as_slice() {
+        [one] => Some((*one).to_owned()),
+        _ => None,
     }
 }
 

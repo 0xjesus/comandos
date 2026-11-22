@@ -139,6 +139,8 @@ pub const API_GET: &[&str] = &[
     "/session/message",
     "/usage/board",
     "/credits/openrouter",
+    // La llave de la voz de la app de Android: nunca sin token desde fuera.
+    "/voice/",
 ];
 
 fn py_strip(value: &str) -> &str {

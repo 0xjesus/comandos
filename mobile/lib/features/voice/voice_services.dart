@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/api/api_client.dart';
+import '../../core/connection.dart';
 import '../../core/locator.dart';
 import '../../core/outbox/drafts.dart';
 import 'audio_out.dart';
@@ -29,7 +31,7 @@ class VoiceServices {
   });
 
   factory VoiceServices.live() {
-    final OpenAiKeyStore keys = OpenAiKeyStore();
+    final OpenAiKeyStore keys = OpenAiKeyStore(null, _desktopKey);
     final Future<String> Function() support = _memo(() async => (await getApplicationSupportDirectory()).path);
     final Future<String> Function() cache = _memo(() async => (await getTemporaryDirectory()).path);
     final VoiceSettingsStore settings = VoiceSettingsStore(() async => '${await support()}/voice_settings.json');
@@ -105,6 +107,15 @@ class VoiceServices {
   static Future<String> Function() _memo(Future<String> Function() f) {
     Future<String>? v;
     return () => v ??= f();
+  }
+
+  /// `GET /voice/openai-key` of the paired desktop: its key, or null.
+  static Future<String?> _desktopKey() async {
+    final ComandosApi? api = sl.maybe<Connection>()?.api;
+    if (api == null) return null;
+    final ApiResponse r = await api.request('GET', '/voice/openai-key');
+    final Object? json = r.ok ? r.json : null;
+    return json is Map && json['key'] is String ? json['key'] as String : null;
   }
 
   static Future<void> _appendToDraft(String owner, String text) async {

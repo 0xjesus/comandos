@@ -213,6 +213,52 @@ async fn history_hides_closed_tabs_named_like_an_open_one() {
     front.stop().await;
 }
 
+/// La llave de la voz de la app: sale del archivo del equipo, sin caché; sin
+/// archivo (o sin una llave clara en él), 404. Una llave falsa armada en la
+/// prueba: ninguna llave real en el repositorio.
+#[tokio::test]
+async fn voice_key_comes_from_the_desktop_file_only() {
+    let home = TestHome::new("voice-key");
+    let front = front(&home, dead_port(), home.options()).await;
+    let wire = get(front.port, "/voice/openai-key").await;
+    assert_eq!(wire.status, 404, "{}", wire.text());
+    assert!(!wire.text().contains("sk-"), "{}", wire.text());
+    let fake = format!("sk-{}", "prueba".repeat(4));
+    let dir = home.root.join(".config/comandos");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("openai.key"), format!("OPENAI_API_KEY=\"{fake}\"\n")).unwrap();
+    let wire = get(front.port, "/voice/openai-key").await;
+    assert_eq!(wire.status, 200, "{}", wire.text());
+    assert_eq!(wire.text(), format!(r#"{{"key": "{fake}"}}"#));
+    assert_eq!(wire.header("cache-control"), Some("no-store"));
+    // Desde fuera (Tailscale reenvía con X-Forwarded-For) sin token: 401, y
+    // la llave no sale. Con el token del panel, sí.
+    let outside = |token: String| {
+        let port = front.port;
+        async move {
+            let wire = format!(
+                "GET /voice/openai-key HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+                 X-Forwarded-For: 100.64.0.9\r\n{token}Connection: close\r\n\r\n"
+            );
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            tokio::io::AsyncWriteExt::write_all(&mut stream, wire.as_bytes()).await.unwrap();
+            let mut out = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut stream, &mut out).await.unwrap();
+            String::from_utf8_lossy(&out).into_owned()
+        }
+    };
+    let denied = outside(String::new()).await;
+    assert!(denied.starts_with("HTTP/1.1 401"), "{denied}");
+    assert!(!denied.contains("sk-"), "{denied}");
+    let allowed = outside(format!("X-Comandos-Token: {}\r\n", support::TOKEN)).await;
+    assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
+    assert!(allowed.contains(&fake), "con token");
+    // Dos llaves distintas: no se adivina cuál.
+    fs::write(dir.join("openai.key"), format!("{fake}\n{fake}otra\n")).unwrap();
+    assert_eq!(get(front.port, "/voice/openai-key").await.status, 404);
+    front.stop().await;
+}
+
 #[tokio::test]
 async fn tab_models_and_active_tab() {
     let home = TestHome::new("models");
