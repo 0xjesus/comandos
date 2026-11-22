@@ -512,6 +512,28 @@ pub(crate) async fn cwd_has_live_agent(native: &Native, cwd: &str) -> Result<boo
         .any(|(folder, infos)| folder == cwd && !infos.is_empty()))
 }
 
+/// ¿Corre un proceso de `agent` cuya carpeta es una de `folders`? Mira todos
+/// los procesos, no solo los que `agent_pane_maps` empareja con un pane: un
+/// agente lanzado por `zsh -c "…; exec $SHELL"` (una pestaña revivida) deja
+/// el shell como orden del pane y no sale en `by_cwd`. Solo lee.
+pub(crate) async fn agent_runs_in(
+    native: &Native,
+    agent: &str,
+    folders: Vec<String>,
+) -> Result<bool, Fault> {
+    let ctx = Context::of(native.options());
+    let agent = agent.to_owned();
+    blocking(move || {
+        let (agents, aliases) = process_aliases(&ctx)?;
+        let procs = agent_procs_for_agents(&ctx.proc_root, &aliases, &agents)
+            .map_err(|_| Fault::Decline)?;
+        Ok(procs
+            .iter()
+            .any(|proc| proc.agent == agent && folders.contains(&proc.cwd)))
+    })
+    .await
+}
+
 /// Los campos de `_pane_identity`, en su orden (los del runtime: una sola
 /// implementación para el frente y las operaciones de sesión).
 pub use comandos_runtime::session_configuration::{IDENTITY_FIELDS, identity_key};

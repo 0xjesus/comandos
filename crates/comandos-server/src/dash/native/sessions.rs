@@ -140,6 +140,23 @@ pub const AGENT_LAUNCH: [(&str, &str); 8] = [
     ("acp", "cc-acp"),
 ];
 
+/// Los agentes de `AGENT_LAUNCH` que retoman la última conversación de la
+/// carpeta, con el lanzador que abre una conversación nueva.
+///
+/// Desviación del Python (21-nov-2026, Jesús: «nunca deben duplicarse
+/// sesiones»): `claude --continue` retoma la conversación más reciente de la
+/// carpeta. Si otro pane ya la tiene abierta, la pestaña revivida queda
+/// colgada de la misma conversación: dos procesos escriben el mismo historial
+/// y cada cliente ve una «misma» sesión distinta. Con un agente vivo en la
+/// carpeta se lanza este.
+pub const AGENT_FRESH: [(&str, &str); 5] = [
+    ("claude", "claude"),
+    ("codex", "codex"),
+    ("grok", "grok"),
+    ("opencode", "opencode"),
+    ("agy", "agy"),
+];
+
 /// Lo que `tmux_new_session` antepone al lanzador del agente.
 const PROVIDERS_ENV: &str = "set -a; . \"$HOME/.claude/hooks/providers.env\" 2>/dev/null; set +a; ";
 
@@ -356,6 +373,67 @@ pub(crate) fn agent_launch(opts: &NativeOptions, agent: &str) -> Result<String, 
         .or_else(|| table("claude"))
         .unwrap_or_default()
         .to_owned())
+}
+
+/// El lanzador de `agent` que no retoma nada: `AGENT_FRESH_<AGENTE>` de la
+/// conf; si no, lo que va tras el último `||` de un `AGENT_LAUNCH_<AGENTE>`
+/// propio (por convención «retoma || nuevo»); si no, `AGENT_FRESH`. Bloquea.
+pub(crate) fn agent_fresh(opts: &NativeOptions, agent: &str) -> Result<String, Fault> {
+    if !agent.is_ascii() {
+        return Err(Fault::Decline);
+    }
+    let suffix = agent.replace(['-', '.'], "_").to_ascii_uppercase();
+    let conf = read_conf(opts)?;
+    let own = |key: String| conf_get(&conf, &key).filter(|c| !c.is_empty());
+    if let Some(custom) = own(format!("AGENT_FRESH_{suffix}")) {
+        return Ok(custom.to_owned());
+    }
+    if let Some(custom) = own(format!("AGENT_LAUNCH_{suffix}")) {
+        return Ok(match custom.rsplit_once("||") {
+            Some((_, tail)) if !tail.trim().is_empty() => tail.trim().to_owned(),
+            _ => custom.to_owned(),
+        });
+    }
+    let fresh = |name: &str| AGENT_FRESH.iter().find(|(k, _)| *k == name).map(|(_, v)| *v);
+    let known = |name: &str| {
+        AGENT_LAUNCH
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| *v)
+    };
+    Ok(fresh(agent)
+        .or_else(|| known(agent))
+        .or_else(|| fresh("claude"))
+        .unwrap_or_default()
+        .to_owned())
+}
+
+/// El lanzador de `agent` para una sesión nueva en `cwd`: el que retoma la
+/// última conversación de la carpeta solo si nadie la tiene abierta. Con un
+/// proceso de ese agente vivo en esa carpeta (o sin poder comprobarlo) va el
+/// que abre una conversación nueva: una conversación nunca queda en dos
+/// panes. Se calcula antes del primer efecto.
+async fn launch_for(native: &Native, agent: &str, cwd: &str) -> Result<String, Fault> {
+    let opts = native.options();
+    let (reads, owned) = (opts.clone(), agent.to_owned());
+    let (resume, fresh) = blocking(move || {
+        Ok((agent_launch(&reads, &owned)?, agent_fresh(&reads, &owned)?))
+    })
+    .await?;
+    if resume == fresh {
+        return Ok(resume);
+    }
+    // La carpeta tal como llegó y su ruta real (enlaces, barra final).
+    let path = opts.cwd.join(cwd);
+    let real = blocking(move || Ok(std::fs::canonicalize(path).ok())).await?;
+    let mut folders = vec![cwd.to_owned()];
+    if let Some(real) = real.as_deref().and_then(std::path::Path::to_str)
+        && real != cwd
+    {
+        folders.push(real.to_owned());
+    }
+    let busy = target::agent_runs_in(native, agent, folders).await;
+    Ok(if matches!(busy, Ok(false)) { resume } else { fresh })
 }
 
 /// `agent_set()` (5965): `AGENTS` de la conf (o los de siempre) más los
@@ -891,7 +969,7 @@ async fn revive(
         )));
     }
     let agent = requested_agent(opts, data, sess).await?;
-    let launch = launch_of(opts, &agent).await?;
+    let launch = launch_for(native, &agent, &cwd).await?;
     registry_preflight(native, route, false).await?;
     let out = new_session_with(opts, sess, &cwd, &launch).await?;
     if !out.ok {
@@ -976,7 +1054,7 @@ async fn recover_tab(native: &Native, data: &Map<String, Value>) -> Answer {
     }
     let target = format!("={sess}");
     if !tmux(opts, &["has-session", "-t", &target]).await?.ok {
-        let launch = launch_of(opts, &agent).await?;
+        let launch = launch_for(native, &agent, &cwd).await?;
         registry_preflight(native, PATH, true).await?;
         let out = new_session_with(opts, &sess, &cwd, &launch).await?;
         if !out.ok {
@@ -1049,7 +1127,7 @@ async fn new(native: &Native, pt: &target::PostTarget, data: &Map<String, Value>
     if !proj.is_empty() {
         if !tmux(opts, &["has-session", "-t", &pt.target]).await?.ok {
             let agent = requested_agent(opts, data, sess).await?;
-            let launch = launch_of(opts, &agent).await?;
+            let launch = launch_for(native, &agent, &proj).await?;
             registry_preflight(native, PATH, false).await?;
             let out = new_session_with(opts, sess, &proj, &launch).await?;
             if !out.ok {

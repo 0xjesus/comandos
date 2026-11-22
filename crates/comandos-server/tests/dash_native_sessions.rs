@@ -387,6 +387,67 @@ async fn create_and_revive_match_python() {
     );
 }
 
+/// Un proceso vivo que se llama `claude` con su carpeta en `dir` (un `sleep`
+/// copiado con ese nombre, fuera del `fakebin`). La prueba lo mata.
+fn live_claude(home: &TestHome, dir: &std::path::Path) -> Child {
+    let bin = home.root.join("vivo");
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = bin.join("claude");
+    std::fs::copy("/bin/sleep", &exe).unwrap();
+    std::process::Command::new(&exe)
+        .arg("120")
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+/// 21-nov-2026 (Jesús: «nunca deben duplicarse sesiones»). Recuperar una
+/// pestaña cerrada cuya carpeta ya tenía un `claude` vivo lanzaba `claude
+/// --continue`, que retoma la conversación de ese agente: la misma
+/// conversación quedaba en dos pestañas. Ahora nace con una conversación
+/// nueva.
+#[tokio::test]
+async fn recover_never_resumes_a_conversation_someone_has_open() {
+    if !support::tmux_available() {
+        return;
+    }
+    let home = TestHome::new_short("sess-dup");
+    seed_registry(&home);
+    let legacy = FakeLegacy::start().await;
+    let mut opts = options_for(&home);
+    // El `systemd-run` falso del `fakebin`, como en el gemelo.
+    opts.scope = Some(comandos_server::dash::native::quick::scope_program(
+        home.root.join("fakebin/systemd-run"),
+    ));
+    let fr = front(&home, legacy.port, opts).await;
+    let folder = home.root.join("codebase/p2f");
+    let mut agent = live_claude(&home, &folder);
+    let body = format!(
+        r#"{{"session":"rec","label":"Recuperada","cwd":"{}"}}"#,
+        folder.display()
+    );
+    let wire = request_body(fr.port, "POST", "/recover-tab", "", &body).await;
+    let _ = agent.kill();
+    let _ = agent.wait();
+    assert_eq!(wire.status, 200, "{}", wire.text());
+    let created: Vec<Vec<String>> = support::frozen_twin::tmux_log(&home)
+        .into_iter()
+        .filter(|call| call.first().is_some_and(|c| c == "new-session"))
+        .collect();
+    assert_eq!(created.len(), 1, "{created:?}");
+    let launch = created[0].last().unwrap();
+    assert!(
+        launch.ends_with("set +a; claude; exec $SHELL"),
+        "con un claude vivo en la carpeta no se retoma: {launch}"
+    );
+    assert!(!launch.contains("--continue"), "{launch}");
+    assert!(legacy.requests().is_empty(), "{:?}", legacy.requests());
+    fr.stop().await;
+}
+
 #[tokio::test]
 async fn up_without_dir_writes_nothing() {
     let Some(t) = Twin::start("up-nodir", seed_registry).await else {

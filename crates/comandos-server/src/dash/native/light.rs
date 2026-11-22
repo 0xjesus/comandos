@@ -732,6 +732,16 @@ pub(crate) fn tab_history_from(value: Option<Value>) -> Result<Vec<Map<String, V
     Ok(out)
 }
 
+/// Un nombre de pestaña para compararlo con otro: sin espacios a los lados y
+/// en minúsculas.
+pub(crate) fn label_key(label: &str) -> String {
+    label.trim().to_lowercase()
+}
+
+/// Desviación del Python (21-nov-2026, Jesús: «nunca deben duplicarse
+/// sesiones»): una pestaña cerrada que se llama igual que una abierta no se
+/// ofrece para recuperar. En «Salta a…» salía como «↺ Proyecto · recuperar»
+/// junto al proyecto abierto y abría una segunda pestaña con el mismo nombre.
 async fn tab_history(home: &Path, hooks: &Path, tmux: &Tmux) -> Answer {
     // Se lee antes que tmux solo para poder declinar pronto; un 500 del
     // historial se devuelve después de tmux, en el orden del Python.
@@ -739,10 +749,9 @@ async fn tab_history(home: &Path, hooks: &Path, tmux: &Tmux) -> Answer {
     if matches!(history, Err(Fault::Decline)) {
         return Err(Fault::Decline);
     }
-    let labels: HashSet<String> = tab_labels_domain(home, hooks)?
-        .into_iter()
-        .map(|(k, _)| k)
-        .collect();
+    let open = tab_labels_domain(home, hooks)?;
+    let names: HashSet<String> = open.iter().map(|(_, shown)| label_key(shown)).collect();
+    let labels: HashSet<String> = open.into_iter().map(|(k, _)| k).collect();
     let live = tmux_sessions(tmux).await?;
     let mut out = Vec::new();
     for mut item in history? {
@@ -752,6 +761,10 @@ async fn tab_history(home: &Path, hooks: &Path, tmux: &Tmux) -> Answer {
             .unwrap_or_default()
             .to_owned();
         if labels.contains(&session) {
+            continue;
+        }
+        let shown = item.get("label").and_then(Value::as_str).unwrap_or_default();
+        if names.contains(&label_key(shown)) {
             continue;
         }
         item.insert("alive".into(), json!(live.contains(&session)));

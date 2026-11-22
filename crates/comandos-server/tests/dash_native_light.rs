@@ -189,6 +189,30 @@ async fn tabs_and_history_follow_registry_favorites_and_tmux() {
     front.stop().await;
 }
 
+/// 21-nov-2026: «Salta a…» ofrecía «↺ Proyecto · recuperar» de una pestaña
+/// cerrada junto al proyecto abierto del mismo nombre, y tocarla abría una
+/// segunda pestaña igual. Una cerrada que se llama como una abierta no sale.
+#[tokio::test]
+async fn history_hides_closed_tabs_named_like_an_open_one() {
+    if !tmux_available() {
+        eprintln!("tmux no está instalado: se salta");
+        return;
+    }
+    let home = TestHome::new("tabs-same-name");
+    new_tmux_sessions(&home, &["local", "s1"]);
+    home.write("app-tabs.json", r#"{"s1": "Proyecto"}"#);
+    home.write(
+        "app-tabs-history.json",
+        r#"[{"session": "v1", "label": "PROYECTO", "cwd": "/p", "ts": 3}, {"session": "v2", "label": "Otro", "cwd": "/p", "ts": 2}]"#,
+    );
+    let front = front(&home, dead_port(), home.options()).await;
+    assert_eq!(
+        get(front.port, "/tab-history").await.text(),
+        r#"[{"session": "v2", "label": "Otro", "cwd": "/p", "agent": "claude", "ts": 2, "reason": "closed", "alive": false}]"#
+    );
+    front.stop().await;
+}
+
 #[tokio::test]
 async fn tab_models_and_active_tab() {
     let home = TestHome::new("models");
