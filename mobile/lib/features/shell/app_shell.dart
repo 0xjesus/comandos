@@ -268,6 +268,9 @@ class _AppShellState extends State<AppShell> with RouteAware {
                       onNew: _newSession,
                       onChat: _toggleChat,
                       onOpen: _switcher,
+                      onCar: sl.maybe<CarMode>() == null
+                          ? null
+                          : () => unawaited(CarMode.open(context, session: _shell.active, pane: _shell.pane)),
                     ),
                   ),
                   ListenableBuilder(

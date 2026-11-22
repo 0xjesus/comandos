@@ -20,6 +20,7 @@ class NavKeys extends StatelessWidget {
     required this.onNew,
     required this.onChat,
     required this.onOpen,
+    this.onCar,
   });
 
   final bool panelOpen;
@@ -28,6 +29,9 @@ class NavKeys extends StatelessWidget {
   final VoidCallback onNew;
   final VoidCallback onChat;
   final VoidCallback onOpen;
+
+  /// Modo auto (the phone's own key, no web equivalent): hidden when null.
+  final VoidCallback? onCar;
 
   static Widget _key({
     required WebIconData icon,
@@ -77,6 +81,16 @@ class NavKeys extends StatelessWidget {
             onTap: onNew,
           ),
           const Spacer(),
+          if (onCar != null) ...<Widget>[
+            _key(
+              key: const ValueKey<String>('tab-car'),
+              icon: WebIcons.car,
+              iconSize: 19,
+              tooltip: 'Modo auto',
+              onTap: onCar!,
+            ),
+            const SizedBox(width: 6),
+          ],
           _key(
             key: const ValueKey<String>('tab-chat'),
             icon: chatMode ? WebIcons.prompt : WebIcons.bubble,
