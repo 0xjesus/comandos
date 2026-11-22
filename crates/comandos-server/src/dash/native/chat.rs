@@ -24,6 +24,10 @@ pub const ROUTES: &[Entry] = &[Entry {
     route: NativeRoute::Chat,
 }];
 const TAIL: u64 = 1536 * 1024;
+/// A screenshot or a pasted image is one record of a megabyte or more, so a few of
+/// them fill [`TAIL`] and the chat showed one answer for as long as the agent kept
+/// taking them. The window grows (×4) until it holds [`MAX_MESSAGES`], up to this.
+const MAX_TAIL: u64 = 24 * 1024 * 1024;
 const MAX_MESSAGES: usize = 80;
 const MAX_TEXT: usize = 6000;
 /// Inspecting processes is the expensive part; a pane keeps its transcript while its pid does.
@@ -161,19 +165,39 @@ pub fn parse(records: &str) -> Vec<(&'static str, String)> {
     out.into_iter().skip(skip).collect()
 }
 
-fn read_tail(path: &str) -> Option<String> {
+/// The last `tail` bytes from the first whole record on, and whether that reached the start.
+fn read_tail(path: &str, tail: u64) -> Option<(String, bool)> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
-    let start = len.saturating_sub(TAIL);
+    let start = len.saturating_sub(tail);
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut bytes = Vec::new();
-    file.take(TAIL).read_to_end(&mut bytes).ok()?;
+    file.take(tail).read_to_end(&mut bytes).ok()?;
     let slice = if start > 0 {
-        &bytes[bytes.iter().position(|b| *b == b'\n')? + 1..]
+        // One record longer than the whole window: nothing whole in it yet.
+        match bytes.iter().position(|b| *b == b'\n') {
+            Some(i) => &bytes[i + 1..],
+            None => &[][..],
+        }
     } else {
         &bytes
     };
-    Some(String::from_utf8_lossy(slice).into_owned())
+    Some((String::from_utf8_lossy(slice).into_owned(), start == 0))
+}
+
+/// The latest messages of a transcript: a full window when the file has one.
+fn recent(path: &str) -> Vec<(&'static str, String)> {
+    let mut tail = TAIL;
+    loop {
+        let Some((records, whole)) = read_tail(path, tail) else {
+            return Vec::new();
+        };
+        let messages = parse(&records);
+        if messages.len() >= MAX_MESSAGES || whole || tail >= MAX_TAIL {
+            return messages;
+        }
+        tail = (tail * 4).min(MAX_TAIL);
+    }
 }
 
 /// One message as the phone draws it. Agent answers and prompts carry their markdown as
@@ -394,9 +418,7 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
         if token == since {
             return json!({"ok":true,"unchanged":true,"token":token,"pane":pane,"age":age});
         }
-        let messages: Vec<Value> = read_tail(&path)
-            .map(|records| parse(&records))
-            .unwrap_or_default()
+        let messages: Vec<Value> = recent(&path)
             .into_iter()
             .map(|(r, t)| json!({"r":r,"h":bubble(r, &t),"t":t}))
             .collect();
@@ -493,6 +515,31 @@ mod tests {
                 ("a", "Listo.".into()),
             ]
         );
+    }
+    #[test]
+    fn screenshots_do_not_shrink_the_window_to_one_answer() {
+        // Five turns, then the agent takes screenshots: each tool result is ~1 MB.
+        let mut rows: Vec<String> = Vec::new();
+        for n in 0..5 {
+            rows.push(format!(r#"{{"type":"user","message":{{"content":"pregunta {n}"}}}}"#));
+            rows.push(format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"respuesta {n}"}}]}}}}"#));
+        }
+        let shot = "A".repeat(1024 * 1024);
+        for n in 0..4 {
+            rows.push(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Screenshot","input":{}}]}}"#.into());
+            rows.push(format!(r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","content":[{{"type":"image","data":"{shot}"}}]}}]}}}}"#));
+            rows.push(format!(r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"captura {n}"}}]}}}}"#));
+        }
+        let dir = std::env::temp_dir().join(format!("comandos-chat-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        std::fs::write(&path, rows.join("\n") + "\n").unwrap();
+        let got = super::recent(path.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let texts: Vec<&str> = got.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(texts.first(), Some(&"pregunta 0"), "{texts:?}");
+        assert_eq!(texts.last(), Some(&"captura 3"), "{texts:?}");
+        assert_eq!(got.len(), 18, "{texts:?}");
     }
     #[test]
     fn codex_rollout_messages_and_calls() {
