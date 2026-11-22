@@ -301,6 +301,11 @@ const WRAPPER_SHELLS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "ksh"];
 /// non-shell process of that group, named the way tmux names it (basename of
 /// `argv[0]`). A shell at its prompt (the group is the pane's own shell) or a
 /// suspended job keeps the tmux name.
+///
+/// A pane started as `zsh -c "…; claude …; exec $SHELL"` (a tab ComandOS
+/// revives) is its own group leader too, but it is not at a prompt: a
+/// non-interactive shell runs its command in its own group. When the pane's
+/// shell runs a command string (`-c`), its group is searched as well.
 pub fn foreground_command(proc_root: &Path, pane_pid: i64, command: &str) -> String {
     if !WRAPPER_SHELLS.contains(&command) || pane_pid <= 0 {
         return command.to_owned();
@@ -312,7 +317,9 @@ pub fn foreground_command(proc_root: &Path, pane_pid: i64, command: &str) -> Str
             .ok()
     };
     // After `)`: state, ppid, pgrp, session, tty_nr, tpgid.
-    let Some(group) = field(pane_pid, 5).filter(|g| *g > 0 && *g != pane_pid) else {
+    let Some(group) = field(pane_pid, 5).filter(|g| {
+        *g > 0 && (*g != pane_pid || runs_command_string(&proc_cmdline(proc_root, pane_pid)))
+    }) else {
         return command.to_owned();
     };
     let mut queue = std::collections::VecDeque::from([group]);
@@ -338,6 +345,16 @@ pub fn foreground_command(proc_root: &Path, pane_pid: i64, command: &str) -> Str
         queue.extend(children.split_whitespace().filter_map(|c| c.parse::<i64>().ok()));
     }
     command.to_owned()
+}
+
+/// A shell started with a command string (`sh -c …`, `zsh -lc …`): one of the
+/// short options before the first operand is `c`. An interactive shell
+/// (`-zsh`, `zsh`, `bash -l`) is not.
+fn runs_command_string(argv: &[String]) -> bool {
+    argv.iter()
+        .skip(1)
+        .take_while(|a| a.starts_with('-') && *a != "--" && *a != "-")
+        .any(|a| !a.starts_with("--") && a[1..].contains('c'))
 }
 
 /// [`foreground_command`] for every row of a pane inventory.
@@ -1098,6 +1115,18 @@ mod tests {
         fake_proc(&root, 200, 200, 200, &["-zsh"], &[201]);
         fake_proc(&root, 201, 201, 200, &["claude"], &[]);
         assert_eq!(foreground_command(&root, 200, "zsh"), "zsh");
+        // `zsh -c "…; claude --continue || claude; exec $SHELL"` (a revived
+        // tab): the pane's own shell leads the group and runs the agent in it.
+        fake_proc(&root, 400, 400, 400, &["zsh", "-c", "set -a; claude --continue || claude; exec $SHELL"], &[401]);
+        fake_proc(&root, 401, 400, 400, &["claude", "--continue"], &[]);
+        assert_eq!(foreground_command(&root, 400, "zsh"), "claude");
+        // After `exec $SHELL` the same pid is an interactive shell at its prompt.
+        fake_proc(&root, 500, 500, 500, &["/usr/bin/zsh"], &[501]);
+        fake_proc(&root, 501, 501, 500, &["claude"], &[]);
+        assert_eq!(foreground_command(&root, 500, "zsh"), "zsh");
+        assert!(!runs_command_string(&["bash".into(), "-l".into()]));
+        assert!(runs_command_string(&["sh".into(), "-lc".into(), "x".into()]));
+        assert!(!runs_command_string(&["zsh".into(), "script-c.sh".into()]));
         // A pane whose foreground already is the agent is left alone.
         assert_eq!(foreground_command(&root, 102, "claude"), "claude");
         // Codex under node keeps the name tmux would give it.

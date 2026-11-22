@@ -387,13 +387,15 @@ async fn create_and_revive_match_python() {
     );
 }
 
-/// Un proceso vivo que se llama `claude` con su carpeta en `dir` (un `sleep`
-/// copiado con ese nombre, fuera del `fakebin`). La prueba lo mata.
+/// Un proceso vivo que se llama `claude` con su carpeta en `dir` (un enlace
+/// a `sleep` con ese nombre, fuera del `fakebin`; un enlace y no una copia:
+/// ejecutar un archivo recién escrito choca con otras pruebas que lanzan
+/// procesos a la vez, «Text file busy»). La prueba lo mata.
 fn live_claude(home: &TestHome, dir: &std::path::Path) -> Child {
     let bin = home.root.join("vivo");
     std::fs::create_dir_all(&bin).unwrap();
     let exe = bin.join("claude");
-    std::fs::copy("/bin/sleep", &exe).unwrap();
+    std::os::unix::fs::symlink("/bin/sleep", &exe).unwrap();
     std::process::Command::new(&exe)
         .arg("120")
         .current_dir(dir)
