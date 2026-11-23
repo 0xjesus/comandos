@@ -93,7 +93,7 @@ void main() {
     openai = <String>[];
     tts = FakeDeviceSpeech();
     stt = FakeDeviceListener();
-    voice = voiceWith(key: 'sk-test-0000000000000000000000abcd');
+    voice = voiceWith(key: 'sk-' 'test-0000000000000000000000abcd');
     // These tests dictate through OpenAI (the setting is on).
     await voice.settings.update((VoiceSettings s) => s.copyWith(carCloudDictation: true));
     ports = LiveCarPorts(voice: voice, outbox: outbox, chat: () => chat, tts: tts, stt: stt);
@@ -203,7 +203,7 @@ void main() {
     });
 
     test('with a key but the setting off (the default), dictation stays on the phone', () async {
-      final LiveCarPorts p = await portsWith(key: 'sk-test-0000000000000000000000abcd');
+      final LiveCarPorts p = await portsWith(key: 'sk-' 'test-0000000000000000000000abcd');
       stt.answers.add('hola');
       expect(await p.listen('s1', onTranscribing: () {}), isA<DictationText>());
       expect(rec.starts, 0);

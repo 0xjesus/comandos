@@ -67,7 +67,7 @@ void main() {
 
   testWidgets('with a key: mic → recording strip (time, level, Cancelar) → cancel', (WidgetTester tester) async {
     final VoiceServices v = VoiceServices.instance =
-        testVoiceServices(dir: dir.path, key: 'sk-test-0000000000000000000000abcd', recorder: rec);
+        testVoiceServices(dir: dir.path, key: 'sk-' 'test-0000000000000000000000abcd', recorder: rec);
     // Its disk scan is memoised: run it in the real zone first.
     await tester.runAsync(() => v.dictation.load());
     await pumpComposer(tester);

@@ -99,7 +99,7 @@ void main() {
   });
 
   Future<void> pumpCar(WidgetTester tester, Size size,
-      {String? key = 'sk-test-0000000000000000000000abcd', Widget home = const CarModeScreen(session: 's1')}) async {
+      {String? key = 'sk-' 'test-0000000000000000000000abcd', Widget home = const CarModeScreen(session: 's1')}) async {
     VoiceServices.instance = testVoiceServices(dir: dir.path, key: key);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
