@@ -305,6 +305,42 @@ async fn key_dead_pane_never_falls_back() {
     assert_eq!(a, b);
 }
 
+/// Un deslizón en la terminal del teléfono abre el historial de tmux (modo
+/// copia); ahí las flechas del dock movían el historial y no el menú del
+/// agente. `/key` sale del historial antes de teclear; Escape solo sale.
+#[tokio::test]
+async fn key_leaves_the_history_before_typing() {
+    let Some(t) = Twin::start("khist", seed).await else {
+        return;
+    };
+    assert_confined(&t);
+    let pane = t.tmux_a(&["display-message", "-p", "-t", "=s1:", "#{pane_id}"]);
+    let pane = pane.trim().to_owned();
+    let in_mode = || t.tmux_a(&["display-message", "-p", "-t", &pane, "#{pane_in_mode}"]).trim().to_owned();
+    t.tmux_a(&["copy-mode", "-t", &pane]);
+    assert_eq!(in_mode(), "1");
+    let body = format!(r#"{{"session":"s1","pane":"{pane}","key":"Escape"}}"#);
+    let run = t.post_front("/key", &body).await;
+    assert_eq!(run.status, 200, "{}", run.text());
+    assert_eq!(in_mode(), "0", "Escape sale del historial");
+    let keys = |log: &[Vec<String>]| -> Vec<String> {
+        log.iter()
+            .filter(|c| c.first().is_some_and(|v| v == "send-keys"))
+            .map(|c| c.join(" "))
+            .collect()
+    };
+    let sent = keys(&support::twin::tmux_log(&t.a));
+    assert!(sent.iter().any(|c| c.ends_with("cancel")), "{sent:?}");
+    assert!(!sent.iter().any(|c| c.ends_with(" Escape")), "Escape no llega al agente: {sent:?}");
+    t.tmux_a(&["copy-mode", "-t", &pane]);
+    let body = format!(r#"{{"session":"s1","pane":"{pane}","key":"Enter"}}"#);
+    let run = t.post_front("/key", &body).await;
+    assert_eq!(run.status, 200, "{}", run.text());
+    assert_eq!(in_mode(), "0");
+    let sent = keys(&support::twin::tmux_log(&t.a));
+    assert!(sent.last().is_some_and(|c| c.ends_with(" Enter")), "{sent:?}");
+}
+
 /// Una petición como la manda `comandos-notifyd` (HTTP/1.0, sin token ni
 /// `Connection`): solo cuenta el estado.
 async fn notifyd_post(port: u16, path: &str, body: &str) -> u16 {

@@ -108,16 +108,19 @@ pub fn font_size(base: f64, per_px: (f64, f64), host: (f64, f64), pane: (u16, u1
 
 /// CSS that moves the window's cells so the pane sits at the host's top-left corner,
 /// and hides every cell outside it: `(transform, clip-path)` for `.xterm-screen`.
-pub fn view_css(plan: &Plan, cell: (f64, f64)) -> (String, String) {
+/// A pane taller than the host (the phone's keyboard is up) shows its bottom rows,
+/// where the prompt and the agent's menus are; the host clips the rest.
+pub fn view_css(plan: &Plan, cell: (f64, f64), host_height: f64) -> (String, String) {
     let (cw, ch) = cell;
     // `{}` prints 390.0 as `390`: plain CSS numbers.
     let px = |n: f64| format!("{}px", n + 0.0);
     let x = f64::from(plan.left) * cw;
+    let lift = (f64::from(plan.height) * ch - host_height).max(0.).ceil();
     let y = f64::from(plan.top) * ch;
     let right = f64::from(plan.cols.saturating_sub(plan.left.saturating_add(plan.width))) * cw;
     let bottom = f64::from(plan.rows.saturating_sub(plan.top.saturating_add(plan.height))) * ch;
     (
-        format!("translate({}, {})", px(-x), px(-y)),
+        format!("translate({}, {})", px(-x), px(-(y + lift))),
         format!("inset({} {} {} {})", px(y), px(right), px(bottom), px(x)),
     )
 }
@@ -196,8 +199,17 @@ mod tests {
     #[test]
     fn the_view_shifts_the_pane_to_the_corner_and_clips_the_rest() {
         let p = plan(&split(), Some("%4"), true).unwrap();
-        let (transform, clip) = view_css(&p, (5., 10.));
+        let (transform, clip) = view_css(&p, (5., 10.), 700.);
         assert_eq!(transform, "translate(-390px, -10px)");
         assert_eq!(clip, "inset(10px 0px 10px 390px)");
+    }
+
+    #[test]
+    fn with_the_keyboard_up_the_view_keeps_the_bottom_rows() {
+        // 39 rows of 10 px in a 300 px host: the top 90 px go under the host's edge.
+        let p = plan(&split(), Some("%4"), true).unwrap();
+        let (transform, clip) = view_css(&p, (5., 10.), 300.);
+        assert_eq!(transform, "translate(-390px, -100px)");
+        assert_eq!(clip, "inset(10px 0px 10px 390px)", "the clip is the pane's own box");
     }
 }

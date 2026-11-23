@@ -67,6 +67,9 @@ pub struct Page {
     panes: Vec<Value>,
     /// The person's font size (server preferences), restored when the crop ends.
     base_font: f64,
+    /// Host width and the tallest height seen at that width: the crop's font fits
+    /// the pane in it, so the phone's keyboard coming up never shrinks the letters.
+    crop_host: (f64, f64),
 }
 fn window() -> Result<web_sys::Window, JsValue> {
     web_sys::window().ok_or_else(|| "sin window".into())
@@ -1043,6 +1046,16 @@ fn crop_view(page: &Rc<RefCell<Page>>) {
     if host_size.0 <= 0.0 || host_size.1 <= 0.0 {
         return;
     }
+    let tallest = {
+        let mut p = page.borrow_mut();
+        if (p.crop_host.0 - host_size.0).abs() >= 1.0 {
+            // A new width (the phone turned): start over from this height.
+            p.crop_host = host_size;
+        } else if host_size.1 > p.crop_host.1 {
+            p.crop_host.1 = host_size.1;
+        }
+        p.crop_host.1
+    };
     let measure = |t: &Term| {
         t.try_borrow().ok()?.with(|i| {
             let (cw, ch) = i.metrics.css_cell(i.size.cols, i.size.rows).unwrap_or((0.0, 0.0));
@@ -1053,7 +1066,7 @@ fn crop_view(page: &Rc<RefCell<Page>>) {
     if cw <= 0.0 || ch <= 0.0 {
         return;
     }
-    let target = comandos_term::crop::font_size(base, (cw / font, ch / font), host_size, (plan.width, plan.height));
+    let target = comandos_term::crop::font_size(base, (cw / font, ch / font), (host_size.0, tallest), (plan.width, plan.height));
     let mut cell = (cw, ch);
     if (target - font).abs() >= 0.25 {
         if let Ok(mut tb) = t.try_borrow_mut() {
@@ -1071,7 +1084,7 @@ fn crop_view(page: &Rc<RefCell<Page>>) {
             }
         }
     }
-    screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell)));
+    screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell, host_size.1)));
     if (target - font).abs() >= 0.25 {
         // The new size finishes loading asynchronously and may re-measure the cell.
         let weak = Rc::downgrade(page);
@@ -1083,7 +1096,8 @@ fn crop_view(page: &Rc<RefCell<Page>>) {
                     t.with(|i| i.metrics.css_cell(i.size.cols, i.size.rows)).flatten()
                 })
             {
-                screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell)));
+                let height = element("term").map_or(f64::MAX, |host| content_size(&host).1);
+                screen_style(&t, Some(comandos_term::crop::view_css(&plan, cell, height)));
             }
         });
     }
@@ -1363,6 +1377,7 @@ fn attach_main() -> Result<(), JsValue> {
         wanted_pane: None,
         panes: Vec::new(),
         base_font: 14.0,
+        crop_host: (0.0, 0.0),
     }));
     if page.borrow().debug
         && let Some(dbg) = element("dbg")

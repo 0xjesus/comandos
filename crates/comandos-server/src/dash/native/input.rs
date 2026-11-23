@@ -413,6 +413,20 @@ async fn key(
         let message = format!("No hay sesion tmux '{}'", pt.sess);
         return error_reply(StatusCode::NOT_FOUND, &message);
     }
+    // A swipe on the phone's terminal opens tmux's history (copy mode), and there
+    // every key moves the history instead of reaching the agent: the dock's
+    // arrows could not pick an option in a menu. A key leaves the history first;
+    // Escape only leaves it, so it never interrupts the agent by surprise.
+    let mode = opts
+        .tmux
+        .run(&["display-message", "-p", "-t", &pt.pane, "#{pane_in_mode}"])
+        .await;
+    if mode.is_ok_and(|m| m.ok && py::strip(&m.stdout) == "1") {
+        let left = mutate(fx, opts, &["send-keys", "-X", "-t", &pt.pane, "cancel"]).await?;
+        if key == "Escape" && left.ok {
+            return ok_reply();
+        }
+    }
     let typed = mutate(fx, opts, &["send-keys", "-t", &pt.pane, key]).await?;
     if !typed.ok {
         return error_reply(
