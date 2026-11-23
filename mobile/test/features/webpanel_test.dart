@@ -373,10 +373,12 @@ void main() {
       await tester.pumpWidget(pane('term-r1', pane: '%4'));
       expect(s.posted.last, selectPaneMessage('%4'));
 
-      await tester.pumpWidget(pane('term-r2'));
+      await tester.pumpWidget(pane('term-r2', pane: '%7'));
       await tester.pump();
-      expect(surfaces, hasLength(1), reason: 'same WebView navigates');
-      expect(s.loads.last.queryParameters['arg'], 'term-r2');
+      expect(surfaces, hasLength(1), reason: 'same WebView');
+      expect(s.loads, hasLength(1), reason: 'the page switches in place, no reload');
+      expect(s.posted, anyElement(equals(sessionMessage('term-r2'))));
+      expect(s.posted, anyElement(equals(selectPaneMessage('%7'))));
       expect(requests.where((String r) => r == 'POST /tmux-mouse'), hasLength(2),
           reason: 'selection of the old session restored');
 
@@ -405,6 +407,8 @@ void main() {
 
       await tester.pumpWidget(pane('term-r1', show: false));
       await tester.pump(const Duration(seconds: 31));
+      expect(s.disposed, isFalse, reason: 'with the app open it stays warm for minutes');
+      await tester.pump(WebPorts.terminalKeep);
       expect(s.disposed, isTrue);
       expect(TerminalEngine.live, isNull);
       expect(WebSession.users, 0);

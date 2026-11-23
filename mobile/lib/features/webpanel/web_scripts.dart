@@ -99,6 +99,11 @@ String postToPage(Map<String, Object?> message) =>
 /// composer (chat_view.rs `DOCK`), the page hides its own.
 const Map<String, Object?> kDockMessage = <String, Object?>{'source': 'comandos', 'type': 'dock', 'on': true};
 
+/// Moves the loaded page to another session in place (`parent.rs` `session`):
+/// the page only reconnects its socket, no reload of the page, its WASM and fonts.
+Map<String, Object?> sessionMessage(String session) =>
+    <String, Object?>{'source': 'comandos', 'type': 'session', 'session': session};
+
 Map<String, Object?> selectPaneMessage(String pane) =>
     <String, Object?>{'source': 'comandos', 'type': 'select-pane', 'pane': pane};
 

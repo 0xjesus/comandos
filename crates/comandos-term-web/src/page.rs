@@ -780,6 +780,21 @@ fn switch_session(page: &Rc<RefCell<Page>>, session: &str) {
     if let Some(t) = term(page) {
         t.borrow_mut().reset();
     }
+    // The pane layer reads its session from the URL (`arg`) when it attaches: point
+    // the URL at the new session and attach it again, or it keeps listing (and
+    // cropping to) the old session's panes.
+    if let Ok(w) = window()
+        && let Ok(url) = web_sys::Url::new(&w.location().href().unwrap_or_default())
+    {
+        url.search_params().set("arg", session);
+        if let Ok(history) = Reflect::get(&w, &JsValue::from_str("history"))
+            && let Ok(replace) = Reflect::get(&history, &JsValue::from_str("replaceState"))
+            && let Some(replace) = replace.dyn_ref::<js_sys::Function>()
+        {
+            let _ = replace.call3(&history, &JsValue::NULL, &JsValue::from_str(""), &JsValue::from_str(&url.href()));
+        }
+    }
+    let _ = crate::pane_chrome::attach();
     schedule_connect(page, true);
 }
 fn dispose(page: &Rc<RefCell<Page>>) {

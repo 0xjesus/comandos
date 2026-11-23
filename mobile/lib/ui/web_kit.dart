@@ -507,6 +507,8 @@ abstract final class WebIcons {
     'p:M5 17h14M6 17v2M18 17v2M4 13l2-5a2 2 0 0 1 1.9-1.3h8.2A2 2 0 0 1 18 8l2 5v4H4v-4z',
     'p:M7.5 13.5h.01M16.5 13.5h.01',
   ]);
+  /// «Ponerse al día»: a stack of cards.
+  static const WebIconData deck = WebIconData(<String>['r:4 8 13 13 2', 'p:M8 4.5h10a2 2 0 0 1 2 2V16']);
   static const WebIconData openai = WebIconData(<String>[
     'p:M12 3.2l7.6 4.4v8.8L12 20.8l-7.6-4.4V7.6L12 3.2z',
     'p:M12 7.4l3.9 2.3v4.6L12 16.6l-3.9-2.3V9.7L12 7.4z',

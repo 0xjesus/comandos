@@ -16,12 +16,14 @@ import '../../ui/web_kit.dart';
 import '../../ui/widgets/banner_strip.dart';
 import '../../ui/widgets/outbox_indicator.dart';
 import '../car/car_mode.dart';
+import '../chat/pane_rows.dart';
 import '../chat/session_view.dart';
 import '../new_session/new_session.dart';
 import '../sessions/sections.dart';
 import '../sessions/sessions_controller.dart';
 import '../usage/usage_summary.dart';
 import '../webpanel/web_panel.dart';
+import 'catch_up.dart';
 import 'nav_bar.dart';
 import 'peek_card.dart';
 import 'session_switcher.dart';
@@ -60,6 +62,8 @@ class _AppShellState extends State<AppShell> with RouteAware {
   final AppVisibility _appVisible = sl.get<AppVisibility>();
   final GlobalKey _menuKey = GlobalKey();
   final GlobalKey _navKey = GlobalKey();
+  final CatchUp _catchUp = CatchUp();
+  Timer? _advance;
   bool _covered = false;
   bool _remoteOn = false;
   String? _seenFor;
@@ -97,6 +101,8 @@ class _AppShellState extends State<AppShell> with RouteAware {
     _feed.dispose();
     _tabs.dispose();
     _shell.dispose();
+    _advance?.cancel();
+    _catchUp.dispose();
     super.dispose();
   }
 
@@ -165,6 +171,49 @@ class _AppShellState extends State<AppShell> with RouteAware {
     _tabs.poke();
     _feed.poke();
     _open(s);
+  }
+
+  // ---- «Ponerse al día» ------------------------------------------------------
+
+  void _toggleCatchUp() {
+    _advance?.cancel();
+    if (_catchUp.on) {
+      _catchUp.stop();
+      showWebToast(context, 'Saliste de Ponerse al día');
+      return;
+    }
+    if (!_catchUp.start(buildCatchUpDeck(_feed.feed))) {
+      showWebToast(context, 'Nada pendiente: ningún split te espera');
+      return;
+    }
+    if (!_shell.chatMode) _shell.toggleChat();
+    _goCard(_catchUp.current!);
+    showWebToast(context, '${_catchUp.deck.length} splits · desliza o envía para pasar al siguiente');
+  }
+
+  void _goCard(CatchUpCard c) {
+    if (c.pane case final String pane) savePane(c.session, pane);
+    _shell.open(c.session, pane: c.pane);
+  }
+
+  void _catchStep(int delta) {
+    _advance?.cancel();
+    final CatchUpCard? c = _catchUp.step(delta);
+    if (c != null) {
+      _goCard(c);
+    } else if (mounted) {
+      showWebToast(context, 'Listo: ya te pusiste al día');
+    }
+  }
+
+  /// Sent or answered in «Ponerse al día»: on to the next split once the
+  /// bubble had a moment on screen.
+  void _onDone() {
+    if (!_catchUp.on) return;
+    _advance?.cancel();
+    _advance = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) _catchStep(1);
+    });
   }
 
   void _toggleChat() {
@@ -241,6 +290,14 @@ class _AppShellState extends State<AppShell> with RouteAware {
     ));
   }
 
+  /// The split and model of the open session the phone talks to.
+  String? _activeDetail() {
+    final String? a = _shell.panelOpen ? null : _shell.active;
+    if (a == null) return null;
+    final SessionSummary? e = _feed.entry(a);
+    return e == null ? null : splitLabel(e, savedPanes[a] ?? _shell.pane);
+  }
+
   // ---- build ----------------------------------------------------------------
 
   @override
@@ -260,7 +317,7 @@ class _AppShellState extends State<AppShell> with RouteAware {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   ListenableBuilder(
-                    listenable: _shell,
+                    listenable: Listenable.merge(<Listenable>[_shell, _catchUp]),
                     builder: (BuildContext context, Widget? _) => NavKeys(
                       panelOpen: _shell.panelOpen,
                       chatMode: _shell.chatMode,
@@ -268,18 +325,26 @@ class _AppShellState extends State<AppShell> with RouteAware {
                       onNew: _newSession,
                       onChat: _toggleChat,
                       onOpen: _switcher,
+                      onCatchUp: _toggleCatchUp,
+                      catchUpOn: _catchUp.on,
                       onCar: sl.maybe<CarMode>() == null
                           ? null
                           : () => unawaited(CarMode.open(context, session: _shell.active, pane: _shell.pane)),
                     ),
                   ),
                   ListenableBuilder(
-                    listenable: Listenable.merge(<Listenable>[_tabs, _feed, _shell]),
+                    listenable: Listenable.merge(<Listenable>[_tabs, _feed, _shell, panePicks]),
                     builder: (BuildContext context, Widget? _) => TabChips(
                       tabs: _tabs.tabs,
                       feed: _feed.feed,
                       active: _shell.panelOpen ? null : _shell.active,
-                      onTap: _open,
+                      activeDetail: _activeDetail(),
+                      onTap: (String s) {
+                        // Picking a tab by hand leaves the queue.
+                        _advance?.cancel();
+                        _catchUp.stop();
+                        _open(s);
+                      },
                       onClose: _askClose,
                       onLongPress: _peek,
                     ),
@@ -332,19 +397,24 @@ class _AppShellState extends State<AppShell> with RouteAware {
 
   Widget _session(String session) {
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[_tabs, _feed]),
+      listenable: Listenable.merge(<Listenable>[_tabs, _feed, _catchUp, panePicks]),
       builder: (BuildContext context, Widget? _) {
         final SessionSummary? e = _feed.entry(session);
         final String title = _tabs.find(session)?.label ?? e?.label ?? session;
         final String model = modelLine(e);
+        final bool queue = _catchUp.on;
+        final String? split = queue && e != null ? splitLabel(e, savedPanes[session]) : null;
         return SessionView(
           key: ValueKey<String>('sv:$session'),
           session: session,
           title: title,
-          subtitle: model.isEmpty ? null : model,
+          subtitle: queue
+              ? <String>['Al día ${_catchUp.position}', ?split].join(' · ')
+              : (model.isEmpty ? null : model),
           terminal: !_shell.chatMode,
-          onPrev: () => _step(-1),
-          onNext: () => _step(1),
+          onPrev: () => queue ? _catchStep(-1) : _step(-1),
+          onNext: () => queue ? _catchStep(1) : _step(1),
+          onDone: _onDone,
         );
       },
     );

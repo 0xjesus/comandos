@@ -29,7 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     final String? pane = widget.pane;
-    if (pane != null && pane.startsWith('%')) savedPanes[widget.session] = pane;
+    if (pane != null && pane.startsWith('%')) savePane(widget.session, pane);
   }
 
   @override

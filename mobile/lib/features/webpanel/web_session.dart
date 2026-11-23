@@ -20,8 +20,12 @@ abstract final class WebPorts {
       {Map<String, String>? query, Map<String, Object?>? body}) request = _request;
   static ValueListenable<bool>? Function() visibility = _visibility;
 
-  /// Kept-warm terminal lifetime after it leaves the screen (see terminal_pane.dart).
+  /// Kept-warm terminal lifetime while the app is in the background (see terminal_pane.dart).
   static Duration terminalWarm = const Duration(seconds: 30);
+
+  /// Kept-warm terminal lifetime after it leaves the screen with the app open
+  /// (chat ↔ terminal, another panel): coming back paints at once.
+  static Duration terminalKeep = const Duration(minutes: 3);
 
   static void reset() {
     surfaces = FlutterWebSurface.new;
@@ -30,6 +34,7 @@ abstract final class WebPorts {
     request = _request;
     visibility = _visibility;
     terminalWarm = const Duration(seconds: 30);
+    terminalKeep = const Duration(minutes: 3);
   }
 
   static PairedServer? _server() => sl.maybe<Connection>()?.server;

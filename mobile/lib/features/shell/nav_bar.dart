@@ -21,6 +21,8 @@ class NavKeys extends StatelessWidget {
     required this.onChat,
     required this.onOpen,
     this.onCar,
+    this.onCatchUp,
+    this.catchUpOn = false,
   });
 
   final bool panelOpen;
@@ -32,6 +34,10 @@ class NavKeys extends StatelessWidget {
 
   /// Modo auto (the phone's own key, no web equivalent): hidden when null.
   final VoidCallback? onCar;
+
+  /// «Ponerse al día» (the phone's own key): hidden when null; lit while on.
+  final VoidCallback? onCatchUp;
+  final bool catchUpOn;
 
   static Widget _key({
     required WebIconData icon,
@@ -81,6 +87,18 @@ class NavKeys extends StatelessWidget {
             onTap: onNew,
           ),
           const Spacer(),
+          if (onCatchUp != null) ...<Widget>[
+            _key(
+              key: const ValueKey<String>('tab-catchup'),
+              icon: WebIcons.deck,
+              iconSize: 19,
+              tooltip: catchUpOn ? 'Salir de Ponerse al día' : 'Ponerse al día',
+              brand: catchUpOn,
+              on: catchUpOn,
+              onTap: onCatchUp!,
+            ),
+            const SizedBox(width: 6),
+          ],
           if (onCar != null) ...<Widget>[
             _key(
               key: const ValueKey<String>('tab-car'),
@@ -124,6 +142,7 @@ class TabChips extends StatefulWidget {
     required this.tabs,
     required this.feed,
     required this.active,
+    this.activeDetail,
     required this.onTap,
     required this.onClose,
     required this.onLongPress,
@@ -132,6 +151,9 @@ class TabChips extends StatefulWidget {
   final List<TabEntry> tabs;
   final SessionFeed? feed;
   final String? active;
+
+  /// Under the active chip's name: the split and model the phone talks to.
+  final String? activeDetail;
   final ValueChanged<String> onTap;
   final ValueChanged<TabEntry> onClose;
   final ValueChanged<String> onLongPress;
@@ -154,7 +176,11 @@ class _TabChipsState extends State<TabChips> {
   @override
   void didUpdateWidget(TabChips old) {
     super.didUpdateWidget(old);
-    if (widget.active != _centered) {
+    // A new active tab, tabs that arrived late or a detail that widened the
+    // chip: centre it again.
+    if (widget.active != _centered ||
+        widget.tabs.length != old.tabs.length ||
+        widget.activeDetail != old.activeDetail) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
     }
   }
@@ -170,9 +196,12 @@ class _TabChipsState extends State<TabChips> {
     if (!mounted) return;
     final String? a = widget.active;
     final BuildContext? ctx = a == null ? null : _keys[a]?.currentContext;
-    if (ctx == null) return;
+    if (ctx == null) {
+      _centered = null;
+      return;
+    }
     _centered = a;
-    Scrollable.ensureVisible(ctx, alignment: .5);
+    Scrollable.ensureVisible(ctx, alignment: .5, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
   }
 
   SessionSummary? _entry(String session) {
@@ -182,6 +211,21 @@ class _TabChipsState extends State<TabChips> {
     return null;
   }
 
+  Widget _chip(TabEntry t) {
+    final SessionSummary? e = _entry(t.session);
+    final bool on = t.session == widget.active;
+    return TabChip(
+      key: _keys.putIfAbsent(t.session, GlobalKey.new),
+      tab: t,
+      mark: e == null ? FeedMark.none : feedMark(e),
+      on: on,
+      detail: on ? widget.activeDetail : null,
+      onTap: () => widget.onTap(t.session),
+      onClose: () => widget.onClose(t),
+      onLongPress: () => widget.onLongPress(t.session),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Set<String> live = <String>{for (final TabEntry t in widget.tabs) t.session};
@@ -189,26 +233,21 @@ class _TabChipsState extends State<TabChips> {
     return Container(
       decoration: const BoxDecoration(border: Border(top: BorderSide(color: Orbita.line))),
       height: 62,
-      child: ListView.separated(
+      // Every chip is built (a lazy list never built the active one when it
+      // was far off-screen, so it was never centred).
+      child: SingleChildScrollView(
         key: const PageStorageKey<String>('tabbar'),
         controller: _scroll,
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-        itemCount: widget.tabs.length,
-        separatorBuilder: (BuildContext context, int i) => const SizedBox(width: 8),
-        itemBuilder: (BuildContext context, int i) {
-          final TabEntry t = widget.tabs[i];
-          final SessionSummary? e = _entry(t.session);
-          return TabChip(
-            key: _keys.putIfAbsent(t.session, GlobalKey.new),
-            tab: t,
-            mark: e == null ? FeedMark.none : feedMark(e),
-            on: t.session == widget.active,
-            onTap: () => widget.onTap(t.session),
-            onClose: () => widget.onClose(t),
-            onLongPress: () => widget.onLongPress(t.session),
-          );
-        },
+        child: Row(
+          children: <Widget>[
+            for (int i = 0; i < widget.tabs.length; i++) ...<Widget>[
+              if (i > 0) const SizedBox(width: 8),
+              _chip(widget.tabs[i]),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -221,6 +260,7 @@ class TabChip extends StatelessWidget {
     required this.tab,
     required this.mark,
     required this.on,
+    this.detail,
     required this.onTap,
     required this.onClose,
     required this.onLongPress,
@@ -229,6 +269,9 @@ class TabChip extends StatelessWidget {
   final TabEntry tab;
   final FeedMark mark;
   final bool on;
+
+  /// Second line («2 · Claude · opus-5.5»), on the active chip only.
+  final String? detail;
   final VoidCallback onTap;
   final VoidCallback onClose;
   final VoidCallback onLongPress;
@@ -281,11 +324,34 @@ class TabChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               ExcludeSemantics(
-                child: Text(
-                  tab.label,
-                  maxLines: 1,
-                  style: TextStyle(fontFamily: Orbita.sans, fontSize: 14, fontWeight: FontWeight.w600, color: ink),
-                ),
+                child: detail == null
+                    ? Text(
+                        tab.label,
+                        maxLines: 1,
+                        style: TextStyle(fontFamily: Orbita.sans, fontSize: 14, fontWeight: FontWeight.w600, color: ink),
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            tab.label,
+                            maxLines: 1,
+                            style: TextStyle(
+                                fontFamily: Orbita.sans, fontSize: 13, height: 1.15, fontWeight: FontWeight.w700, color: ink),
+                          ),
+                          Text(
+                            detail!,
+                            maxLines: 1,
+                            style: TextStyle(
+                                fontFamily: Orbita.sans,
+                                fontSize: 11,
+                                height: 1.15,
+                                fontWeight: FontWeight.w500,
+                                color: ask ? Orbita.onBrand.withValues(alpha: .8) : Orbita.dim),
+                          ),
+                        ],
+                      ),
               ),
               if (markWidget != null) ...<Widget>[
                 const SizedBox(width: 6),

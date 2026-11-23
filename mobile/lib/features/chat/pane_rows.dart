@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/api/api_client.dart';
 import '../../core/connection.dart';
+import '../../core/models/session_feed.dart';
 
 /// One live pane of a session, from `GET /state?live=1` (the rows the web page
 /// polls as `S.list`; `chat_view.rs` `rows()`).
@@ -114,8 +115,35 @@ String composerHint(List<PaneRow> rows, String pane) {
 }
 
 /// Which pane of each session this phone targets, for the life of the app
-/// (the web keeps `comandos.pane.<session>` in localStorage).
+/// (the web keeps `comandos.pane.<session>` in localStorage). Write it with
+/// [savePane] so the tab bar's split label follows.
 final Map<String, String> savedPanes = <String, String>{};
+
+/// Bumps whenever [savedPanes] changes.
+final ValueNotifier<int> panePicks = ValueNotifier<int>(0);
+
+void savePane(String session, String pane) {
+  if (savedPanes[session] == pane) return;
+  savedPanes[session] = pane;
+  panePicks.value++;
+}
+
+/// «2 · Claude · opus-5.5»: the split [pane] of [e] the phone talks to (the
+/// number only on a split), else the feed's pane. Null without agent or model.
+String? splitLabel(SessionSummary e, String? pane) {
+  final List<PaneSummary> panes = <PaneSummary>[...e.paneList]
+    ..sort((PaneSummary a, PaneSummary b) => paneNumber(a.pane).compareTo(paneNumber(b.pane)));
+  if (panes.isEmpty) {
+    final String l = paneLabel(PaneRow(pane: e.pane ?? '', agent: e.agent, model: e.model));
+    return l == 'Terminal' ? null : l;
+  }
+  int i = panes.indexWhere((PaneSummary p) => p.pane == pane);
+  if (i < 0) i = panes.indexWhere((PaneSummary p) => p.pane == e.pane);
+  if (i < 0) i = 0;
+  final PaneSummary p = panes[i];
+  final String l = paneLabel(PaneRow(pane: p.pane, agent: p.agent, model: p.model));
+  return panes.length > 1 ? '${i + 1} · $l' : l;
+}
 
 /// Polls the pane rows of one session while visible. The web page polls
 /// `/state?live=1` every 2 s for everything it draws; here only the dock

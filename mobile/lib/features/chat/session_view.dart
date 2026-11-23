@@ -67,6 +67,7 @@ class SessionView extends StatefulWidget {
     required this.terminal,
     this.onPrev,
     this.onNext,
+    this.onDone,
   });
 
   /// tmux session name, e.g. "term-r23327".
@@ -83,6 +84,10 @@ class SessionView extends StatefulWidget {
 
   /// The ‹ › buttons of cv-head (and a sideways swipe on the feed).
   final VoidCallback? onPrev, onNext;
+
+  /// A message went out or a permission prompt was answered here
+  /// («Ponerse al día» moves to the next split).
+  final VoidCallback? onDone;
 
   @override
   State<SessionView> createState() => _SessionViewState();
@@ -160,6 +165,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     _outbox.addListener(_onOutboxChanged);
     _panes.addListener(_onPanes);
     _text.addListener(_onText);
+    panePicks.addListener(_onPanePick);
     _outboxCount = _outbox.itemsFor(session).length;
     _scroll.addListener(_onScroll);
     markdownLinkTap = (String url) {
@@ -196,6 +202,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     _outbox.removeListener(_onOutboxChanged);
     _panes.removeListener(_onPanes);
     _text.removeListener(_onText);
+    panePicks.removeListener(_onPanePick);
     unawaited(_drafts.flush());
     _chat.dispose();
     _panes.dispose();
@@ -239,7 +246,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
       final PaneRow? row = _panes.rows.where((PaneRow r) => r.pane == c.pane).firstOrNull;
       _say('El pane que veías se cerró; ahora estás en ${row == null ? c.pane : paneLabel(row)}');
     }
-    if (_panes.rows.isNotEmpty && c.pane.isNotEmpty) savedPanes[session] = c.pane;
+    if (_panes.rows.isNotEmpty && c.pane.isNotEmpty) savePane(session, c.pane);
     _pushPane();
     if (mounted) setState(() {});
   }
@@ -254,9 +261,15 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     _chat.setPane(p);
   }
 
+  /// The split was chosen elsewhere («Ponerse al día», the tab bar).
+  void _onPanePick() {
+    _pushPane();
+    if (mounted) setState(() {});
+  }
+
   void _selectPane(String pane) {
     if (savedPanes[session] == pane) return;
-    savedPanes[session] = pane;
+    savePane(session, pane);
     _pushPane();
     setState(() {});
   }
@@ -432,7 +445,11 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     final String? err = await _chat.answerPrompt(shown, o);
     if (!mounted) return;
     setState(() => _answering = false);
-    if (err != null) _say(err);
+    if (err != null) {
+      _say(err);
+    } else {
+      w.onDone?.call();
+    }
   }
 
   /// "Editar" on a failed message: the text goes back to the composer. If
@@ -689,6 +706,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
                     _stick = true;
                     _jumpToBottomSoon();
                     _chat.poke();
+                    w.onDone?.call();
                   },
                 ),
               ),

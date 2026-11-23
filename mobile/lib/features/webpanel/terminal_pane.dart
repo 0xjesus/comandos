@@ -290,7 +290,7 @@ class TerminalEngine {
       return;
     }
     _reaper?.cancel();
-    _reaper = Timer(WebPorts.terminalWarm, _destroy);
+    _reaper = Timer(WebPorts.terminalKeep, _destroy);
   }
 
   /// App hidden: give tmux its mouse back (the web does it on page hide).
@@ -319,9 +319,19 @@ class TerminalEngine {
       final TermInteraction? old = _interaction;
       old?.close();
       unawaited(old?.restore());
+      final bool inPlace = _ready && _session != null;
       _session = session;
       _pane = wanted;
       _interaction = TermInteraction(session: session, request: _request, post: _post);
+      if (inPlace) {
+        // The page is up: switch its socket to the other session, no reload.
+        _post(sessionMessage(session));
+        if (wanted != null) _post(selectPaneMessage(wanted));
+        unawaited(surface.runJs(tabLabelScript(session, label)));
+        if (!_paused) unawaited(_interaction?.sync());
+        _publish();
+        return;
+      }
       unawaited(_load());
       return;
     }
