@@ -13,6 +13,7 @@ import 'package:comandos_mobile/core/outbox/outbox.dart';
 import 'package:comandos_mobile/core/outbox/outbox_store.dart';
 import 'package:comandos_mobile/core/polling/app_visibility.dart';
 import 'package:comandos_mobile/features/car/car_mode_screen.dart';
+import 'package:comandos_mobile/features/car/on_device.dart';
 import 'package:comandos_mobile/features/voice/voice_services.dart';
 import 'package:comandos_mobile/ui/theme.dart';
 import 'package:flutter/material.dart';
@@ -39,10 +40,15 @@ class _NoTimer implements Timer {
 void main() {
   late Directory dir;
   late List<String> calls;
+  late FakeDeviceSpeech tts;
+  late FakeDeviceListener stt;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('car');
     sl.reset();
+    tts = FakeDeviceSpeech();
+    stt = FakeDeviceListener();
+    DeviceVoice.override(tts: tts, stt: stt);
     calls = <String>[];
     final MockClient client = MockClient((http.Request r) async {
       calls.add(r.url.path);
@@ -87,19 +93,29 @@ void main() {
 
   tearDown(() async {
     sl.reset();
+    DeviceVoice.override();
     VoiceServices.instance = null;
     await dir.delete(recursive: true);
   });
 
-  Future<void> pumpCar(WidgetTester tester, Size size, {String? key = 'sk-test-0000000000000000000000abcd'}) async {
+  Future<void> pumpCar(WidgetTester tester, Size size,
+      {String? key = 'sk-test-0000000000000000000000abcd', Widget home = const CarModeScreen(session: 's1')}) async {
     VoiceServices.instance = testVoiceServices(dir: dir.path, key: key);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: const CarModeScreen(session: 's1')));
+    await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: home));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 80)));
     await tester.pump();
     await tester.pump();
+  }
+
+  /// Lets the call run a while (real I/O for the earcon, fake timers).
+  Future<void> run(WidgetTester tester, {int rounds = 10}) async {
+    for (int i = 0; i < rounds; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
   }
 
   Future<void> leave(WidgetTester tester) async {
@@ -107,23 +123,49 @@ void main() {
     await tester.pump(const Duration(seconds: 40)); // the idle player release timer (30 s)
   }
 
-  testWidgets('portrait: huge controls, session, status, no overflow', (WidgetTester tester) async {
+  testWidgets('portrait: a call UI with a huge hang-up area; the call starts with no tap', (WidgetTester tester) async {
     await pumpCar(tester, const Size(400, 820));
+    await run(tester);
     expect(tester.takeException(), isNull);
-    expect(find.text('Hablar'), findsOneWidget);
-    expect(find.text('Callar'), findsOneWidget);
-    expect(find.text('Detener'), findsOneWidget);
+    expect(find.text('Colgar'), findsOneWidget);
     expect(find.text('Pagos con un nombre bastante largo'), findsOneWidget);
-    expect(find.text('Trabajando…'), findsOneWidget);
-    expect(tester.getSize(find.ancestor(of: find.text('Hablar'), matching: find.byType(SizedBox)).first).height,
-        greaterThanOrEqualTo(96));
+    expect(tester.getSize(find.ancestor(of: find.text('Colgar'), matching: find.byType(SizedBox)).first).height,
+        greaterThanOrEqualTo(120));
+    // Spoken with the phone's own voice, without a tap: the count, then
+    // the split it was opened for, then its state.
+    expect(tts.said.first, 'Ningún split te espera. Pagos con un nombre bastante largo, split 1.');
+    expect(tts.said, contains('Trabajando.'));
+    // Then it listened with the phone's recognizer (free).
+    expect(stt.dictations, isNotEmpty);
     await leave(tester);
   });
 
   testWidgets('landscape fits too', (WidgetTester tester) async {
     await pumpCar(tester, const Size(820, 380));
+    await run(tester);
     expect(tester.takeException(), isNull);
-    expect(find.text('Hablar'), findsOneWidget);
+    expect(find.text('Colgar'), findsOneWidget);
+    await leave(tester);
+  });
+
+  testWidgets('saying «cuelga» ends the call and closes the screen', (WidgetTester tester) async {
+    stt.answers.add('cuelga');
+    await pumpCar(tester, const Size(400, 820),
+        home: Builder(
+          builder: (BuildContext c) => TextButton(
+            onPressed: () => Navigator.of(c).push(MaterialPageRoute<void>(builder: (_) => const CarModeScreen(session: 's1'))),
+            child: const Text('abrir'),
+          ),
+        ));
+    await tester.tap(find.text('abrir'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Colgar'), findsOneWidget);
+    await run(tester, rounds: 20);
+    expect(tts.said, contains('Llamada terminada.'));
+    await tester.pumpAndSettle();
+    expect(find.text('Colgar'), findsNothing);
+    expect(find.text('abrir'), findsOneWidget);
     await leave(tester);
   });
 
@@ -150,10 +192,14 @@ void main() {
     await leave(tester);
   });
 
-  testWidgets('without a key it leads to the voice settings', (WidgetTester tester) async {
+  testWidgets('without an OpenAI key the call still works (the phone\'s voice and recognizer)',
+      (WidgetTester tester) async {
     await pumpCar(tester, const Size(400, 820), key: null);
-    expect(find.text('Configurar la voz'), findsOneWidget);
-    expect(find.text('Hablar'), findsNothing);
+    await run(tester);
+    expect(find.text('Configurar la voz'), findsNothing);
+    expect(find.text('Colgar'), findsOneWidget);
+    expect(tts.said, isNotEmpty);
+    expect(stt.dictations, isNotEmpty);
     await leave(tester);
   });
 }

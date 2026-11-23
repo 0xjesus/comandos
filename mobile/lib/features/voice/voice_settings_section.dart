@@ -289,10 +289,11 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
               (double d) => _set((VoiceSettings x) => x.copyWith(silenceSeconds: d)),
             ),
             SwitchListTile(
-              title: const Text('Conversación continua (Modo auto)'),
-              subtitle: const Text('Después de leer una respuesta, vuelve a escuchar.'),
-              value: s.continuous,
-              onChanged: (bool on) => _set((VoiceSettings x) => x.copyWith(continuous: on)),
+              title: const Text('Modo auto: dictar mensajes con OpenAI'),
+              subtitle: const Text('Más preciso, pero cuesta. Apagado, el modo auto usa la voz y el '
+                  'reconocimiento del teléfono, gratis.'),
+              value: s.carCloudDictation,
+              onChanged: (bool on) => _set((VoiceSettings x) => x.copyWith(carCloudDictation: on)),
             ),
           ],
         );

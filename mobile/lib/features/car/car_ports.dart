@@ -8,12 +8,21 @@ import '../../core/polling/connectivity_watch.dart';
 import '../chat/chat_controller.dart';
 import '../voice/audio_out.dart';
 import '../voice/dictation.dart';
-import '../voice/speech.dart';
+import '../voice/text_prep.dart';
 import '../voice/voice_services.dart';
+import '../voice/voice_settings.dart';
 import 'car_machine.dart';
+import 'on_device.dart';
 
-/// [CarPorts] for the real app: the shared dictation engine, the speech
-/// service, the outbox and the current session's [ChatController].
+/// [CarPorts] for the real app: the phone's own voice and recognizer, the
+/// shared dictation engine (OpenAI), the outbox and the current split's
+/// [ChatController].
+///
+/// Cost: everything Modo auto says (announcements, read-backs, replies) is
+/// the phone's text-to-speech, and commands, answers and quiet listening
+/// use the phone's recognizer: free. OpenAI is used only to transcribe a
+/// dictated message, and only with "Modo auto: dictar mensajes con
+/// OpenAI" on and a key; or when the phone has no recognizer at all.
 ///
 /// Text safety: Modo auto receives dictated text through a dictation sink
 /// that stays open until the text is either durable in the outbox or saved
@@ -25,15 +34,40 @@ class LiveCarPorts implements CarPorts {
     required Outbox outbox,
     required ChatController? Function() chat,
     ConnectivityWatch? connectivity,
+    DeviceSpeech? tts,
+    DeviceListener? stt,
   })  : _v = voice,
         _outbox = outbox,
         _chat = chat,
-        _connectivity = connectivity;
+        _connectivity = connectivity,
+        _tts = tts ?? DeviceVoice.tts,
+        _stt = stt ?? DeviceVoice.stt;
 
   final VoiceServices _v;
   final Outbox _outbox;
   final ChatController? Function() _chat;
   final ConnectivityWatch? _connectivity;
+  final DeviceSpeech _tts;
+  final DeviceListener _stt;
+
+  /// The phone's recognizer is taking the current dictation (not OpenAI).
+  bool _deviceListening = false;
+  bool _deviceCancelled = false;
+  int _speakGen = 0;
+
+  VoiceSettings get _settings => _v.settings.value;
+
+  /// OpenAI may transcribe the dictated message: the setting is on and
+  /// there is a key.
+  Future<bool> _cloud() async => _settings.carCloudDictation && await _hasKey();
+
+  Future<bool> _hasKey() async {
+    try {
+      return await _v.keys.read() != null;
+    } catch (_) {
+      return false;
+    }
+  }
 
   String? _sinkOwner;
   Completer<void>? _release;
@@ -90,24 +124,83 @@ class LiveCarPorts implements CarPorts {
 
   @override
   Future<DictationOutcome> listen(String session,
-      {required VoidCallback onTranscribing, bool requireSpeech = false}) async {
+      {required VoidCallback onTranscribing, bool requireSpeech = false, bool shortAnswer = false}) async {
     // A text still held here was neither sent nor released: keep it as a
     // draft before a new dictation takes over (its recording is then let
     // go, never orphaned).
     final String? owner = _sinkOwner;
     final String? held = _held;
     if (owner != null && held != null && _release != null) await saveDraft(owner, held);
+    if (shortAnswer || !await _cloud()) {
+      final DictationOutcome? o = await _listenOnDevice(session, shortAnswer: shortAnswer);
+      if (o != null) return o;
+      // The phone cannot listen: OpenAI, if there is a key at all.
+      if (!await _hasKey()) {
+        return DictationDenied(_stt.problem ?? 'Este teléfono no tiene reconocimiento de voz.');
+      }
+    }
     return _watch(session, () => _d.start(session, requireSpeech: requireSpeech), onTranscribing);
+  }
+
+  /// One dictation with the phone's recognizer; null when it cannot
+  /// listen. The text is held like a transcription until sent, saved or
+  /// released, so leaving the screen keeps it as a draft.
+  Future<DictationOutcome?> _listenOnDevice(String session, {required bool shortAnswer}) async {
+    _deviceListening = true;
+    _deviceCancelled = false;
+    final String? t;
+    try {
+      t = await _stt.listen(
+        listenFor: Duration(seconds: shortAnswer ? 10 : 60),
+        pauseFor: Duration(milliseconds: ((shortAnswer ? 2.0 : _settings.silenceSeconds + 1.0) * 1000).round()),
+        dictation: !shortAnswer,
+        language: _settings.language,
+      );
+    } finally {
+      _deviceListening = false;
+    }
+    if (t == null) return null;
+    if (_deviceCancelled) return const DictationCancelled();
+    final String text = t.trim();
+    if (text.isEmpty) return const DictationNothing();
+    if (_disposed) {
+      await _d.deliver(session, text);
+      return const DictationCancelled();
+    }
+    _detach();
+    _sinkOwner = session;
+    _held = text;
+    _release = Completer<void>();
+    return DictationText(text);
   }
 
   @override
   void releaseDictation() => _releaseHeld();
 
   @override
-  void stopListening() => unawaited(_d.stop());
+  void stopListening() => unawaited(_deviceListening ? _stt.stop() : _d.stop());
 
   @override
-  void cancelListening() => unawaited(_d.cancel());
+  void cancelListening() {
+    if (_deviceListening) {
+      _deviceCancelled = true;
+      unawaited(_stt.cancel());
+    } else {
+      unawaited(_d.cancel());
+    }
+  }
+
+  @override
+  Future<String?> hear(Duration window, {bool Function(String partial)? until}) => _stt.listen(
+        listenFor: window,
+        pauseFor: window,
+        dictation: false,
+        language: _settings.language,
+        until: until,
+      );
+
+  @override
+  void stopHearing() => unawaited(_stt.cancel());
 
   @override
   Future<DictationOutcome> retry(String takeId) {
@@ -120,14 +213,28 @@ class LiveCarPorts implements CarPorts {
   Future<void> discard(String takeId) => _d.discard(takeId);
 
   @override
-  Future<bool> speak(String text) async => await _v.speech.say(text) == SpeakResult.completed;
+  Future<bool> speak(String text) {
+    _speakGen++;
+    return _tts.speak(text, language: _settings.language, speed: _settings.speed);
+  }
+
+  /// Reads a reply (markdown → speakable text, the configured part of it)
+  /// chunk by chunk with the phone's voice.
+  @override
+  Future<bool> speakReply(String markdown) async {
+    final int gen = ++_speakGen;
+    for (final String chunk in speechChunksFor(markdown, _settings.autoReadMode)) {
+      if (!await _tts.speak(chunk, language: _settings.language, speed: _settings.speed)) return false;
+      if (gen != _speakGen) return false;
+    }
+    return gen == _speakGen;
+  }
 
   @override
-  Future<bool> speakReply(String markdown) async =>
-      await _v.speech.speakReply(markdown, mode: _v.settings.value.autoReadMode) == SpeakResult.completed;
-
-  @override
-  void stopSpeaking() => unawaited(_v.speech.stop());
+  void stopSpeaking() {
+    _speakGen++;
+    unawaited(_tts.stop());
+  }
 
   @override
   Future<SendOutcome> send(String session, String? pane, String text) async {
@@ -248,6 +355,8 @@ class LiveCarPorts implements CarPorts {
   /// the draft; anything still being transcribed lands there on its own.
   void dispose() {
     _disposed = true;
+    _speakGen++;
+    if (_deviceListening) unawaited(_stt.stop()); // its text lands in the draft
     final String? owner = _sinkOwner;
     final String? text = _held;
     if (owner != null && text != null && _release != null) {

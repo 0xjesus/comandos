@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:comandos_mobile/features/car/on_device.dart';
 import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:comandos_mobile/features/voice/openai_client.dart';
 import 'package:comandos_mobile/features/voice/openai_key_store.dart';
@@ -186,4 +187,54 @@ VoiceServices testVoiceServices({
     speech: speech,
     cacheDir: () async => dir,
   );
+}
+
+/// The phone's text-to-speech, faked: records what was said.
+class FakeDeviceSpeech implements DeviceSpeech {
+  final List<String> said = <String>[];
+  bool ok = true;
+  int stops = 0;
+
+  @override
+  Future<bool> speak(String text, {required SttLanguage language, required double speed}) async {
+    said.add(text);
+    return ok;
+  }
+
+  @override
+  Future<void> stop() async => stops++;
+}
+
+/// The phone's recognizer, faked: each listen takes the next queued
+/// answer ('' = nothing said); null when [available] is false.
+class FakeDeviceListener implements DeviceListener {
+  bool available = true;
+  final List<String> answers = <String>[];
+  final List<bool> dictations = <bool>[];
+  int cancels = 0;
+
+  @override
+  String? problem;
+
+  @override
+  Future<String?> listen({
+    required Duration listenFor,
+    required Duration pauseFor,
+    required bool dictation,
+    required SttLanguage language,
+    bool Function(String partial)? until,
+  }) async {
+    dictations.add(dictation);
+    if (!available) {
+      problem = 'Sin reconocimiento de voz.';
+      return null;
+    }
+    return answers.isEmpty ? '' : answers.removeAt(0);
+  }
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> cancel() async => cancels++;
 }

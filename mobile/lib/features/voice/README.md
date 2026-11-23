@@ -4,6 +4,10 @@ Dictation (mic → text in the composer) and read-aloud, both through the OpenAI
 API with the person's own key. Nothing here runs at app start: `registerVoice()`
 registers empty forwarders; `VoiceServices` is built on first use.
 
+Modo auto does not use OpenAI's voice: it talks and listens with the phone's
+own engines (`car/on_device.dart`, free) and asks OpenAI only to transcribe a
+dictated message when "Modo auto: dictar mensajes con OpenAI" is on.
+
 | File | What |
 |---|---|
 | `voice.dart` | hooks (`VoiceInput`, `Speaker`), `registerVoice()`, `openVoiceSettings()` |

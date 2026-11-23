@@ -59,6 +59,7 @@ class VoiceSettings {
     this.speed = 1.0,
     this.autoReadMode = ReadMode.ending,
     this.continuous = false,
+    this.carCloudDictation = false,
     this.silenceSeconds = 2.5,
     this.autoReadSessions = const <String>{},
     this.lastRead = const <String, String>{},
@@ -74,8 +75,14 @@ class VoiceSettings {
   final double speed;
   final ReadMode autoReadMode;
 
-  /// Modo auto: listen again after a reply has been read.
+  /// Modo auto: listen again after a reply has been read. (Modo auto now
+  /// always works as a call; kept for the settings file.)
   final bool continuous;
+
+  /// Modo auto: transcribe the messages dictated for an agent with OpenAI
+  /// (more accurate, costs money). Off: everything in Modo auto uses the
+  /// phone's own recognizer and voice, which cost nothing.
+  final bool carCloudDictation;
 
   /// Silence that ends a dictation.
   final double silenceSeconds;
@@ -102,6 +109,7 @@ class VoiceSettings {
     double? speed,
     ReadMode? autoReadMode,
     bool? continuous,
+    bool? carCloudDictation,
     double? silenceSeconds,
     Set<String>? autoReadSessions,
     Map<String, String>? lastRead,
@@ -114,6 +122,7 @@ class VoiceSettings {
         speed: (speed ?? this.speed).clamp(minSpeed, maxSpeed),
         autoReadMode: autoReadMode ?? this.autoReadMode,
         continuous: continuous ?? this.continuous,
+        carCloudDictation: carCloudDictation ?? this.carCloudDictation,
         silenceSeconds: silenceSeconds ?? this.silenceSeconds,
         autoReadSessions: autoReadSessions ?? this.autoReadSessions,
         lastRead: lastRead ?? this.lastRead,
@@ -128,6 +137,7 @@ class VoiceSettings {
         'speed': speed,
         'autoReadMode': autoReadMode.name,
         'continuous': continuous,
+        'carCloudDictation': carCloudDictation,
         'silenceSeconds': silenceSeconds,
         'autoReadSessions': autoReadSessions.toList(),
         'lastRead': lastRead,
@@ -153,6 +163,7 @@ class VoiceSettings {
       speed: dbl('speed', 1.0).clamp(minSpeed, maxSpeed),
       autoReadMode: pick(ReadMode.values, json['autoReadMode'], ReadMode.ending),
       continuous: json['continuous'] == true,
+      carCloudDictation: json['carCloudDictation'] == true,
       silenceSeconds: dbl('silenceSeconds', 2.5).clamp(1.0, 6.0),
       autoReadSessions: sessions is List ? <String>{for (final Object? s in sessions) if (s is String) s} : const <String>{},
       lastRead: last is Map

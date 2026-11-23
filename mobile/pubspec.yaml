@@ -29,6 +29,9 @@ dependencies:
   wakelock_plus: ^1.6.1
   # Live terminal and the rarely used panels reuse the dashboard's own page.
   webview_flutter: ^4.13.0
+  # Modo auto: the phone's own recognizer and voice (free, no OpenAI).
+  speech_to_text: 7.4.0
+  flutter_tts: 4.2.5
 
 dev_dependencies:
   flutter_test:

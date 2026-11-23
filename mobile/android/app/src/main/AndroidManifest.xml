@@ -9,7 +9,8 @@
     <!-- Scan the pairing QR code (ScanActivity). Asked when you tap "Escanear". -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
-    <!-- Voice dictation in the composer (record). Asked when you tap the mic. -->
+    <!-- Voice dictation in the composer (record) and Modo auto's spoken
+         commands (the phone's own recognizer). Asked on first use. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
     <!-- The scanner is portrait-only; the app itself is not. -->
@@ -94,6 +95,14 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Android 11+: see the phone's speech recognizer and text-to-speech
+             engine (Modo auto talks and listens with them, free). -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
         </intent>
     </queries>
 </manifest>

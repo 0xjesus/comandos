@@ -37,19 +37,53 @@ class FakePorts implements CarPorts {
   Completer<bool>? speaking;
   int cues = 0;
 
-  void hear(DictationOutcome o) {
+  /// What the person said in the current dictation.
+  void dictated(DictationOutcome o) {
     final Completer<DictationOutcome> c = listening!;
     listening = null;
     c.complete(o);
   }
 
+  final List<bool> shortAnswers = <bool>[];
+
   @override
   Future<DictationOutcome> listen(String session,
-      {required VoidCallback onTranscribing, bool requireSpeech = false}) {
+      {required VoidCallback onTranscribing, bool requireSpeech = false, bool shortAnswer = false}) {
     log.add('listen:$session');
     this.requireSpeech.add(requireSpeech);
+    shortAnswers.add(shortAnswer);
     this.onTranscribing = onTranscribing;
     return (listening = Completer<DictationOutcome>()).future;
+  }
+
+  /// A command listen in progress ([hear]); null when not listening.
+  Completer<String?>? hearing;
+  final List<Duration> hearWindows = <Duration>[];
+
+  /// Nothing can listen on the phone ([hear] returns null).
+  bool canHear = true;
+
+  @override
+  Future<String?> hear(Duration window, {bool Function(String partial)? until}) {
+    hearWindows.add(window);
+    log.add('hear');
+    if (!canHear) return Future<String?>.value(null);
+    return (hearing = Completer<String?>()).future;
+  }
+
+  /// The person says [text] while a command listen is open.
+  void command(String text) {
+    final Completer<String?> c = hearing!;
+    hearing = null;
+    c.complete(text);
+  }
+
+  @override
+  void stopHearing() {
+    log.add('stopHearing');
+    final Completer<String?>? c = hearing;
+    hearing = null;
+    if (c != null && !c.isCompleted) c.complete('');
   }
 
   @override
@@ -61,7 +95,7 @@ class FakePorts implements CarPorts {
   @override
   void cancelListening() {
     log.add('cancelListening');
-    if (listening != null) hear(const DictationCancelled());
+    if (listening != null) dictated(const DictationCancelled());
   }
 
   @override
@@ -158,7 +192,7 @@ void main() {
     expect(m.phase, CarPhase.listening);
     unawaited(m.talk()); // tap again: stop
     expect(m.phase, CarPhase.transcribing);
-    ports.hear(DictationText(text));
+    ports.dictated(DictationText(text));
     await flush();
   }
 
@@ -212,7 +246,7 @@ void main() {
     unawaited(m.talk());
     await flush();
     final PendingTake take = PendingTake(id: 'take-1', owner: 's1', path: '/x.m4a', createdAtMs: 0);
-    ports.hear(DictationFailed(take, 'Sin conexión con OpenAI.', OpenAiErrorKind.network));
+    ports.dictated(DictationFailed(take, 'Sin conexión con OpenAI.', OpenAiErrorKind.network));
     await flush();
     expect(m.phase, CarPhase.failed);
     expect(m.notice, 'Sin conexión con OpenAI.');
@@ -221,7 +255,7 @@ void main() {
     await flush();
     expect(ports.retried, <String>['take-1']);
     expect(m.phase, CarPhase.transcribing);
-    ports.hear(const DictationText('ahora sí'));
+    ports.dictated(const DictationText('ahora sí'));
     await flush();
     expect(m.phase, CarPhase.confirming);
 
@@ -230,7 +264,7 @@ void main() {
     await flush();
     unawaited(m.talk());
     await flush();
-    ports.hear(DictationFailed(take, 'x', OpenAiErrorKind.server));
+    ports.dictated(DictationFailed(take, 'x', OpenAiErrorKind.server));
     await flush();
     await m.discard();
     expect(ports.discarded, <String>['take-1']);
@@ -264,7 +298,7 @@ void main() {
     m.replyCompleted(const ReplyRef('id2', 'Respuesta'));
     await flush();
     expect(ports.spoken.where((String x) => x.startsWith('REPLY:')), isEmpty);
-    ports.hear(const DictationCancelled());
+    ports.dictated(const DictationCancelled());
     await flush();
     expect(ports.spoken.last, 'REPLY:Respuesta');
   });
@@ -277,7 +311,7 @@ void main() {
     expect(ports.log.last, 'listen:s1');
     expect(m.phase, CarPhase.listening);
     // Callar during the reading would have stopped the loop:
-    ports.hear(const DictationCancelled());
+    ports.dictated(const DictationCancelled());
     await flush();
     ports.autoSpeak = false;
     m.replyCompleted(const ReplyRef('id4', 'Otra.'));
@@ -310,7 +344,7 @@ void main() {
     await flush();
     unawaited(m.talk());
     await flush();
-    ports.hear(const DictationText('la opción dos'));
+    ports.dictated(const DictationText('la opción dos'));
     await flush();
     expect(m.phase, CarPhase.choosing);
     expect(m.pendingOption!.key, '2');
@@ -326,7 +360,7 @@ void main() {
     await flush();
     unawaited(m.talk());
     await flush();
-    ports.hear(const DictationText('sí'));
+    ports.dictated(const DictationText('sí'));
     await flush();
     expect(m.pendingOption!.key, '1');
     m.cancel();
@@ -336,7 +370,7 @@ void main() {
 
     unawaited(m.talk());
     await flush();
-    ports.hear(const DictationText('pues no sé, tal vez'));
+    ports.dictated(const DictationText('pues no sé, tal vez'));
     await flush();
     expect(ports.spoken.last, startsWith('No entendí.'));
     expect(m.phase, CarPhase.listening, reason: 'asks again, never guesses');
@@ -397,7 +431,7 @@ void main() {
     await flush();
     m2.dispose();
     expect(p2.log, contains('stopListening'));
-    p2.hear(const DictationText('tarde'));
+    p2.dictated(const DictationText('tarde'));
     await flush();
     expect(p2.sent, isEmpty);
   });
@@ -460,10 +494,10 @@ void main() {
 
   test('1: "No, espera una cosa" and "dame un segundo" answer nothing', () async {
     await promptThenTalk(three);
-    ports.hear(const DictationText('No, espera una cosa'));
+    ports.dictated(const DictationText('No, espera una cosa'));
     await flush();
     expect(m.phase, isNot(CarPhase.choosing));
-    ports.hear(const DictationText('dame un segundo')); // the re-ask listens again
+    ports.dictated(const DictationText('dame un segundo')); // the re-ask listens again
     await flush();
     await clock.elapse(const Duration(seconds: 10));
     expect(ports.answers, isEmpty);
@@ -487,7 +521,7 @@ void main() {
     ports.autoSpeak = false;
     unawaited(m.talk());
     await flush();
-    ports.hear(const DictationText('hola'));
+    ports.dictated(const DictationText('hola'));
     await flush();
     expect(ports.spoken.last, 'Envío: hola');
     m.hush();
@@ -501,7 +535,7 @@ void main() {
   test('2: an option whose read-back failed waits for Confirmar', () async {
     await promptThenTalk(three);
     ports.speakOk = false;
-    ports.hear(const DictationText('opción tres'));
+    ports.dictated(const DictationText('opción tres'));
     await flush();
     expect(m.phase, CarPhase.choosing);
     expect(m.needsTap, isTrue);
@@ -513,7 +547,7 @@ void main() {
 
   test('3: a prompt replaced during the countdown is not answered; the new one is read', () async {
     await promptThenTalk(three, pane: '%1');
-    ports.hear(const DictationText('uno'));
+    ports.dictated(const DictationText('uno'));
     await flush();
     expect(m.phase, CarPhase.choosing);
     m.updateCurrent(working: false, ask: other, pane: '%1');
@@ -526,7 +560,7 @@ void main() {
 
   test('3: a pane change during the countdown cancels the choice', () async {
     await promptThenTalk(three, pane: '%1');
-    ports.hear(const DictationText('uno'));
+    ports.dictated(const DictationText('uno'));
     await flush();
     m.updateCurrent(working: false, ask: three, pane: '%2');
     await clock.elapse(const Duration(seconds: 10));
@@ -535,7 +569,7 @@ void main() {
 
   test('3: the answer carries the prompt and pane it was chosen for', () async {
     await promptThenTalk(three, pane: '%4');
-    ports.hear(const DictationText('la tercera'));
+    ports.dictated(const DictationText('la tercera'));
     await flush();
     await clock.elapse(const Duration(seconds: 3));
     expect(ports.answers, <(String, String)>[('s1', '3')]);
@@ -547,7 +581,7 @@ void main() {
     await flush();
     m.updateSessions(<CarSession>[s('s2', SessionState.work)]); // s1 missing from one snapshot
     expect(m.currentId, 's1');
-    ports.hear(const DictationText('para s1'));
+    ports.dictated(const DictationText('para s1'));
     await flush();
     m.updateSessions(<CarSession>[s('s2', SessionState.work)]);
     expect(m.currentId, 's1');
@@ -563,7 +597,7 @@ void main() {
     await flush();
     m.updateCurrent(working: false, ask: three); // the prompt appears while listening
     await flush();
-    ports.hear(const DictationText('No, primero revisa los logs'));
+    ports.dictated(const DictationText('No, primero revisa los logs'));
     await flush();
     await clock.elapse(const Duration(seconds: 10));
     expect(ports.answers, isEmpty);
@@ -580,7 +614,7 @@ void main() {
     ports.autoSpeak = true;
     unawaited(m.talk());
     await flush();
-    ports.hear(const DictationText('uno'));
+    ports.dictated(const DictationText('uno'));
     await flush();
     await clock.elapse(const Duration(seconds: 10));
     expect(ports.answers, isEmpty);
@@ -639,7 +673,7 @@ void main() {
     await flush();
     m.setForeground(false);
     expect(ports.log, contains('stopListening'));
-    ports.hear(const DictationText('algo'));
+    ports.dictated(const DictationText('algo'));
     await flush();
     await clock.elapse(const Duration(seconds: 30));
     expect(m.phase, CarPhase.confirming);
@@ -657,10 +691,10 @@ void main() {
 
   test('9: spoken answers and re-asks release the dictation, never as a draft', () async {
     await promptThenTalk(three);
-    ports.hear(const DictationText('pues no sé'));
+    ports.dictated(const DictationText('pues no sé'));
     await flush();
     expect(ports.log.where((String x) => x == 'release'), hasLength(1));
-    ports.hear(const DictationText('opción tres'));
+    ports.dictated(const DictationText('opción tres'));
     await flush();
     await clock.elapse(const Duration(seconds: 3));
     expect(ports.log.where((String x) => x == 'release'), hasLength(2));
@@ -674,11 +708,11 @@ void main() {
     m.replyCompleted(const ReplyRef('a', 'Uno.'));
     await flush();
     expect(ports.requireSpeech.last, isTrue);
-    ports.hear(const DictationNothing());
+    ports.dictated(const DictationNothing());
     await flush();
     m.replyCompleted(const ReplyRef('b', 'Dos.'));
     await flush();
-    ports.hear(const DictationNothing());
+    ports.dictated(const DictationNothing());
     await flush();
     final int listens = ports.requireSpeech.length;
     m.replyCompleted(const ReplyRef('c', 'Tres.'));
