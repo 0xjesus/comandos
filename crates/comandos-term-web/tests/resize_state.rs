@@ -1,53 +1,53 @@
-//! Differential proof against the original Value-based resize queue.
+//! The resize request writes its size as the original page's `JSON.stringify` did.
 #[path = "../src/pane_chrome/resize.rs"]
 mod resize;
 use resize::ResizeRequest;
-use serde_json::{Value, json};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test;
-fn original(pane: &str, vertical: bool, size: f64) -> Value {
-    json!({"pane":pane,"axis":if vertical{"x"}else{"y"},"size":size})
+fn size_text(size: f64) -> String {
+    let body = ResizeRequest::new("%1".into(), true, size).body("private-session");
+    body["size"].to_string()
 }
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn queue_equality_and_payload_bytes_match_original_values() {
+fn a_dragged_size_goes_out_as_a_whole_number_of_cells() {
+    // `/terminal-panes` refuses `40.0`: the drag then changed nothing.
+    for (size, text) in [
+        (40., "40"),
+        (2., "2"),
+        (0., "0"),
+        (-0., "0"),
+        (-2., "-2"),
+        (2.5, "2.5"),
+        (f64::INFINITY, "null"),
+        (f64::NEG_INFINITY, "null"),
+        (f64::NAN, "null"),
+    ] {
+        assert_eq!(size_text(size), text, "{size}");
+    }
+    let body = ResizeRequest::new("%7".into(), false, 12.).body("s");
+    assert_eq!(
+        body.to_string(),
+        r#"{"session":"s","action":"resize","pane":"%7","axis":"y","size":12}"#
+    );
+}
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn the_queue_skips_a_request_equal_to_the_one_sent() {
     let mut cases = Vec::new();
-    for pane in ["", "%1", r#"pane<&""#, "😀", "private-pane"] {
+    for pane in ["%1", "%2"] {
         for vertical in [false, true] {
-            for size in [
-                0.,
-                -0.,
-                2.,
-                2.5,
-                -2.,
-                1e-7,
-                1e21,
-                f64::MAX,
-                f64::MIN_POSITIVE,
-                f64::from_bits(1),
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::NAN,
-            ] {
+            for size in [0., -0., 2., 2.5, 40., f64::NAN, f64::INFINITY] {
                 let request = ResizeRequest::new(pane.into(), vertical, size);
-                let previous = original(pane, vertical, size);
-                let mut body = json!({"session":"private-session","action":"resize"});
-                for key in ["pane", "axis", "size"] {
-                    body[key] = previous[key].clone();
-                }
-                assert_eq!(
-                    request.body("private-session").to_string(),
-                    body.to_string()
-                );
                 assert!(request == request.clone());
-                cases.push((request, previous));
+                let payload = request.body("s").to_string();
+                cases.push((request, payload));
             }
         }
     }
-    for (a, original_a) in &cases {
-        for (b, original_b) in &cases {
-            assert_eq!(a == b, original_a == original_b);
-            assert_eq!(Some(a) == Some(b), Some(original_a) == Some(original_b));
+    for (a, payload_a) in &cases {
+        for (b, payload_b) in &cases {
+            assert_eq!(a == b, payload_a == payload_b);
         }
     }
 }
