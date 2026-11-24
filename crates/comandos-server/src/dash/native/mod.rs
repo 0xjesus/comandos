@@ -5,6 +5,7 @@
 //! `fc-list`, por `tokio::process`. Si una entrada no se puede reproducir con
 //! certeza, el manejador devuelve `Fault::Decline` ANTES de cualquier efecto
 //! y el frente reenvía la petición original al heredado.
+pub mod ask;
 pub mod background;
 pub mod catalog_cli;
 pub mod catalogs;
@@ -112,6 +113,8 @@ pub enum NativeRoute {
     Feed(feed::FeedRoute),
     /// `/tts`: la voz de Edge para el Modo auto del teléfono (solo nativa).
     Tts,
+    /// `/chat/answer`: responde el menú que espera un agente (solo nativa).
+    ChatAnswer,
     // Cortes de la 2f (D2): cada variante pertenece a un `Cut` (ver `cut`).
     Tabs(tabs::TabsRoute),
     Sessions(sessions::SessionsRoute),
@@ -186,7 +189,8 @@ impl NativeRoute {
             | NativeRoute::Sidebar
             | NativeRoute::Chat
             | NativeRoute::Feed(_)
-            | NativeRoute::Tts => Cut::Base,
+            | NativeRoute::Tts
+            | NativeRoute::ChatAnswer => Cut::Base,
         }
     }
 }
@@ -314,6 +318,7 @@ const TABLES: &[&[Entry]] = &[
     feed::ROUTES,
     message::ROUTES,
     tts::ROUTES,
+    ask::ROUTES,
     // Cortes de la 2f. `residue` va la última: sus prefijos no deben tapar
     // ninguna entrada exacta.
     tabs::ROUTES,
@@ -332,7 +337,7 @@ const TABLES: &[&[Entry]] = &[
 /// Cuántas tablas de `TABLES` son de la base (2b–2e): las primeras, antes de
 /// las de los cortes de la 2f. Quien añada una tabla de base lo sube aquí.
 #[cfg(test)]
-const BASE_TABLES: usize = 20;
+const BASE_TABLES: usize = 21;
 
 pub fn route(method: &Method, target: &str) -> Option<NativeRoute> {
     if *method == Method::GET
@@ -1048,6 +1053,7 @@ impl Native {
             NativeRoute::Sidebar => sidebar::answer(self, request).await,
             NativeRoute::Chat => chat::answer(self, request).await,
             NativeRoute::Tts => tts::answer(self, request).await,
+            NativeRoute::ChatAnswer => ask::answer(self, request).await,
             NativeRoute::Feed(route) => feed::answer(self, route, request).await,
             NativeRoute::Light(route) => light::answer(self, route, request).await,
             NativeRoute::Events => events::answer(self, request).await,
@@ -1162,7 +1168,7 @@ mod scaffold_tests {
         // la apaga) y toda entrada de las tablas de la 2f, a su corte. La lista
         // explícita cubre las tablas de ambos carriles (2f-1 y 2f-3/2f-4); el
         // recuento debe igualar `TABLES.len()`.
-        let base: [&[Entry]; 20] = [
+        let base: [&[Entry]; 21] = [
             light::ROUTES,
             events::ROUTES,
             notices::ROUTES,
@@ -1183,6 +1189,7 @@ mod scaffold_tests {
             feed::ROUTES,
             message::ROUTES,
             tts::ROUTES,
+            ask::ROUTES,
         ];
         let cuts: [&[Entry]; 11] = [
             tabs::ROUTES,

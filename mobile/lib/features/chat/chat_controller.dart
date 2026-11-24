@@ -233,11 +233,32 @@ class ChatController extends ChangeNotifier {
   /// types the digit if the same prompt (same question, detail and options)
   /// is still open in the same pane, so a tap never lands on a prompt that
   /// replaced it. Null when answered, else a Spanish reason.
-  Future<String?> answerPrompt(AskPrompt shown, AskOption option) async {
+  ///
+  /// With a current desktop the desktop does all of it (`/chat/answer`): it
+  /// checks the menu is still [shown] and moves the cursor to the row, so any
+  /// row works (descriptions, checkboxes, «Submit», «Type something» with
+  /// [text], «Chat about this»).
+  Future<String?> answerPrompt(AskPrompt shown, AskOption option, {String? text}) async {
     final ComandosApi? api = _connection.api;
     if (api == null) return 'Sin vincular.';
     final String? pane = _pane;
     final int gen = _gen;
+    if (shown.sig.isNotEmpty && option.row >= 0) {
+      try {
+        final String? why =
+            await api.answerRow(session: session, pane: pane, sig: shown.sig, row: option.row, text: text);
+        if (gen != _gen) return why;
+        if (why == null) _ask = null;
+        notifyListeners();
+        poke();
+        return why;
+      } on NotFoundException {
+        // An older desktop: the digit path below.
+      } on ApiException catch (e) {
+        return e.userMessage;
+      }
+    }
+    if (option.key.isEmpty || text != null) return 'Actualiza ComandOS en tu equipo para responder esta opción.';
     try {
       final TranscriptResponse fresh = await api.transcript(session: session, pane: pane, since: _token);
       if (gen != _gen) return 'Cambiaste de pane; no respondí.';

@@ -206,6 +206,14 @@ pub fn read(capture: &str) -> Screen {
                 .map(|(_, key, label)| json!({"key": key.to_string(), "label": label}))
                 .collect::<Vec<_>>(),
         })),
+        // Claude's question menus (descriptions, a rule before «Chat about this»,
+        // checkboxes, an unnumbered «Submit»): the full reader of `ask.rs`.
+        // A long menu may start above the tail; its rows must still reach into it.
+        _ if lines[from..].iter().any(|l| option_line(l).is_some())
+            && let Some(m) = crate::dash::native::ask::parse(&lines[from.saturating_sub(24)..].join("\n")) =>
+        {
+            Some(crate::dash::native::ask::to_json(&m))
+        }
         _ if dialog => {
             // Diálogo sin opciones numeradas (`(y)`, `Enter to confirm`): la
             // pregunta es la última línea que lo pide y lo que tiene encima.
@@ -344,6 +352,29 @@ mod tests {
         assert_eq!(read(&old).ask, None);
         // El composer de Codex con texto numerado no es menú.
         assert_eq!(read("› 1. haz esto\n\n  gpt-6 high · ~/x").ask, None);
+    }
+
+    #[test]
+    fn claude_question_menus_with_a_rule_and_descriptions_are_asks() {
+        let screen = "\
+←  ☐ Plan  ✔ Submit  →
+
+¿Cómo seguimos?
+
+❯ 1. Opción A
+     Hace esto primero.
+  2. Opción B
+     Hace lo otro.
+  3. Type something.
+────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+";
+        let ask = read(screen).ask.expect("ask");
+        assert_eq!(ask["question"], "¿Cómo seguimos?");
+        assert_eq!(ask["options"].as_array().unwrap().len(), 4);
+        assert_eq!(ask["options"][0]["desc"][0], "Hace esto primero.");
     }
 
     #[test]

@@ -1628,7 +1628,7 @@ class CarMachine extends ChangeNotifier {
     final AskPrompt ask = _ask!;
     final String sig = _askSig!;
     final String session = _currentId!;
-    final AskOption? o = parseOptionChoice(heard, ask.options);
+    final AskOption? o = parseOptionChoice(heard, ask.choices);
     // What was said was an answer (or an attempt): never a draft.
     _ports.releaseDictation();
     if (o == null) {
@@ -1637,7 +1637,7 @@ class CarMachine extends ChangeNotifier {
       notifyListeners();
       final int op = ++_op;
       final bool done = await _speakIn(
-          op, () => _ports.speak('No entendí. Di el número de la opción. ${describeOptions(ask.options)}'));
+          op, () => _ports.speak('No entendí. Di el número de la opción. ${describeOptions(ask.choices)}'));
       if (op != _op || _disposed) return;
       final bool same = _askSig == sig;
       if (done && same) _askReadSig = sig;

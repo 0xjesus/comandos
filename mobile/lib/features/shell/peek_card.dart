@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/api/api_client.dart';
+import '../../core/api/api_errors.dart';
 import '../../core/connection.dart';
 import '../../core/locator.dart';
 import '../../core/models/ask_prompt.dart';
@@ -45,19 +47,35 @@ class _PeekCard extends StatelessWidget {
   List<AskOption> get _options => entry.state == SessionState.ask
       ? <AskOption>[
           for (final AskOption o in entry.ask?.options ?? const <AskOption>[])
-            if (RegExp(r'^[1-9]$').hasMatch(o.key)) o,
+            if (o.kind == AskKind.option && o.key.isNotEmpty) o,
         ]
       : const <AskOption>[];
 
-  void _choose(BuildContext context, String digit) {
+  void _choose(BuildContext context, AskOption option) {
     Navigator.of(context).pop();
-    final Future<void>? sent =
-        sl.maybe<Connection>()?.api?.answerAsk(session: entry.session, pane: entry.pane, option: digit);
-    if (sent == null) return;
+    final ComandosApi? api = sl.maybe<Connection>()?.api;
+    if (api == null) return;
     final BuildContext? root = Navigator.maybeOf(context, rootNavigator: true)?.context;
-    unawaited(sent.catchError((Object _) {
-      if (root != null && root.mounted) showWebToast(root, 'No se pudo enviar la tecla', error: true);
-    }));
+    void say(String text) {
+      if (root != null && root.mounted) showWebToast(root, text, error: true);
+    }
+
+    Future<void> send() async {
+      final String sig = entry.ask?.sig ?? '';
+      if (sig.isNotEmpty && option.row >= 0) {
+        try {
+          // The desktop checks it is still this menu and moves to the row.
+          final String? why = await api.answerRow(session: entry.session, pane: entry.pane, sig: sig, row: option.row);
+          if (why != null) say(why);
+          return;
+        } on NotFoundException {
+          // An older desktop: the digit below.
+        }
+      }
+      await api.answerAsk(session: entry.session, pane: entry.pane, option: option.key);
+    }
+
+    unawaited(send().catchError((Object _) => say('No se pudo enviar la respuesta')));
   }
 
   @override
@@ -102,7 +120,7 @@ class _PeekCard extends StatelessWidget {
                           children: <Widget>[
                             for (final AskOption o in options) ...<Widget>[
                               if (o != options.first) const SizedBox(height: 6),
-                              _Option(option: o, onTap: () => _choose(context, o.key)),
+                              _Option(option: o, onTap: () => _choose(context, o)),
                             ],
                           ],
                         ),

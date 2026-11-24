@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/api/api_errors.dart';
 import '../../core/connection.dart';
 import '../../core/models/ask_prompt.dart';
 import '../../core/models/transcript.dart';
@@ -422,9 +423,20 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
       case CarRefuse(:final String why):
         return why;
       case CarAnswer(:final AskOption option):
+        final String done = 'Respondí la opción ${optionWord(option.key)}: ${speakableLabel(option.label)}.';
         try {
+          // The desktop checks it is still this menu and moves the cursor to the row.
+          final String? sig = open?.sig;
+          if (sig != null && sig.isNotEmpty && option.row >= 0) {
+            try {
+              final String? why = await api.answerRow(session: session, pane: pane, sig: sig, row: option.row);
+              return why ?? done;
+            } on NotFoundException {
+              // An older desktop: the digit below.
+            }
+          }
           await api.answerAsk(session: session, pane: pane, option: option.key);
-          return 'Respondí la opción ${optionWord(option.key)}: ${speakableLabel(option.label)}.';
+          return done;
         } catch (_) {
           return 'No pude responder el permiso; revísalo en la sesión.';
         }

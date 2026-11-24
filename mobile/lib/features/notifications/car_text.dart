@@ -74,7 +74,7 @@ String askCarText(AskPrompt ask) {
   ];
   final String what = detail.take(kCarDetailLines).map((String l) => carText(l, maxWords: 16)).join('. ');
   final String question = carText(ask.question.isEmpty ? 'Espera tu respuesta' : ask.question, maxWords: 20);
-  final String options = ask.options
+  final String options = ask.choices
       .map((AskOption o) => '${optionWord(o.key)}, ${carText(speakableLabel(o.label), maxWords: 8)}')
       .join('; ');
   final StringBuffer b = StringBuffer('Pide permiso. ');
@@ -126,10 +126,10 @@ CarReplyPlan planCarReply(String heard, {AskPrompt? open, String? heardSig}) {
       return CarRefuse('Hay un permiso abierto que no escuchaste: ${carText(open.question, maxWords: 16)} '
           'No envié nada.');
     }
-    final AskOption? o = parseOptionChoice(text, open.options);
+    final AskOption? o = parseOptionChoice(text, open.choices);
     if (o == null) {
       return CarRefuse('No entendí la opción; no respondí. Contesta con el número: '
-          '${open.options.map((AskOption x) => optionWord(x.key)).join(', ')}.');
+          '${open.choices.map((AskOption x) => optionWord(x.key)).join(', ')}.');
     }
     return CarAnswer(o);
   }

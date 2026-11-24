@@ -12,6 +12,9 @@ use webkit2gtk::{
 use gtk::prelude::*;
 
 pub const DOCUMENT: &str = include_str!("chat_page.html");
+/// Draws Mermaid diagrams and PDF previews in the messages (shared with the web chat).
+/// Its two libraries load from cdnjs only when needed, pinned with SRI.
+pub const MEDIA: &str = include_str!("../../../comandos-web-view/src/chat_media.js");
 /// Base the page loads at: the only address it may show; links open in the browser.
 const BASE: &str = "comandos-chat://page/";
 
@@ -41,6 +44,13 @@ pub fn call(function: &str, arg: &Value) -> String {
 /// A view showing the page; `on_message` gets each message the page posts.
 pub fn view(on_message: impl Fn(Value) + 'static) -> webkit2gtk::WebView {
     let content = webkit2gtk::UserContentManager::new();
+    content.add_script(&webkit2gtk::UserScript::new(
+        MEDIA,
+        webkit2gtk::UserContentInjectedFrames::TopFrame,
+        webkit2gtk::UserScriptInjectionTime::End,
+        &[],
+        &[],
+    ));
     content.register_script_message_handler("chat");
     content.connect_script_message_received(Some("chat"), move |_, result| {
         if let Some(message) = result.js_value().and_then(|v| parse(v.to_str().as_str())) {
@@ -76,6 +86,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn media_libraries_load_only_from_cdnjs_pinned_with_integrity() {
+        let urls: Vec<&str> = MEDIA.match_indices("https://").map(|(i, _)| &MEDIA[i..]).collect();
+        assert!(!urls.is_empty());
+        for u in urls {
+            assert!(u.starts_with("https://cdnjs.cloudflare.com/ajax/libs/"), "{}", &u[..60.min(u.len())]);
+        }
+        assert_eq!(MEDIA.matches("\"sha384-").count(), 3, "every library and the worker carry their hash");
+        assert!(MEDIA.contains("securityLevel: \"strict\""));
+    }
+
+    #[test]
     fn page_messages_need_a_type() {
         assert_eq!(parse(r#"{"type":"send","text":"hola"}"#).unwrap()["text"], "hola");
         assert!(parse(r#"{"text":"x"}"#).is_none());
@@ -93,6 +114,7 @@ mod tests {
             assert!(DOCUMENT.contains(hook), "{hook}");
         }
         assert!(!DOCUMENT.contains("<script src"), "everything inline");
+        assert!(DOCUMENT.contains("\"answer\""), "menu rows answer through /chat/answer");
         assert!(!DOCUMENT.contains("http://") && !DOCUMENT.contains("https://"), "no network");
     }
 }

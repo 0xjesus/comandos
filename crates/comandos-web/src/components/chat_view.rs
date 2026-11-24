@@ -10,7 +10,7 @@ pub use web::{install, tab_detail};
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{PaneRow, Verdict, ask_html, ask_options, ask_signature, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, split_label, swipe, verdict, working};
+use super::{PaneRow, Verdict, ask_html, ask_signature, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, split_label, swipe, verdict, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -62,6 +62,8 @@ struct Chat {
     ask: RefCell<String>,
     /// An answer to it is on its way.
     answering: Cell<bool>,
+    /// The pane the drawn menu is on (the transcript's).
+    ask_pane: RefCell<String>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
 const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
@@ -471,6 +473,7 @@ impl Chat {
             let v = to_json(&get(&reply, "body"));
             me.age.set(v["age"].as_f64().unwrap_or(f64::MAX));
             if !me.answering.get() {
+                me.ask_pane.replace(v["pane"].as_str().unwrap_or("").to_owned());
                 me.ask_card(&v["ask"]);
             }
             if v["unchanged"] == true {
@@ -542,6 +545,8 @@ impl Chat {
             }
             let _ = call(&list, "insertAdjacentHTML", &["beforeend".into(), slice[keep..].iter().map(|(_, h)| h.as_str()).collect::<String>().into()]);
         }
+        // Diagrams and PDF previews the HTML only marks (`chat_media.js`).
+        let _ = invoke(&global("__cvMedia"), &[list.clone()]);
         *shown = if slice.is_empty() { Vec::new() } else { slice.to_vec() };
         let more = query(&el(), ".cv-more");
         let _ = set(&more, "hidden", &(folded == 0).into());
@@ -576,54 +581,38 @@ impl Chat {
             let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
         }
     }
-    /// Answers the prompt the person saw: reads the pane again first and types the digit
-    /// (then Enter) only if the same prompt is still open there, as the APK does.
-    fn answer(self: &Rc<Self>, key: String) {
+    /// Answers the menu the person saw with row [`row`] (and the text for «Type
+    /// something»). The server reads the pane again, checks it is the same menu and
+    /// moves the cursor to the row with ↑/↓ before Enter; a changed menu answers nothing.
+    fn answer(self: &Rc<Self>, row: usize, typed: Option<String>) {
         let session = text(&global("activeTerm"));
-        if self.answering.get() || session.is_empty() || self.ask.borrow().is_empty() {
+        let sig = self.ask.borrow().clone();
+        if self.answering.get() || session.is_empty() || sig.is_empty() {
             return;
         }
-        let pane = self.target(&session).0;
-        let shown = self.ask.borrow().clone();
+        let pane = Some(self.ask_pane.borrow().clone()).filter(|p| p.starts_with('%')).unwrap_or_else(|| self.target(&session).0);
         self.answering.set(true);
-        for b in all(&query(&el(), ".cv-ask"), "button") {
+        for b in all(&query(&el(), ".cv-ask"), "button,input") {
             let _ = set(&b, "disabled", &true.into());
         }
         let me = self.clone();
         spawn_local(async move {
-            let body = from_json(&json!({"session":session,"pane":pane,"since":""})).unwrap_or(JsValue::NULL);
-            let fresh = request("POST", "/chat/transcript", body).await;
-            let v = match &fresh {
-                Ok(r) if number(&get(r, "status")) < 300. => to_json(&get(r, "body")),
-                _ => serde_json::Value::Null,
-            };
-            let now = ask_signature(&v["ask"]);
-            let outcome = if v.is_null() {
-                Err("No se pudo comprobar el permiso; no respondí.")
-            } else if now.is_empty() {
-                Err("Ese permiso ya no está abierto.")
-            } else if now != shown || v["pane"].as_str().is_some_and(|p| !pane.is_empty() && p != pane) {
-                Err("El permiso cambió; revisa las opciones otra vez.")
-            } else if !ask_options(&v["ask"]).iter().any(|(k, _, _)| *k == key) {
-                Err("Esa opción ya no está.")
-            } else {
-                let send = |k: &str| from_json(&json!({"session":session,"pane":pane,"key":k})).unwrap_or(JsValue::NULL);
-                let digit = request("POST", "/key", send(&key)).await;
-                let ok = matches!(&digit, Ok(r) if number(&get(r, "status")) < 300.);
-                if ok {
-                    let _ = wait(Ok(sleep(250.))).await;
-                }
-                let enter = if ok { request("POST", "/key", send("Enter")).await.ok() } else { None };
-                if enter.is_some_and(|r| number(&get(&r, "status")) < 300.) { Ok(()) } else { Err("No se pudo responder el permiso.") }
-            };
+            let mut body = json!({"session": session, "pane": pane, "sig": sig, "row": row});
+            if let Some(t) = typed {
+                body["text"] = t.into();
+            }
+            let reply = request("POST", "/chat/answer", from_json(&body).unwrap_or(JsValue::NULL)).await;
             me.answering.set(false);
-            match outcome {
-                Ok(()) => me.ask_card(&serde_json::Value::Null),
-                Err(why) => {
-                    toast(why);
-                    // Shows what is open now (or nothing), never the stale card.
+            match reply {
+                Ok(r) if number(&get(&r, "status")) < 300. => me.ask_card(&serde_json::Value::Null),
+                Ok(r) => {
+                    let why = text(&get(&get(&r, "body"), "error"));
+                    toast(if why.is_empty() { "No se pudo responder." } else { &why });
                     me.ask.replace(String::new());
-                    me.ask_card(&v["ask"]);
+                }
+                Err(_) => {
+                    toast("Sin conexión con tu equipo: no respondí.");
+                    me.ask.replace(String::new());
                 }
             }
             me.tick(true);
@@ -935,6 +924,10 @@ pub fn install() -> Result<(), JsValue> {
     if truthy(&open) {
         call(&open, "insertAdjacentHTML", &["beforebegin".into(), format!(r#"<button type="button" id="tab-chat" class="tab-nav-btn" aria-pressed="false" aria-label="Ver como chat" title="Ver como chat">{BUBBLE}</button>"#).into()])?;
     }
+    // Mermaid and PDF previews: the libraries load only when a message needs them.
+    if let Ok(f) = js_sys::Function::new_no_args(comandos_web_view::CHAT_MEDIA_JS).dyn_into::<js_sys::Function>() {
+        let _ = f.call0(&JsValue::NULL);
+    }
     let chat = Rc::new(Chat::default());
     dock_all();
     let me_pane = chat.clone();
@@ -999,9 +992,18 @@ pub fn install() -> Result<(), JsValue> {
             return Ok(JsValue::UNDEFINED);
         }
         let data = get(&button, "dataset");
-        let ask = text(&get(&data, "cvAsk"));
-        if !ask.is_empty() {
-            me.answer(ask);
+        if let Ok(row) = text(&get(&data, "cvAsk")).parse::<usize>() {
+            me.answer(row, None);
+            return Ok(JsValue::UNDEFINED);
+        }
+        if let Ok(row) = text(&get(&data, "cvAskFree")).parse::<usize>() {
+            let input = query(&closest(&button, ".cv-ask-free"), "input");
+            let typed = text(&get(&input, "value")).trim().to_owned();
+            if typed.is_empty() {
+                let _ = call(&input, "focus", &[]);
+            } else {
+                me.answer(row, Some(typed));
+            }
             return Ok(JsValue::UNDEFINED);
         }
         let act = text(&get(&data, "cvAct"));
@@ -1169,22 +1171,41 @@ pub fn split_label(rows: &[PaneRow], pane: &str) -> Option<String> {
     }
     Some(if rows.len() > 1 { format!("{} · {label}", i + 1) } else { label })
 }
-/// The options of a permission prompt (`ask` of `/chat/transcript`): digit, label and
-/// whether it is the highlighted one. Anything not a single digit 1–9 is dropped.
-pub fn ask_options(ask: &serde_json::Value) -> Vec<(String, String, bool)> {
+/// One row of the menu an agent waits on (`ask.options` of `/chat/transcript`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskRow {
+    /// The digits («1»…), empty for an unnumbered row («Submit»).
+    pub key: String,
+    pub label: String,
+    pub desc: Vec<String>,
+    /// The terminal's cursor is on it.
+    pub on: bool,
+    /// Multiple choice: ticked or not.
+    pub checked: Option<bool>,
+    /// `option`, `free` («Type something»), `submit` or `chat` («Chat about this»).
+    pub kind: String,
+}
+/// Every row, in order: the row index is what `/chat/answer` moves the cursor to.
+pub fn ask_rows(ask: &serde_json::Value) -> Vec<AskRow> {
     ask["options"]
         .as_array()
         .map(|list| {
             list.iter()
-                .filter_map(|o| {
-                    let key = o["key"].as_str()?;
-                    (key.len() == 1 && ('1'..='9').contains(&key.chars().next()?)).then(|| {
-                        (key.to_owned(), o["label"].as_str().unwrap_or("").to_owned(), o["on"] == true)
-                    })
+                .map(|o| AskRow {
+                    key: o["key"].as_str().unwrap_or("").to_owned(),
+                    label: o["label"].as_str().unwrap_or("").to_owned(),
+                    desc: o["desc"].as_array().map(|d| d.iter().filter_map(|l| l.as_str()).map(str::to_owned).collect()).unwrap_or_default(),
+                    on: o["on"] == true,
+                    checked: o["checked"].as_bool(),
+                    kind: o["kind"].as_str().unwrap_or("option").to_owned(),
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+/// The options a voice or a digit can name (numbered rows), for older callers.
+pub fn ask_options(ask: &serde_json::Value) -> Vec<(String, String, bool)> {
+    ask_rows(ask).into_iter().filter(|r| !r.key.is_empty()).map(|r| (r.key, r.label, r.on)).collect()
 }
 fn ask_detail(ask: &serde_json::Value) -> Vec<String> {
     ask["detail"]
@@ -1192,42 +1213,77 @@ fn ask_detail(ask: &serde_json::Value) -> Vec<String> {
         .map(|d| d.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()).map(str::to_owned).collect())
         .unwrap_or_default()
 }
-/// Tells «the same prompt» from one that replaced it (same as the APK): question,
-/// detail and options. Empty when there is no prompt to answer.
+/// Tells «the same menu» from one that replaced it: the server's `sig` (what it asks
+/// and offers, not the cursor nor the ticks). Empty when there is nothing to answer.
 pub fn ask_signature(ask: &serde_json::Value) -> String {
-    let options = ask_options(ask);
-    if options.is_empty() {
+    if ask_rows(ask).len() < 2 {
         return String::new();
     }
-    format!(
-        "{}\u{1}{}\u{1}{}",
-        ask["question"].as_str().unwrap_or(""),
-        ask_detail(ask).join("\n"),
-        options.iter().map(|(k, l, _)| format!("{k}:{l}")).collect::<Vec<_>>().join("|")
-    )
+    ask["sig"].as_str().unwrap_or("").to_owned()
 }
-/// The card for a permission prompt: what the agent asks and one button per option.
+/// The card for the menu an agent waits on, as the terminal draws it: its tabs, the
+/// command or context, the question, every row (description under it, a box when it
+/// is a multiple choice), a field for «Type something», «Chat about this» and «Submit».
+/// A row answers with its index (`data-cv-ask`); the server moves the cursor to it.
 pub fn ask_html(ask: &serde_json::Value) -> String {
     use comandos_web_view::escape::text as esc;
-    let options = ask_options(ask);
-    if options.is_empty() {
+    let rows = ask_rows(ask);
+    if rows.len() < 2 {
         return String::new();
     }
     let detail = ask_detail(ask);
     let question = ask["question"].as_str().filter(|q| !q.trim().is_empty()).unwrap_or("El agente espera tu respuesta");
-    let mut html = String::from("<p class=\"cv-ask-title\">Te pregunta</p>");
+    let permission = ["proceed", "permit", "allow", "want to", "make this edit", "run"].iter().any(|w| question.to_lowercase().contains(w));
+    let mut html = format!("<p class=\"cv-ask-title\">{}</p>", if permission { "Pide permiso" } else { "Te pregunta" });
+    if let Some(tabs) = ask["tabs"].as_array().filter(|t| t.len() > 1) {
+        html += "<div class=\"cv-ask-tabs\">";
+        for t in tabs {
+            let done = t["done"] == true;
+            html += &format!(
+                "<span class=\"cv-ask-tab{}\">{}{}</span>",
+                if done { " done" } else { "" },
+                if done { "✓ " } else { "" },
+                esc(t["label"].as_str().unwrap_or(""))
+            );
+        }
+        html += "</div>";
+    }
     if !detail.is_empty() {
         html += &format!("<pre class=\"cv-ask-detail\">{}</pre>", esc(&detail.join("\n")));
     }
     html += &format!("<p class=\"cv-ask-q\">{}</p><div class=\"cv-ask-opts\">", esc(question));
-    for (key, label, on) in options {
+    for (i, r) in rows.iter().enumerate() {
+        if r.kind == "free" {
+            html += &format!(
+                "<div class=\"cv-ask-free\"><b>{}</b><input type=\"text\" aria-label=\"{}\" placeholder=\"Escribe tu respuesta…\" maxlength=\"2000\"><button type=\"button\" data-cv-ask-free=\"{i}\">Enviar</button></div>",
+                esc(if r.key.is_empty() { "✎" } else { &r.key }),
+                esc(&r.label)
+            );
+            continue;
+        }
+        let class = match r.kind.as_str() {
+            "chat" => " chat",
+            "submit" => " submit",
+            _ => "",
+        };
+        let mark = match (r.kind.as_str(), r.checked) {
+            ("submit", _) => "↵".to_owned(),
+            (_, Some(true)) => "☑".to_owned(),
+            (_, Some(false)) => "☐".to_owned(),
+            _ => esc(&r.key),
+        };
+        let label = if r.kind == "chat" { "Hablar de esto en el chat".to_owned() } else { esc(&r.label) };
+        let desc: String = r.desc.iter().map(|d| format!("<small>{}</small>", esc(d))).collect();
         html += &format!(
-            "<button type=\"button\" class=\"cv-ask-opt{}\" data-cv-ask=\"{key}\" title=\"{key}. {label}\"><b>{key}</b><span>{label}</span></button>",
-            if on { " on" } else { "" },
-            label = esc(&label)
+            "<button type=\"button\" class=\"cv-ask-opt{class}{}\" data-cv-ask=\"{i}\"><b>{mark}</b><span><em>{label}</em>{desc}</span></button>",
+            if r.on { " on" } else { "" }
         );
     }
-    html + "</div>"
+    html += "</div>";
+    if ask["multi"] == true {
+        html += "<p class=\"cv-ask-hint\">Marca las que quieras y pulsa Enviar.</p>";
+    }
+    html
 }
 /// «Claude · opus-5.5», «Codex · gpt-6-astra», «Terminal».
 pub fn pane_label(row: &PaneRow) -> String {
@@ -1331,21 +1387,33 @@ mod tests {
         assert_eq!(split_label(&[], "%1"), None);
     }
     #[test]
-    fn a_permission_prompt_is_the_same_only_with_the_same_text_and_options() {
-        let ask = serde_json::json!({"question":"Do you want to run <ls>?","detail":["  ls -la",""],
-            "options":[{"key":"1","label":"Yes","on":true},{"key":"2","label":"No, and tell Claude \"why\""},{"key":"x","label":"bad"}]});
-        assert_eq!(ask_options(&ask).len(), 2, "only digits 1-9");
-        let sig = ask_signature(&ask);
-        let mut other = ask.clone();
-        other["options"][1]["label"] = "No".into();
-        assert_ne!(sig, ask_signature(&other));
-        assert_eq!(ask_signature(&serde_json::Value::Null), "");
-        assert_eq!(ask_html(&serde_json::json!({"question":"q","options":[]})), "", "no options: no card");
+    fn the_menu_card_draws_every_row_and_answers_by_index() {
+        let ask = serde_json::json!({
+            "question": "¿Qué imágenes <debe> mostrar?", "detail": [], "multi": false, "sig": "abc123",
+            "tabs": [{"label":"Imágenes","done":false},{"label":"Submit","done":true}],
+            "options": [
+                {"key":"1","label":"Solo internet","desc":["Enlaces http(s)."],"on":true,"checked":null,"kind":"option"},
+                {"key":"2","label":"Cualquier ruta","desc":[],"on":false,"checked":null,"kind":"option"},
+                {"key":"3","label":"Type something.","desc":[],"on":false,"checked":null,"kind":"free"},
+                {"key":"4","label":"Chat about this","desc":[],"on":false,"checked":null,"kind":"chat"}
+            ]});
+        assert_eq!(ask_signature(&ask), "abc123");
+        assert_eq!(ask_rows(&ask).len(), 4);
         let html = ask_html(&ask);
-        assert!(html.contains("Do you want to run &lt;ls&gt;?"));
-        assert!(html.contains("data-cv-ask=\"1\""));
-        assert!(html.contains("class=\"cv-ask-opt on\""));
-        assert!(!html.contains("\"why\""), "labels are escaped");
+        assert!(html.contains("¿Qué imágenes &lt;debe&gt; mostrar?"), "escaped");
+        assert!(html.contains("data-cv-ask=\"0\"") && html.contains("data-cv-ask=\"1\""));
+        assert!(html.contains("<small>Enlaces http(s).</small>"));
+        assert!(html.contains("data-cv-ask-free=\"2\""), "a field for «Type something»");
+        assert!(html.contains("Hablar de esto en el chat"));
+        assert!(html.contains("cv-ask-tab done"));
+        let multi = serde_json::json!({"question":"q","sig":"s","multi":true,"options":[
+            {"key":"1","label":"A","checked":true,"kind":"option"},
+            {"key":"2","label":"B","checked":false,"kind":"option"},
+            {"key":"","label":"Submit","kind":"submit","on":true}]});
+        let m = ask_html(&multi);
+        assert!(m.contains("☑") && m.contains("☐") && m.contains("cv-ask-opt submit on"));
+        assert_eq!(ask_signature(&serde_json::Value::Null), "");
+        assert_eq!(ask_options(&multi).len(), 2, "unnumbered rows are not digits");
     }
     fn m(r: &str, t: &str) -> (String, String) {
         (r.into(), t.into())

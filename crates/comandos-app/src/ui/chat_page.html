@@ -136,6 +136,29 @@ button{font:inherit;color:inherit}
 #ask .opt.no{color:var(--dim)}
 #ask .opt kbd{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;border:1px solid var(--line2);font:600 12px var(--mono);color:var(--dim);background:var(--panel)}
 #ask .hint{font-size:12px;color:var(--faint)}
+#ask .tabs{display:flex;flex-wrap:wrap;gap:6px}
+#ask .tab{padding:3px 10px;border-radius:999px;border:1px solid var(--line2);font-size:12px;color:var(--dim)}
+#ask .tab.done{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line2))}
+#ask .opt .t{display:flex;flex-direction:column;gap:2px;min-width:0}
+#ask .opt .t b{font-weight:600}
+#ask .opt .t small{color:var(--dim);font-size:12.5px;line-height:1.35}
+#ask .opt.here{border-color:color-mix(in srgb,var(--brand) 55%,var(--line2))}
+#ask .opt.chat{color:var(--dim);border-style:dashed}
+#ask .opt.submit{background:var(--brand);border-color:var(--brand);color:var(--on-brand);justify-content:center;font-weight:700}
+#ask .opt.submit kbd{display:none}
+#ask kbd.box{font-size:15px}
+#ask .free{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;border:1px solid var(--line2);border-radius:12px;background:var(--bg)}
+#ask .free input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:8px 0}
+#ask .free .send{width:auto;min-height:34px;padding:4px 14px;background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.cv-body img{display:block;max-width:100%;max-height:520px;border-radius:12px;border:1px solid var(--line);margin:6px 0;background:var(--panel2)}
+.cv-body .cv-img{display:inline-block;max-width:100%}
+.cv-body .cv-video{display:block;max-width:100%;max-height:480px;border-radius:12px;margin:6px 0;background:#000}
+.cv-body .cv-pdf{display:inline-flex;flex-direction:column;gap:6px;max-width:min(460px,100%);padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);vertical-align:top}
+.cv-body .cv-pdf canvas{width:100%;height:auto;border-radius:6px;background:#fff}
+.cv-body .cv-pdf small{color:var(--faint)}
+.cv-body .cv-mermaid.drawn{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow-x:auto;margin:6px 0}
+.cv-body .cv-mermaid svg{max-width:100%;height:auto}
+.cv-body .cv-code.cv-under-diagram{display:none}
 
 /* Composer */
 #dock{flex:none;padding:6px 32px 18px;background:var(--bg)}
@@ -246,6 +269,8 @@ button{font:inherit;color:inherit}
     for (const m of msgs.slice(keep)) list.appendChild(node(m));
     shown = keys;
     markLast();
+    // Diagrams and PDF previews (chat_media.js, injected by the app).
+    if (window.__cvMedia) window.__cvMedia(list);
     more.hidden = !(s.folded > 0);
     more.textContent = s.expanded ? "Ocultar mensajes anteriores" : (s.folded === 1 ? "Ver 1 mensaje anterior" : "Ver " + s.folded + " mensajes anteriores");
     note.hidden = !s.note;
@@ -268,32 +293,46 @@ button{font:inherit;color:inherit}
     ask.textContent = "";
     ask.hidden = !a;
     if (a) {
-      const who = document.createElement("div");
-      who.className = "who";
-      who.textContent = /proceed|permit|allow|want to|make this edit|run/i.test(a.question) ? "Pide permiso" : "Te pregunta";
-      ask.appendChild(who);
-      if (a.detail && a.detail.length) {
-        const pre = document.createElement("pre");
-        pre.textContent = a.detail.join("\n").trim();
-        ask.appendChild(pre);
+      const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+      const answer = (row, text) => {
+        post({ type: "answer", sig: a.sig || "", row, text: text || "" });
+        ask.querySelectorAll("button,input").forEach((x) => (x.disabled = true));
+      };
+      ask.appendChild(el("div", "who", /proceed|permit|allow|want to|make this edit|run/i.test(a.question || "") ? "Pide permiso" : "Te pregunta"));
+      if (a.tabs && a.tabs.length > 1) {
+        const tabs = el("div", "tabs");
+        for (const t of a.tabs) tabs.appendChild(el("span", "tab" + (t.done ? " done" : ""), (t.done ? "✓ " : "") + t.label));
+        ask.appendChild(tabs);
       }
-      if (a.question) { const q = document.createElement("div"); q.className = "q"; q.textContent = a.question; ask.appendChild(q); }
-      const opts = document.createElement("div");
-      opts.className = "opts";
-      for (const o of a.options || []) {
-        const b = document.createElement("button");
-        b.className = "opt" + (/^(yes|sí|si|allow|approve)\b/i.test(o.label) ? " yes" : /^(no|deny|cancel)\b/i.test(o.label) ? " no" : "");
-        b.innerHTML = "<kbd></kbd><span></span>";
-        b.firstChild.textContent = o.key;
-        b.lastChild.textContent = o.label;
-        b.onclick = () => { post({ type: "key", key: o.key }); ask.querySelectorAll("button").forEach((x) => (x.disabled = true)); };
+      if (a.detail && a.detail.length) ask.appendChild(el("pre", "", a.detail.join("\n").trim()));
+      if (a.question) ask.appendChild(el("div", "q", a.question));
+      const opts = el("div", "opts");
+      (a.options || []).forEach((o, row) => {
+        const kind = o.kind || "option";
+        if (kind === "free") {
+          const f = el("form", "free");
+          const input = el("input");
+          input.placeholder = "Escribe tu respuesta…";
+          input.setAttribute("aria-label", o.label);
+          const go = el("button", "opt send", "Enviar");
+          go.type = "submit";
+          f.append(el("kbd", "", o.key || "✎"), input, go);
+          f.onsubmit = (e) => { e.preventDefault(); if (input.value.trim()) answer(row, input.value.trim()); };
+          opts.appendChild(f);
+          return;
+        }
+        const b = el("button", "opt" + (kind === "chat" ? " chat" : kind === "submit" ? " submit" : /^(yes|sí|si|allow|approve)\b/i.test(o.label) ? " yes" : /^(no|deny|cancel)\b/i.test(o.label) ? " no" : "") + (o.on ? " here" : ""));
+        const mark = kind === "submit" ? "↵" : o.checked === true ? "☑" : o.checked === false ? "☐" : o.key || "·";
+        b.appendChild(el("kbd", o.checked != null ? "box" : "", mark));
+        const text = el("span", "t");
+        text.appendChild(el("b", "", kind === "chat" ? "Hablar de esto en el chat" : o.label));
+        for (const d of o.desc || []) text.appendChild(el("small", "", d));
+        b.appendChild(text);
+        b.onclick = () => answer(row);
         opts.appendChild(b);
-      }
+      });
       ask.appendChild(opts);
-      const hint = document.createElement("div");
-      hint.className = "hint";
-      hint.textContent = "Elige una opción o pulsa su número en la terminal.";
-      ask.appendChild(hint);
+      ask.appendChild(el("div", "hint", a.multi ? "Marca las que quieras y pulsa Enviar." : "Toca una opción: se elige igual que con las flechas en la terminal."));
     }
     typing.hidden = !busy || !ask.hidden;
     if (pinned) toBottom();

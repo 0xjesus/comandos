@@ -28,6 +28,10 @@
 )]
 
 pub mod escape;
+
+/// Draws Mermaid diagrams and PDF previews in the chat messages (web and desktop):
+/// `window.__cvMedia(root)`. Its libraries load from cdnjs only when needed, with SRI.
+pub const CHAT_MEDIA_JS: &str = include_str!("chat_media.js");
 pub mod push_settings;
 pub mod session_config;
 pub mod term_page;

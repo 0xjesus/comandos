@@ -194,6 +194,31 @@ class ComandosApi {
         'key': key,
       });
 
+  /// `POST /chat/answer`: the desktop reads the pane again and, only if the
+  /// menu is still [sig], moves the cursor to [row] with ↑/↓ (typing [text] for
+  /// «Type something») and presses Enter. Null when answered, else the reason
+  /// in Spanish. Throws [NotFoundException] when the desktop predates the route.
+  Future<String?> answerRow({
+    required String session,
+    String? pane,
+    required String sig,
+    required int row,
+    String? text,
+  }) async {
+    final ApiResponse r = await request('POST', '/chat/answer', body: <String, Object?>{
+      'session': session,
+      'pane': ?pane,
+      'sig': sig,
+      'row': row,
+      if (text != null && text.trim().isNotEmpty) 'text': text.trim(),
+    });
+    if (r.ok) return null;
+    final Object? why = r.map['error'];
+    if (r.status == 401) throw const UnauthorizedException();
+    if (r.status == 404 && !(why is String && why.contains('pane'))) throw NotFoundException(code: r.code);
+    return why is String && why.isNotEmpty ? why : 'No se pudo responder.';
+  }
+
   /// Answers a permission menu like the web client: the digit, then Enter
   /// 250 ms later.
   Future<void> answerAsk({required String session, String? pane, required String option}) async {

@@ -96,6 +96,9 @@ fn linkify(text: &str, out: &mut String) {
         out.push_str(&anchor(url));
         out.push_str(&escape(url));
         out.push_str("</a>");
+        if let Some(kind) = media_of(url) {
+            media_html(kind, url, "", out);
+        }
         last = end;
     }
     out.push_str(&escape(&text[last..]));
@@ -125,6 +128,10 @@ fn alert(kind: BlockQuoteKind) -> (&'static str, &'static str) {
 /// A fenced or indented block: the language and a copy button above, highlighted code
 /// that scrolls sideways. The head is not editable when the bubble is.
 fn code_block(lang: &str, body: &str, out: &mut String) {
+    if lang == "mermaid" {
+        // The page draws the diagram from `data-src` and keeps the code under it.
+        out.push_str(&format!("<div class=\"cv-mermaid\" data-src=\"{}\"></div>", escape(body)));
+    }
     let label = if lang.is_empty() { "código" } else { lang };
     out.push_str(&format!(
         "<div class=\"cv-code\"><div class=\"cv-code-head\" contenteditable=\"false\" data-lang=\"{}\"><button type=\"button\" class=\"cv-copy\" data-cv-act=\"copy-code\" aria-label=\"Copiar código\"></button></div><pre><code>",
@@ -132,6 +139,53 @@ fn code_block(lang: &str, body: &str, out: &mut String) {
     ));
     out.push_str(&highlight_html(lang, body));
     out.push_str("</code></pre></div>");
+}
+
+/// What an internet address can be drawn as in the chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Media {
+    Image,
+    Video,
+    Pdf,
+}
+
+/// The media an http(s) address points to, by its extension (query and fragment
+/// aside). Only internet addresses: files on the computer are never drawn.
+pub fn media_of(url: &str) -> Option<Media> {
+    let lower = url.trim().to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return None;
+    }
+    let path = lower.split(['?', '#']).next().unwrap_or("");
+    let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
+    match ext {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg" | "bmp" => Some(Media::Image),
+        "mp4" | "webm" | "mov" | "m4v" | "ogv" => Some(Media::Video),
+        "pdf" => Some(Media::Pdf),
+        _ => None,
+    }
+}
+
+/// The element for media at [`url`] (already a safe http(s) address). Inline elements
+/// only, so it can sit in a paragraph or a table cell.
+fn media_html(kind: Media, url: &str, alt: &str, out: &mut String) {
+    let src = escape(url);
+    match kind {
+        Media::Image => out.push_str(&format!(
+            "<a class=\"cv-img\" href=\"{src}\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"{src}\" alt=\"{}\" loading=\"lazy\" decoding=\"async\" referrerpolicy=\"no-referrer\"></a>",
+            escape(alt)
+        )),
+        Media::Video => out.push_str(&format!(
+            "<video class=\"cv-video\" src=\"{src}\" controls preload=\"metadata\" playsinline referrerpolicy=\"no-referrer\"></video>"
+        )),
+        Media::Pdf => {
+            let name = url.rsplit('/').next().unwrap_or("documento.pdf").split(['?', '#']).next().unwrap_or("");
+            out.push_str(&format!(
+                "<span class=\"cv-pdf\" data-src=\"{src}\"><a href=\"{src}\" target=\"_blank\" rel=\"noopener noreferrer\">PDF · {}</a></span>",
+                escape(if alt.is_empty() { name } else { alt })
+            ));
+        }
+    }
 }
 
 struct Table {
@@ -147,7 +201,22 @@ pub fn to_html(text: &str) -> String {
     let mut tables: Vec<Table> = Vec::new();
     // Each open link or image closes with the tag it opened (`a` or `span`).
     let mut links: Vec<&'static str> = Vec::new();
+    // An internet image or video being read: its kind, address and alt text.
+    let mut media: Option<(Media, String, String)> = None;
+    // Links to media get their preview right after them.
+    let mut link_media: Vec<Option<(Media, String)>> = Vec::new();
     for event in TextMergeStream::new(Parser::new_ext(text, options())) {
+        if let Some((_, _, alt)) = &mut media {
+            match event {
+                Event::Text(t) | Event::Code(t) => alt.push_str(&t),
+                Event::End(TagEnd::Image) => {
+                    let (kind, url, alt) = media.take().unwrap_or((Media::Image, String::new(), String::new()));
+                    media_html(kind, &url, &alt, &mut out);
+                }
+                _ => {}
+            }
+            continue;
+        }
         if let Some((_, body)) = &mut code {
             match event {
                 Event::Text(t) => body.push_str(&t),
@@ -219,13 +288,19 @@ pub fn to_html(text: &str) -> String {
                         let title = if title.is_empty() { String::new() } else { format!(" title=\"{}\"", escape(&title)) };
                         out.push_str(&format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\"{title}>", escape(&href)));
                         links.push("a");
+                        link_media.push(media_of(&href).map(|m| (m, href)));
                     }
                     None => {
                         out.push_str(&format!("<span class=\"cv-link\" title=\"{}\">", escape(&dest_url)));
                         links.push("span");
+                        link_media.push(None);
                     }
                 },
                 Tag::Image { link_type, dest_url, .. } => {
+                    if let (Some(href), Some(kind)) = (safe_href(&dest_url, link_type), media_of(&dest_url)) {
+                        media = Some((kind, href, String::new()));
+                        continue;
+                    }
                     match safe_href(&dest_url, link_type) {
                         Some(href) => {
                             out.push_str(&format!("<a class=\"cv-img\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">🖼 ", escape(&href)));
@@ -273,7 +348,14 @@ pub fn to_html(text: &str) -> String {
                 TagEnd::Strikethrough => out.push_str("</del>"),
                 TagEnd::Superscript => out.push_str("</sup>"),
                 TagEnd::Subscript => out.push_str("</sub>"),
-                TagEnd::Link | TagEnd::Image => {
+                TagEnd::Link => {
+                    let tag = links.pop().unwrap_or("span");
+                    out.push_str(&format!("</{tag}>"));
+                    if let Some(Some((kind, href))) = link_media.pop() {
+                        media_html(kind, &href, "", &mut out);
+                    }
+                }
+                TagEnd::Image => {
                     let tag = links.pop().unwrap_or("span");
                     out.push_str(&format!("</{tag}>"));
                 }
@@ -790,6 +872,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn internet_images_videos_and_pdfs_are_drawn_files_on_the_computer_are_not() {
+        let img = to_html("Mira: ![captura del login](https://example.com/a/login.png?x=1)");
+        assert!(img.contains("<img src=\"https://example.com/a/login.png?x=1\" alt=\"captura del login\" loading=\"lazy\""), "{img}");
+        assert!(img.contains("referrerpolicy=\"no-referrer\""));
+        let video = to_html("![demo](https://example.com/demo.mp4)");
+        assert!(video.contains("<video class=\"cv-video\" src=\"https://example.com/demo.mp4\" controls preload=\"metadata\""), "{video}");
+        let pdf = to_html("El informe: https://example.com/docs/informe.pdf.");
+        assert!(pdf.contains("<span class=\"cv-pdf\" data-src=\"https://example.com/docs/informe.pdf\">"), "{pdf}");
+        assert!(pdf.contains("PDF · informe.pdf"));
+        let linked = to_html("[el gif](https://example.com/anim.gif)");
+        assert!(linked.contains("<a href=\"https://example.com/anim.gif\"") && linked.contains("<img src=\"https://example.com/anim.gif\""), "{linked}");
+        for local in ["![x](/srv/demo/shot.png)", "![x](./shot.png)", "![x](file:///tmp/a.png)", "ver /tmp/captura.png"] {
+            let h = to_html(local);
+            assert!(!h.contains("<img") && !h.contains("<video"), "{local}: {h}");
+        }
+        let evil = to_html("![x\" onerror=\"alert(1)](https://example.com/a.png)");
+        assert!(!evil.contains("onerror=\"alert"), "{evil}");
+        assert_eq!(media_of("https://example.com/a.PNG"), Some(Media::Image));
+        assert_eq!(media_of("https://example.com/page"), None);
+    }
+
+    #[test]
+    fn a_mermaid_block_is_marked_for_drawing_and_keeps_its_code() {
+        let h = to_html("```mermaid\ngraph TD\n  A-->B\n```");
+        assert!(h.starts_with("<div class=\"cv-mermaid\" data-src=\"graph TD\n  A--&gt;B\"></div>"), "{h}");
+        assert!(h.contains("<div class=\"cv-code\">"));
+    }
+
+    #[test]
     fn paragraphs_inline_marks_and_breaks() {
         assert_eq!(
             to_html("<b>x</b> **ok** *em* ~~no~~ `a<b`\nfin  \nsigue"),
@@ -838,7 +949,7 @@ mod tests {
         assert_eq!(to_html("a\n\n---\n\nb"), "<p>a</p><hr><p>b</p>");
         assert_eq!(
             to_html("![logo](https://x.io/a.png)"),
-            "<p><a class=\"cv-img\" href=\"https://x.io/a.png\" target=\"_blank\" rel=\"noopener noreferrer\">🖼 logo</a></p>"
+            "<p><a class=\"cv-img\" href=\"https://x.io/a.png\" target=\"_blank\" rel=\"noopener noreferrer\"><img src=\"https://x.io/a.png\" alt=\"logo\" loading=\"lazy\" decoding=\"async\" referrerpolicy=\"no-referrer\"></a></p>"
         );
         assert_eq!(to_html("![x](data:image/png;base64,AAA)"), "<p><span class=\"cv-img\">🖼 x</span></p>");
         let notes = to_html("Dato[^1].\n\n[^1]: Fuente.");

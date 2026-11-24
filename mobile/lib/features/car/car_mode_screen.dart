@@ -411,7 +411,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
           style: const TextStyle(color: _C.text, fontSize: 24, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
-        for (final AskOption o in ask.options)
+        for (final AskOption o in ask.choices)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: _BigButton(

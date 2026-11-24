@@ -440,9 +440,9 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
 
   // ---- Feed actions -------------------------------------------------------
 
-  Future<void> _answer(AskPrompt shown, AskOption o) async {
+  Future<void> _answer(AskPrompt shown, AskOption o, {String? text}) async {
     setState(() => _answering = true);
-    final String? err = await _chat.answerPrompt(shown, o);
+    final String? err = await _chat.answerPrompt(shown, o, text: text);
     if (!mounted) return;
     setState(() => _answering = false);
     if (err != null) {
@@ -619,7 +619,7 @@ class _SessionBodyState extends State<_SessionBody> with RouteAware {
     }
     if (ask != null) {
       add(
-        AskCard(ask: ask, busy: _answering, onAnswer: (AskOption o) => _answer(ask, o)),
+        AskCard(ask: ask, busy: _answering, onAnswer: (AskOption o, String? text) => _answer(ask, o, text: text)),
         key: ValueKey<String>(ask.signature),
       );
     }

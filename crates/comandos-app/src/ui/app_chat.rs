@@ -232,6 +232,17 @@ impl App {
                     self.chat_post("/key", json!({"key": key}));
                 }
             }
+            // A row of the menu card: the server reads the screen again and moves to it.
+            "answer" => {
+                if let (Some(sig), Some(row)) = (message["sig"].as_str(), message["row"].as_u64()) {
+                    let text = message["text"].as_str().unwrap_or("");
+                    let mut body = json!({"sig": sig, "row": row});
+                    if !text.trim().is_empty() {
+                        body["text"] = text.into();
+                    }
+                    self.chat_post("/chat/answer", body);
+                }
+            }
             "more" => {
                 self.chat.expanded.set(!self.chat.expanded.get());
                 self.chat_draw(false, true);

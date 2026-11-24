@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 
 import '../../ui/theme.dart';
 import '../../ui/web_kit.dart';
+import 'chat_media.dart';
+import 'code_tokens.dart';
 
 /// Agent markdown as the web chat draws it (`comandos_core::chat_markdown`
 /// rendered with the `#chat-view .cv-body` rules of `index_page.css`):
@@ -11,8 +13,10 @@ import '../../ui/web_kit.dart';
 /// links (http/https/mailto only; other targets stay text with a dotted
 /// underline), bare addresses, bullet/numbered/task lists with brand markers,
 /// quotes, `> [!NOTE]` alerts, rules, fenced code with its language and a
-/// Copiar button, and pipe tables that scroll sideways.
-/// Parsing is pure and cached per message; no HTML, no WebView.
+/// Copiar button and coloured code, and pipe tables that scroll sideways.
+/// Internet images (GIFs move) are drawn under the text that names them;
+/// videos, PDFs and Mermaid diagrams are cards that open them full screen.
+/// Parsing is pure and cached per message; no HTML, no WebView in the feed.
 
 sealed class MdBlock {
   const MdBlock();
@@ -320,6 +324,66 @@ String inlinePlain(String text) {
   });
 }
 
+/// Internet media named in [text] (images, links and bare addresses to an
+/// image, a video or a PDF), each once, in order. Cached per block.
+List<MediaRef> mediaIn(String text) {
+  final List<MediaRef> out = <MediaRef>[];
+  final Set<String> seen = <String>{};
+  void add(String url, String alt) {
+    final MediaKind? kind = mediaOf(url);
+    if (kind != null && seen.add(url)) out.add(MediaRef(kind, url, alt));
+  }
+
+  for (final RegExpMatch m in _inline.allMatches(text)) {
+    if (m.group(2) != null) continue; // code
+    final String? inner = m.group(3) ?? m.group(4) ?? m.group(5) ?? m.group(6) ?? m.group(7);
+    if (inner != null) {
+      for (final MediaRef r in mediaIn(inner)) {
+        if (seen.add(r.url)) out.add(r);
+      }
+    } else if (m.group(8) != null) {
+      final String? href = safeHref(m.group(9)!);
+      if (href != null) add(href, m.group(8)!);
+    } else if (m.group(10) != null) {
+      add(m.group(10)!, '');
+    } else if (m.group(11) != null) {
+      add(_trimBare(m.group(11)!), '');
+    }
+  }
+  return out;
+}
+
+final Expando<List<MediaRef>> _mediaCache = Expando<List<MediaRef>>('media');
+
+List<MediaRef> _mediaOf(MdBlock b, String text) => _mediaCache[b] ??= mediaIn(text);
+
+/// Text left once its internet images are taken out (they are drawn below).
+bool _onlyImages(String text) =>
+    text.replaceAllMapped(_inline, (Match m) {
+      final bool drawn = m.group(0)!.startsWith('!') &&
+          m.group(9) != null &&
+          safeHref(m.group(9)!) != null &&
+          mediaOf(m.group(9)!) == MediaKind.image;
+      return drawn ? '' : m.group(0)!;
+    }).trim().isEmpty;
+
+/// [text] followed by the media it names.
+Widget _withMedia(MdBlock b, String source, Widget text) {
+  final List<MediaRef> media = _mediaOf(b, source);
+  if (media.isEmpty) return text;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: <Widget>[
+      if (!_onlyImages(source)) ...<Widget>[text, const SizedBox(height: 8)],
+      for (final (int i, MediaRef r) in media.indexed) ...<Widget>[
+        if (i > 0) const SizedBox(height: 8),
+        MediaPreview(r),
+      ],
+    ],
+  );
+}
+
 /// Called when a link is tapped. The app has no browser hand-off yet, so the
 /// view copies the address and says so; replaceable for tests.
 void Function(String url) markdownLinkTap = (String url) {
@@ -390,7 +454,10 @@ List<InlineSpan> inlineSpans(String text, TextStyle base, [MdInk? ink]) {
       final String label = m.group(8)!.isEmpty ? m.group(9)! : m.group(8)!;
       final String? href = safeHref(m.group(9)!);
       final bool image = m.group(0)!.startsWith('!');
-      spans.add(_link(image ? '🖼 $label' : label, href, k));
+      // An internet image is drawn under the text (`MediaPreview`).
+      if (!(image && href != null && mediaOf(href) == MediaKind.image)) {
+        spans.add(_link(image ? '🖼 $label' : label, href, k));
+      }
     } else if (m.group(10) != null) {
       spans.add(_link(m.group(10)!, m.group(10), k));
     } else {
@@ -463,7 +530,7 @@ Widget _blocks(List<MdBlock> blocks, TextStyle base, MdInk ink, {double gap = 10
 Widget _block(MdBlock b, TextStyle base, MdInk ink) {
   switch (b) {
     case MdParagraph(:final String text, :final int heading):
-      if (heading == 0) return Text.rich(TextSpan(style: base, children: inlineSpans(text, base, ink)));
+      if (heading == 0) return _withMedia(b, text, Text.rich(TextSpan(style: base, children: inlineSpans(text, base, ink))));
       final TextStyle s = base.copyWith(
         fontSize: _headingSize[heading - 1],
         fontWeight: FontWeight.w700,
@@ -499,7 +566,7 @@ Widget _block(MdBlock b, TextStyle base, MdInk ink) {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             SizedBox(width: checked != null ? 24 : (bullet ? 24 : 26), child: Align(alignment: Alignment.topRight, child: Padding(padding: const EdgeInsets.only(right: 8), child: mark))),
-            Expanded(child: Text.rich(TextSpan(style: base, children: inlineSpans(text, base, ink)))),
+            Expanded(child: _withMedia(b, text, Text.rich(TextSpan(style: base, children: inlineSpans(text, base, ink))))),
           ],
         ),
       );
@@ -512,6 +579,13 @@ Widget _block(MdBlock b, TextStyle base, MdInk ink) {
         child: _blocks(blocks, s, ink, gap: 8),
       );
     case MdCode(:final String code, :final String lang):
+      if (lang == 'mermaid') {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[MermaidCard(code), const SizedBox(height: 8), CodeBlockView(code: code, lang: lang)],
+        );
+      }
       return CodeBlockView(code: code, lang: lang);
     case MdTable():
       return _TableView(b, base: base, ink: ink);
@@ -593,6 +667,13 @@ class CodeBlockView extends StatefulWidget {
 
 class _CodeBlockViewState extends State<CodeBlockView> {
   bool _ok = false;
+  late List<TextSpan> _spans = codeSpans(widget.lang, widget.code);
+
+  @override
+  void didUpdateWidget(CodeBlockView old) {
+    super.didUpdateWidget(old);
+    if (old.code != widget.code || old.lang != widget.lang) _spans = codeSpans(widget.lang, widget.code);
+  }
 
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: widget.code));
@@ -655,8 +736,8 @@ class _CodeBlockViewState extends State<CodeBlockView> {
             scrollDirection: Axis.horizontal,
             dragStartBehavior: DragStartBehavior.down,
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-            child: Text(
-              widget.code,
+            child: Text.rich(
+              TextSpan(children: _spans),
               softWrap: false,
               style: const TextStyle(fontFamily: Orbita.mono, fontSize: 12.5, height: 1.55, color: Orbita.text),
             ),
