@@ -167,6 +167,10 @@ async fn page_transport_parent_ack_and_disposal() {
     assert_eq!(info(1)["sent"][1], json!([48, 255, 128, 0]));
     select_pane(&page, "%42".into());
     delay(30).await;
+    // tmux is still attaching (nothing drawn): a focus key now would be lost.
+    assert_eq!(pane_requests(), "[]");
+    output_socket(1, &JsValue::from_str("0$ "));
+    delay(600).await;
     let requests: Value = serde_json::from_str(&pane_requests()).unwrap();
     assert_eq!(requests[0]["action"], "list");
     assert_eq!(requests[1]["scope"], "client");

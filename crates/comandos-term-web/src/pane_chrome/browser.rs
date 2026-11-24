@@ -24,9 +24,13 @@ struct State {
     gutters: Vec<Gutter>,
     hot: Option<usize>,
     drag: Option<(Gutter, Option<Value>)>,
+    /// This device's own split (tmux per-client focus): what the frame highlights,
+    /// where keys and direct typing land, and what the parent's composer targets.
     local: Option<String>,
     local_at: f64,
     remote: Option<String>,
+    /// The split last told to the parent (`pane-selected`), so it is said once per change.
+    announced: Option<String>,
     prefix: f64,
     want: Option<ResizeRequest>,
     sent: Option<ResizeRequest>,
@@ -196,11 +200,49 @@ fn logo(m: &str) -> Option<(&'static str, &'static str)> {
         _ => return None,
     })
 }
+/// Tells the parent which split this device writes to whenever it changes, so the
+/// dock's composer and chips never disagree with the highlighted frame.
+fn announce(s: &mut State) {
+    let on = active(&s.panes, &s.local, &s.remote);
+    if on.is_none() || on == s.announced {
+        return;
+    }
+    s.announced = on.clone();
+    if let (Some(pane), Ok(Some(parent))) = (on, w().parent()) {
+        let _ = parent.post_message(
+            &js(&json!({"source":"comandos-term","type":"pane-selected","pane":pane})),
+            &w().location().origin().unwrap_or_default(),
+        );
+    }
+}
+/// A split chosen outside the frames (the parent's chips, the Paneles dialog) once
+/// tmux took it: the frame highlights it and the parent hears it back.
+pub fn chosen(pane: &str) {
+    let Some(rc) = CURRENT.with(|slot| slot.borrow().clone()) else { return };
+    {
+        let mut s = rc.borrow_mut();
+        if s.disposed {
+            return;
+        }
+        s.local = Some(pane.to_owned());
+        s.local_at = now();
+    }
+    crate::page::remember_pane(pane);
+    draw(&rc);
+}
+/// A choice that tmux refused: say the split still in use again, so the parent
+/// goes back to it instead of writing to a split nobody sees.
+pub fn unchanged() {
+    let Some(rc) = CURRENT.with(|slot| slot.borrow().clone()) else { return };
+    rc.borrow_mut().announced = None;
+    draw(&rc);
+}
 fn draw(rc: &Shared) {
     let mut s = rc.borrow_mut();
     if s.disposed {
         return;
     }
+    announce(&mut s);
     // A phone showing one pane alone: no frames over it and no gutters to drag
     // (they would resize the desktop's split).
     let cropped = crate::page::crop_pane().is_some();
@@ -405,7 +447,7 @@ pub(crate) async fn fetch(
     }
     Ok(data)
 }
-async fn select_touched_pane(rc: Shared, pane: Value, selected_at: f64) {
+async fn select_touched_pane(rc: Shared, pane: Value, selected_at: f64, previous: Option<String>) {
     let (session, auth) = {
         let s = rc.borrow();
         (s.session.clone(), s.token.clone())
@@ -426,6 +468,9 @@ async fn select_touched_pane(rc: Shared, pane: Value, selected_at: f64) {
                 == Some(true)
             {
                 delivered = true;
+                if let Some(id) = pane["id"].as_str() {
+                    crate::page::remember_pane(id);
+                }
                 if let Ok(Some(parent)) = w().parent() {
                     let _ = parent.post_message(&js(&json!({"source":"comandos-term","type":"pane-selected","pane":pane["id"]})), &w().location().origin().unwrap_or_default());
                 }
@@ -433,8 +478,12 @@ async fn select_touched_pane(rc: Shared, pane: Value, selected_at: f64) {
         }
     }
     if !delivered {
-        // A disconnected client must be able to retry the same pane.
-        rc.borrow_mut().local = None;
+        // A disconnected client must be able to retry the same pane; the highlight
+        // (and the parent's composer) go back to the split tmux still has.
+        let mut s = rc.borrow_mut();
+        s.local = previous;
+        s.announced = None;
+        drop(s);
         draw(&rc);
     }
     delayed_refresh(&rc, 80);
@@ -486,6 +535,14 @@ fn refresh(rc: &Shared) {
                         s.local = None
                     } else if remote.is_empty() {
                         s.remote = None
+                    }
+                    // This client keeps the split it attached with (tmux's active one
+                    // then) until this device picks another: another device moving the
+                    // window's focus does not move where this one types.
+                    if s.local.is_none() {
+                        // The split the parent asked for wins (it is being selected).
+                        let wanted = crate::page::wanted_pane();
+                        s.local = active(&s.panes, &wanted, &s.remote);
                     }
                 }
                 if let Some(m) = models["panes"].as_array() {
@@ -1192,6 +1249,7 @@ pub fn attach() -> Result<(), JsValue> {
         local: None,
         local_at: 0.,
         remote: None,
+        announced: None,
         prefix: 0.,
         want: None,
         sent: None,
@@ -1237,8 +1295,9 @@ pub fn attach() -> Result<(), JsValue> {
                         })
                         .map(|p| text(p, "id"))
                 });
+                let current = active(&s.panes, &s.local, &s.remote);
                 if let Some(id) = pane
-                    && Some(&id) != active(&s.panes, &s.local, &s.remote).as_ref()
+                    && Some(&id) != current.as_ref()
                 {
                     s.local = Some(id.clone());
                     s.local_at = now();
@@ -1247,7 +1306,7 @@ pub fn attach() -> Result<(), JsValue> {
                         let selected_at = s.local_at;
                         let owner = state.clone();
                         spawn_local(async move {
-                            select_touched_pane(owner, chosen, selected_at).await;
+                            select_touched_pane(owner, chosen, selected_at, current).await;
                         });
                     }
                 }

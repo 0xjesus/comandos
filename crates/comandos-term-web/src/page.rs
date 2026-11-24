@@ -64,6 +64,9 @@ pub struct Page {
     ignore_size: bool,
     /// Pane the parent asked for (`select-pane`), and the last pane listing.
     wanted_pane: Option<String>,
+    /// The socket generation whose tmux client already drew its first screen: keys that
+    /// pick this device's split before that are lost while tmux is still attaching.
+    drawn: Option<u64>,
     panes: Vec<Value>,
     /// The person's font size (server preferences), restored when the crop ends.
     base_font: f64,
@@ -475,7 +478,13 @@ fn connect(page: &Rc<RefCell<Page>>) {
                 }
             }
         }
+        // A new tmux client starts on the window's split: this device's own split
+        // (picked here or by the parent) is selected again once it has drawn.
+        let wanted = p.wanted_pane.clone();
         drop(p);
+        if let Some(pane) = wanted {
+            select_pane(&page, pane);
+        }
         debug(&page, &format!("conectado · {}", s.protocol()));
         schedule_fit(&page);
     });
@@ -507,6 +516,7 @@ fn connect(page: &Rc<RefCell<Page>>) {
         let Some(t) = term(&page) else { return };
         match kind {
             b'0' => {
+                page.borrow_mut().drawn = Some(id);
                 t.borrow_mut().write(payload);
                 adapter::output(&page);
                 let replies = t.borrow_mut().take_replies();
@@ -727,6 +737,10 @@ fn handle(page: &Rc<RefCell<Page>>, command: Command) {
             if let Some(root) = window().ok().and_then(|w| w.document()).and_then(|d| d.document_element()) {
                 let _ = root.class_list().toggle_with_force("docked", on);
             }
+            let ui = page.borrow().ui.clone();
+            if let Some(ui) = ui {
+                ui.report_keyboard();
+            }
         }
         Command::Action(action) => {
             if let Some(button) = window()
@@ -889,14 +903,19 @@ fn select_pane(page: &Rc<RefCell<Page>>, pane: String) {
         (p.session.clone(), p.auth.clone(), p.socket_id)
     };
     spawn_local(async move {
-        for _ in 0..20 {
+        // Up to 10 s for tmux to attach and draw; the focus key only counts after that.
+        for _ in 0..40 {
             let Some(page) = weak.upgrade() else { return };
             if !current(&page, generation) {
                 return;
             }
-            if socket_open(&page.borrow()) {
+            let p = page.borrow();
+            if socket_open(&p) && p.drawn == Some(generation) {
+                drop(p);
+                delay(150).await;
                 break;
             }
+            drop(p);
             delay(250).await;
         }
         let result = async {
@@ -919,14 +938,20 @@ fn select_pane(page: &Rc<RefCell<Page>>, pane: String) {
                 if let Some(keys) = result["clientKeys"].as_str()
                     && !send_input(&page, keys.as_bytes(), false)
                 {
+                    crate::pane_chrome::unchanged();
                     return;
                 }
+                // The frame highlights it and tells the parent (`pane-selected`).
+                crate::pane_chrome::chosen(&pane);
                 post("pane-selected", Some(("pane", &pane)));
             }
-            Err(err) => error(&err.as_string().unwrap_or_else(|| {
-                string_field(&err, "message")
-                    .unwrap_or_else(|| "No se pudo consultar el estado de los paneles".into())
-            })),
+            Err(err) => {
+                crate::pane_chrome::unchanged();
+                error(&err.as_string().unwrap_or_else(|| {
+                    string_field(&err, "message")
+                        .unwrap_or_else(|| "No se pudo consultar el estado de los paneles".into())
+                }))
+            }
         }
     });
 }
@@ -955,6 +980,20 @@ pub fn panes_seen(session: &str, panes: &[Value]) {
     crop_update(&page);
 }
 /// The pane a phone shows alone, if any (history and copies use it).
+/// A split this device picked in the frame itself: reconnections select it again.
+pub fn remember_pane(pane: &str) {
+    PAGE.with(|slot| {
+        if let Some(p) = slot.borrow().as_ref()
+            && let Ok(mut p) = p.try_borrow_mut()
+        {
+            p.wanted_pane = Some(pane.to_owned());
+        }
+    });
+}
+/// The split the parent asked this device to use (`select-pane`), if any.
+pub fn wanted_pane() -> Option<String> {
+    PAGE.with(|slot| slot.borrow().as_ref().and_then(|p| p.try_borrow().ok()?.wanted_pane.clone()))
+}
 pub fn crop_pane() -> Option<String> {
     PAGE.with(|slot| slot.borrow().as_ref().and_then(|p| p.try_borrow().ok()?.crop.as_ref().map(|c| c.pane.clone())))
 }
@@ -1390,6 +1429,7 @@ fn attach_main() -> Result<(), JsValue> {
         // A phone opens without sizing the window: see `crop::ignore_size`.
         ignore_size: phone(),
         wanted_pane: None,
+        drawn: None,
         panes: Vec::new(),
         base_font: 14.0,
         crop_host: (0.0, 0.0),

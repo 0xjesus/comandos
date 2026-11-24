@@ -178,7 +178,7 @@ mod browser;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use browser::fetch as fetch_api;
 #[cfg(target_arch = "wasm32")]
-pub use browser::{attach, dispose};
+pub use browser::{attach, chosen, dispose, unchanged};
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -221,6 +221,22 @@ fn set_mobile(ui: &Ui, on: bool) {
     attr(&button, "aria-pressed", if on { "false" } else { "true" });
     inset();
     let _ = call(&terminal(ui), "scheduleFit", &[]);
+    report(!on);
+}
+/// A parent drawing the keys (`dock`) lights its own «Teclado directo» key: it reads
+/// `__comandosKeyboardDirect` (same origin) when it changes tabs and hears each change.
+fn report(direct: bool) {
+    let _ = js_sys::Reflect::set(&js_sys::global(), &"__comandosKeyboardDirect".into(), &direct.into());
+    tell_parent(json!({"source":"comandos-term","type":"keyboard","direct":direct}));
+}
+fn tell_parent(message: Value) {
+    if let Ok(m) = from_json(&message) {
+        let _ = call(&global("parent"), "postMessage", &[m, get(&global("location"), "origin")]);
+    }
+}
+/// The page's own draft box is hidden while a parent draws the composer.
+fn docked() -> bool {
+    truthy(&call(&get(&get(&doc(), "documentElement"), "classList"), "contains", &["docked".into()]).unwrap_or(JsValue::FALSE))
 }
 fn focus_terminal(ui: &Ui) {
     if ui.borrow().mobile {
@@ -928,6 +944,9 @@ async fn pane_action(
             {
                 return Ok(JsValue::UNDEFINED);
             }
+            if let Some(pane) = selected.as_string() {
+                crate::pane_chrome::chosen(&pane);
+            }
             if truthy(&selected) {
                 call(
                     &global("parent"),
@@ -1050,6 +1069,8 @@ impl TerminalControls {
         }
         if touch {
             set_mobile(&ui, true);
+        } else {
+            report(true);
         }
         controls_fn(&ui);
         Ok(Self { ui })
@@ -1080,6 +1101,11 @@ impl TerminalControls {
     }
     pub fn refresh_interaction(&self) {
         controls_fn(&self.ui);
+    }
+    /// Says the keyboard mode again (a parent that just docked lights its key).
+    pub fn report_keyboard(&self) {
+        let direct = !self.ui.borrow().mobile;
+        report(direct);
     }
     pub fn focus(&self) {
         focus_terminal(&self.ui);
@@ -1330,7 +1356,12 @@ fn mount(ui: &Ui) -> Result<(), JsValue> {
     let u = ui.clone();
     bind(ui, get(&terminal(ui), "textarea"), "focus", move |_| {
         if u.borrow().mobile {
-            focus(&id("mobile-draft"));
+            if docked() {
+                // Typing over the terminal in draft mode goes to the parent's composer.
+                tell_parent(json!({"source":"comandos-term","type":"compose-focus"}));
+            } else {
+                focus(&id("mobile-draft"));
+            }
         }
         Ok(JsValue::UNDEFINED)
     })?;

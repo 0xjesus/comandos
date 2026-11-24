@@ -23,6 +23,8 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 
 const STORE: &str = "comandos.viewMode";
+/// A transcript request older than this no longer blocks the next refresh.
+const STUCK_MS: f64 = 15000.;
 const BUBBLE: &str = r#"<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg>"#;
 const TERM: &str = r#"<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>"#;
 
@@ -31,7 +33,9 @@ struct Chat {
     on: Cell<bool>,
     session: RefCell<String>,
     token: RefCell<String>,
-    busy: Cell<bool>,
+    /// When the transcript request in flight started (0: none). One that never answers
+    /// stops blocking the refresh after `STUCK_MS`.
+    busy: Cell<f64>,
     ticks: Cell<u32>,
     swipe: Cell<Option<(f64, f64)>>,
     /// Older messages are folded behind a button until asked for.
@@ -71,6 +75,17 @@ fn tabs() -> Vec<String> {
         .map(|t| text(&get(t, "_target")))
         .filter(|t| t.starts_with("term:"))
         .collect()
+}
+/// The dock's «Teclado directo» key mirrors the active terminal's own (same origin):
+/// pressed while keys typed over the terminal go straight to it.
+fn direct_keyboard() -> bool {
+    get(&get(&frame(), "contentWindow"), "__comandosKeyboardDirect") == JsValue::TRUE
+}
+fn keyboard_key() {
+    let key = query(&id("cv-dock"), "[data-action='keyboard']");
+    let direct = direct_keyboard();
+    attr(&key, "aria-pressed", if direct { "true" } else { "false" });
+    attr(&key, "title", if direct { "Teclado directo activo: lo que tecleas va a la terminal. Tócalo para escribir en el cuadro de mensaje" } else { "Escribir directo en la terminal" });
 }
 /// The active session's terminal frame (null when none is open).
 fn frame() -> JsValue {
@@ -313,20 +328,22 @@ impl Chat {
         } else {
             String::new()
         };
-        if *self.chips.borrow() == html {
-            return;
-        }
-        let host = query(&id("cv-dock"), ".cv-panes");
-        let _ = set(&host, "innerHTML", &html.clone().into());
-        let _ = set(&host, "hidden", &html.is_empty().into());
+        // Wide screens have no chips: the placeholder alone names the split it writes to.
         let target = rows
             .iter()
             .position(|r| r.pane == pane)
             .filter(|_| split)
             .map(|i| format!("Escribe a {} · {}…", i + 1, pane_label(&rows[i])))
             .unwrap_or_else(|| "Escribe a la sesión…".into());
+        let memo = format!("{html}\u{0}{target}");
+        if *self.chips.borrow() == memo {
+            return;
+        }
+        let host = query(&id("cv-dock"), ".cv-panes");
+        let _ = set(&host, "innerHTML", &html.clone().into());
+        let _ = set(&host, "hidden", &html.is_empty().into());
         attr(&query(&id("cv-dock"), "textarea"), "placeholder", &target);
-        self.chips.replace(html);
+        self.chips.replace(memo);
     }
     /// The terminal frame focuses the same pane for this phone only (tmux per-client
     /// focus): toolbar keys and the direct keyboard land there, the desktop keeps its own.
@@ -384,6 +401,7 @@ impl Chat {
         let (pane, rows) = self.target(&session);
         self.chips(&pane, &rows);
         self.sync(&session, &pane, rows.len() > 1);
+        keyboard_key();
         // The header also shows over the terminal on phones; names and models change
         // rarely, so it is refreshed on a session move and every few seconds.
         if *self.titled.borrow() != session || self.ticks.get() % 5 == 0 {
@@ -407,20 +425,29 @@ impl Chat {
             attr(&query(&el(), ".cv-more"), "hidden", "");
             let _ = set(&query(&el(), ".cv-typing"), "hidden", &true.into());
         }
-        if self.busy.get() || !(force || moved || self.ticks.get() % 2 == 0) {
+        let started = self.busy.get();
+        if started > 0. && js_sys::Date::now() - started < STUCK_MS || !(force || moved || self.ticks.get() % 2 == 0) {
             return;
         }
-        self.busy.set(true);
+        let started = js_sys::Date::now();
+        self.busy.set(started);
         let me = self.clone();
         spawn_local(async move {
             let since = me.token.borrow().clone();
             let body = from_json(&json!({"session":session,"pane":pane,"since":since})).unwrap_or(JsValue::NULL);
             let reply = request("POST", "/chat/transcript", body).await;
-            me.busy.set(false);
+            if me.busy.get() == started {
+                me.busy.set(0.);
+            }
             if *me.session.borrow() != key {
                 return;
             }
             let Ok(reply) = reply else { return };
+            // A refusal (busy server: 429, an error) keeps what is shown; it is not a
+            // pane without an agent.
+            if number(&get(&reply, "status")) >= 300. {
+                return;
+            }
             let v = to_json(&get(&reply, "body"));
             me.age.set(v["age"].as_f64().unwrap_or(f64::MAX));
             if v["unchanged"] == true {
@@ -428,6 +455,8 @@ impl Chat {
                 return;
             }
             if v["agent"].is_null() {
+                // The next answer with an agent draws in full, never `unchanged`.
+                me.token.replace(String::new());
                 me.shown.borrow_mut().clear();
                 let empty = if rows.len() > 1 {
                     "<p class=\"cv-empty\">Este pane es una terminal sin agente con historial. Elige otro pane arriba del teclado o usa la terminal.</p>"
@@ -590,7 +619,10 @@ impl Chat {
     /// A terminal tool (select, panes, history, copy, paste, direct keyboard, Ctrl): it acts
     /// on the terminal, so the chat gives way to it first. Paste in the chat fills the draft.
     fn action(self: &Rc<Self>, action: &str) {
-        if self.on.get() && action == "paste" {
+        // Pegar fills this composer, in the chat and over a terminal in draft mode (its
+        // own draft box is hidden under the dock); with «Teclado directo» on it pastes
+        // into the terminal.
+        if action == "paste" && (self.on.get() || !direct_keyboard()) {
             spawn_local(async move {
                 let read = match call(&get(&global("navigator"), "clipboard"), "readText", &[]) {
                     Ok(p) => wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&p)).await.ok().map(|v| text(&v)),
@@ -829,9 +861,20 @@ pub fn install() -> Result<(), JsValue> {
                 me_pane.tick(true);
             }
         }
+        let active_frame = get(&e, "source") == get(&frame(), "contentWindow");
+        // The terminal says its keyboard mode: «Teclado directo» lights while it is on.
+        if from_term && active_frame && text(&get(&data, "type")) == "keyboard" {
+            keyboard_key();
+        }
+        // Typing over the terminal in draft mode lands in this composer.
+        if from_term && active_frame && text(&get(&data, "type")) == "compose-focus" {
+            let _ = call(&query(&id("cv-dock"), "textarea"), "focus", &[]);
+        }
         if from_term && text(&get(&data, "type")) == "ready" {
-            // A reloaded frame lost its per-client focus: select again.
+            // A reloaded frame lost its per-client focus: select again, right away, so
+            // this device's split wins over the one tmux attaches with.
             me_pane.synced.replace(String::new());
+            me_pane.tick(true);
             let source = get(&e, "source");
             // Only session terminals hand their bar to this page. The side panel's
             // terminal keeps its own keys and draft: nothing here draws them for it.

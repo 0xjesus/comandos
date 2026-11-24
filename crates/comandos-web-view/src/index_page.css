@@ -1385,6 +1385,7 @@ body.chat-on .termpane{visibility:hidden}
 #cv-dock .cv-keys button{flex:none;display:grid;place-items:center;min-width:44px;height:36px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg);color:var(--text);font:600 13px var(--mono);white-space:nowrap;cursor:pointer;touch-action:manipulation}
 #cv-dock .cv-keys button:active{border-color:var(--brand);color:var(--brand)}
 #cv-dock .cv-keys .hot{border-color:color-mix(in srgb,var(--brand) 55%,var(--line2))}
+#cv-dock .cv-keys button[aria-pressed="true"]{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 22%,var(--bg));color:var(--text)}
 #cv-dock .cv-keys svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 /* Chips de panes (celular con split, 22-oct): a quién escribes y qué chat ves; grandes para el pulgar. */
 #cv-dock .cv-panes{display:flex;gap:6px;overflow-x:auto;padding:8px 8px 2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
