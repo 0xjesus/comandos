@@ -145,7 +145,12 @@ fn make_tab(
                     && truthy(&get(it, "model"))
             })
             .collect::<Vec<_>>();
-        let short = if let Some(first) = models.first() {
+        // Remote dashboards name the split this device writes to («2 · Claude · opus-5.5»),
+        // as the APK does; the desktop app keeps the first model and «+N».
+        let split = crate::components::chat_view::tab_detail(&text(&session));
+        let short = if let Some(split) = split {
+            split
+        } else if let Some(first) = models.first() {
             let first = text(&run("tabModelShort", &[get(first, "model")])?);
             format!(
                 "{first}{}",

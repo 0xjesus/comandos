@@ -6,11 +6,11 @@
 //! One 1 s timer; it fetches only while the view is visible and the page is shown, and
 //! the server answers `unchanged` when the transcript did not move.
 #[cfg(target_arch = "wasm32")]
-pub use web::install;
+pub use web::{install, tab_detail};
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{PaneRow, Verdict, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, swipe, verdict, working};
+use super::{PaneRow, Verdict, ask_html, ask_options, ask_signature, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, split_label, swipe, verdict, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -58,6 +58,10 @@ struct Chat {
     paused: Cell<bool>,
     /// A message is on its way: a second tap must not send it (or an Enter) again.
     sending: Cell<bool>,
+    /// Signature of the permission prompt drawn under the messages (empty: none).
+    ask: RefCell<String>,
+    /// An answer to it is on its way.
+    answering: Cell<bool>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
 const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
@@ -150,10 +154,24 @@ fn saved(session: &str) -> String {
     comandos_web_dom::storage::get(&format!("comandos.pane.{session}")).unwrap_or_default()
 }
 fn save(session: &str, pane: &str) {
+    if saved(session) == pane {
+        return;
+    }
     let _ = comandos_web_dom::storage::set(&format!("comandos.pane.{session}"), pane);
+    // The tab names the split this device writes to: redraw it now, not at the next poll.
+    let _ = invoke(&global("renderTabbar"), &[]);
 }
-fn phone() -> bool {
-    global("innerWidth").as_f64().is_some_and(|w| w <= 747.)
+/// «2 · Claude · opus-5.5» for a session's tab on a remote dashboard: the split this
+/// device writes to (`None` on the desktop app, which has no chat view, or without agent).
+pub fn tab_detail(session: &str) -> Option<String> {
+    if !truthy(&el()) {
+        return None;
+    }
+    let rows = rows(session);
+    if rows.is_empty() {
+        return None;
+    }
+    split_label(&rows, &choose(&rows, &saved(session)).0)
 }
 fn closest(node: &JsValue, selector: &str) -> JsValue {
     if !truthy(node) {
@@ -311,7 +329,8 @@ impl Chat {
     /// Big chips above the keys (phones, splits only) and the composer naming its target.
     fn chips(&self, pane: &str, rows: &[PaneRow]) {
         let split = rows.len() > 1;
-        let html: String = if split && phone() {
+        // Chips on any width with a split (the APK shows them always): one tap picks it.
+        let html: String = if split {
             rows.iter()
                 .enumerate()
                 .map(|(i, r)| {
@@ -424,6 +443,7 @@ impl Chat {
             let _ = set(&query(&el(), ".cv-list"), "innerHTML", &SKELETON.into());
             attr(&query(&el(), ".cv-more"), "hidden", "");
             let _ = set(&query(&el(), ".cv-typing"), "hidden", &true.into());
+            self.ask_card(&serde_json::Value::Null);
         }
         let started = self.busy.get();
         if started > 0. && js_sys::Date::now() - started < STUCK_MS || !(force || moved || self.ticks.get() % 2 == 0) {
@@ -450,6 +470,9 @@ impl Chat {
             }
             let v = to_json(&get(&reply, "body"));
             me.age.set(v["age"].as_f64().unwrap_or(f64::MAX));
+            if !me.answering.get() {
+                me.ask_card(&v["ask"]);
+            }
             if v["unchanged"] == true {
                 me.typing();
                 return;
@@ -535,8 +558,80 @@ impl Chat {
             let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
         }
     }
+    /// The permission prompt on the agent's screen, under the messages, with one button
+    /// per option. Redrawn only when it changes.
+    fn ask_card(&self, ask: &serde_json::Value) {
+        let sig = ask_signature(ask);
+        if *self.ask.borrow() == sig {
+            return;
+        }
+        let host = query(&el(), ".cv-ask");
+        let feed = query(&el(), ".cv-feed");
+        let near = number(&get(&feed, "scrollHeight")) - number(&get(&feed, "scrollTop")) - number(&get(&feed, "clientHeight")) < 120.;
+        let _ = set(&host, "innerHTML", &ask_html(ask).into());
+        let _ = set(&host, "hidden", &sig.is_empty().into());
+        self.ask.replace(sig);
+        self.typing();
+        if near {
+            let _ = set(&feed, "scrollTop", &get(&feed, "scrollHeight"));
+        }
+    }
+    /// Answers the prompt the person saw: reads the pane again first and types the digit
+    /// (then Enter) only if the same prompt is still open there, as the APK does.
+    fn answer(self: &Rc<Self>, key: String) {
+        let session = text(&global("activeTerm"));
+        if self.answering.get() || session.is_empty() || self.ask.borrow().is_empty() {
+            return;
+        }
+        let pane = self.target(&session).0;
+        let shown = self.ask.borrow().clone();
+        self.answering.set(true);
+        for b in all(&query(&el(), ".cv-ask"), "button") {
+            let _ = set(&b, "disabled", &true.into());
+        }
+        let me = self.clone();
+        spawn_local(async move {
+            let body = from_json(&json!({"session":session,"pane":pane,"since":""})).unwrap_or(JsValue::NULL);
+            let fresh = request("POST", "/chat/transcript", body).await;
+            let v = match &fresh {
+                Ok(r) if number(&get(r, "status")) < 300. => to_json(&get(r, "body")),
+                _ => serde_json::Value::Null,
+            };
+            let now = ask_signature(&v["ask"]);
+            let outcome = if v.is_null() {
+                Err("No se pudo comprobar el permiso; no respondí.")
+            } else if now.is_empty() {
+                Err("Ese permiso ya no está abierto.")
+            } else if now != shown || v["pane"].as_str().is_some_and(|p| !pane.is_empty() && p != pane) {
+                Err("El permiso cambió; revisa las opciones otra vez.")
+            } else if !ask_options(&v["ask"]).iter().any(|(k, _, _)| *k == key) {
+                Err("Esa opción ya no está.")
+            } else {
+                let send = |k: &str| from_json(&json!({"session":session,"pane":pane,"key":k})).unwrap_or(JsValue::NULL);
+                let digit = request("POST", "/key", send(&key)).await;
+                let ok = matches!(&digit, Ok(r) if number(&get(r, "status")) < 300.);
+                if ok {
+                    let _ = wait(Ok(sleep(250.))).await;
+                }
+                let enter = if ok { request("POST", "/key", send("Enter")).await.ok() } else { None };
+                if enter.is_some_and(|r| number(&get(&r, "status")) < 300.) { Ok(()) } else { Err("No se pudo responder el permiso.") }
+            };
+            me.answering.set(false);
+            match outcome {
+                Ok(()) => me.ask_card(&serde_json::Value::Null),
+                Err(why) => {
+                    toast(why);
+                    // Shows what is open now (or nothing), never the stale card.
+                    me.ask.replace(String::new());
+                    me.ask_card(&v["ask"]);
+                }
+            }
+            me.tick(true);
+        });
+    }
     fn typing(&self) {
-        let busy = working(&self.messages.borrow(), self.age.get());
+        // A prompt waiting for an answer is not «working».
+        let busy = working(&self.messages.borrow(), self.age.get()) && self.ask.borrow().is_empty();
         let _ = set(&query(&el(), ".cv-typing"), "hidden", &(!busy).into());
     }
     fn toggle_more(&self) {
@@ -834,7 +929,7 @@ pub fn install() -> Result<(), JsValue> {
     if !truthy(&area) || truthy(&el()) {
         return Ok(());
     }
-    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><div class="cv-feed"><button type="button" class="cv-more" data-cv="more" hidden></button><div class="cv-list" aria-live="polite"></div><div class="cv-typing" role="status" aria-label="El agente está trabajando" hidden><i></i><i></i><i></i></div></div></section>"#.into()])?;
+    call(&area, "insertAdjacentHTML", &["beforeend".into(), r#"<section id="chat-view" hidden aria-label="Sesión como chat"><div class="cv-feed"><button type="button" class="cv-more" data-cv="more" hidden></button><div class="cv-list" aria-live="polite"></div><div class="cv-ask" role="group" aria-label="Permiso pendiente" hidden></div><div class="cv-typing" role="status" aria-label="El agente está trabajando" hidden><i></i><i></i><i></i></div></div></section>"#.into()])?;
     call(&area, "insertAdjacentHTML", &["afterend".into(), BARS.into()])?;
     let open = id("tab-open");
     if truthy(&open) {
@@ -904,6 +999,11 @@ pub fn install() -> Result<(), JsValue> {
             return Ok(JsValue::UNDEFINED);
         }
         let data = get(&button, "dataset");
+        let ask = text(&get(&data, "cvAsk"));
+        if !ask.is_empty() {
+            me.answer(ask);
+            return Ok(JsValue::UNDEFINED);
+        }
         let act = text(&get(&data, "cvAct"));
         if !act.is_empty() {
             me.act(&act, &button);
@@ -1059,6 +1159,76 @@ pub fn choose(rows: &[PaneRow], saved: &str) -> (String, bool) {
     }
     (rows.iter().find(|r| r.active).unwrap_or(&rows[0]).pane.clone(), false)
 }
+/// «2 · Claude · opus-5.5»: the split this device writes to, as the tab shows it (the
+/// number only on a split, like the APK's tab bar). `None` without an agent.
+pub fn split_label(rows: &[PaneRow], pane: &str) -> Option<String> {
+    let i = rows.iter().position(|r| r.pane == pane).unwrap_or(0);
+    let label = pane_label(rows.get(i)?);
+    if label == "Terminal" {
+        return None;
+    }
+    Some(if rows.len() > 1 { format!("{} · {label}", i + 1) } else { label })
+}
+/// The options of a permission prompt (`ask` of `/chat/transcript`): digit, label and
+/// whether it is the highlighted one. Anything not a single digit 1–9 is dropped.
+pub fn ask_options(ask: &serde_json::Value) -> Vec<(String, String, bool)> {
+    ask["options"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|o| {
+                    let key = o["key"].as_str()?;
+                    (key.len() == 1 && ('1'..='9').contains(&key.chars().next()?)).then(|| {
+                        (key.to_owned(), o["label"].as_str().unwrap_or("").to_owned(), o["on"] == true)
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+fn ask_detail(ask: &serde_json::Value) -> Vec<String> {
+    ask["detail"]
+        .as_array()
+        .map(|d| d.iter().filter_map(|l| l.as_str()).filter(|l| !l.trim().is_empty()).map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+/// Tells «the same prompt» from one that replaced it (same as the APK): question,
+/// detail and options. Empty when there is no prompt to answer.
+pub fn ask_signature(ask: &serde_json::Value) -> String {
+    let options = ask_options(ask);
+    if options.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{}\u{1}{}\u{1}{}",
+        ask["question"].as_str().unwrap_or(""),
+        ask_detail(ask).join("\n"),
+        options.iter().map(|(k, l, _)| format!("{k}:{l}")).collect::<Vec<_>>().join("|")
+    )
+}
+/// The card for a permission prompt: what the agent asks and one button per option.
+pub fn ask_html(ask: &serde_json::Value) -> String {
+    use comandos_web_view::escape::text as esc;
+    let options = ask_options(ask);
+    if options.is_empty() {
+        return String::new();
+    }
+    let detail = ask_detail(ask);
+    let question = ask["question"].as_str().filter(|q| !q.trim().is_empty()).unwrap_or("El agente espera tu respuesta");
+    let mut html = String::from("<p class=\"cv-ask-title\">Te pregunta</p>");
+    if !detail.is_empty() {
+        html += &format!("<pre class=\"cv-ask-detail\">{}</pre>", esc(&detail.join("\n")));
+    }
+    html += &format!("<p class=\"cv-ask-q\">{}</p><div class=\"cv-ask-opts\">", esc(question));
+    for (key, label, on) in options {
+        html += &format!(
+            "<button type=\"button\" class=\"cv-ask-opt{}\" data-cv-ask=\"{key}\" title=\"{key}. {label}\"><b>{key}</b><span>{label}</span></button>",
+            if on { " on" } else { "" },
+            label = esc(&label)
+        );
+    }
+    html + "</div>"
+}
 /// «Claude · opus-5.5», «Codex · gpt-6-astra», «Terminal».
 pub fn pane_label(row: &PaneRow) -> String {
     let agent = match row.agent.as_str() {
@@ -1149,6 +1319,34 @@ pub fn working(messages: &[(String, String)], age: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_tab_names_the_split_this_device_writes_to() {
+        let rows = vec![row("%2", "claude", "claude-opus-4-8", true), row("%9", "claude", "claude-fable-5-2", false)];
+        assert_eq!(split_label(&rows, "%9").as_deref(), Some("2 · Claude · fable-5.2"));
+        assert_eq!(split_label(&rows, "%2").as_deref(), Some("1 · Claude · opus-4.8"));
+        assert_eq!(split_label(&rows, "%gone").as_deref(), Some("1 · Claude · opus-4.8"), "a closed split: the first");
+        let one = vec![row("%4", "claude", "claude-opus-5-5", true)];
+        assert_eq!(split_label(&one, "%4").as_deref(), Some("Claude · opus-5.5"), "no number without a split");
+        assert_eq!(split_label(&[row("%1", "", "", true)], "%1"), None, "a plain terminal keeps the old label");
+        assert_eq!(split_label(&[], "%1"), None);
+    }
+    #[test]
+    fn a_permission_prompt_is_the_same_only_with_the_same_text_and_options() {
+        let ask = serde_json::json!({"question":"Do you want to run <ls>?","detail":["  ls -la",""],
+            "options":[{"key":"1","label":"Yes","on":true},{"key":"2","label":"No, and tell Claude \"why\""},{"key":"x","label":"bad"}]});
+        assert_eq!(ask_options(&ask).len(), 2, "only digits 1-9");
+        let sig = ask_signature(&ask);
+        let mut other = ask.clone();
+        other["options"][1]["label"] = "No".into();
+        assert_ne!(sig, ask_signature(&other));
+        assert_eq!(ask_signature(&serde_json::Value::Null), "");
+        assert_eq!(ask_html(&serde_json::json!({"question":"q","options":[]})), "", "no options: no card");
+        let html = ask_html(&ask);
+        assert!(html.contains("Do you want to run &lt;ls&gt;?"));
+        assert!(html.contains("data-cv-ask=\"1\""));
+        assert!(html.contains("class=\"cv-ask-opt on\""));
+        assert!(!html.contains("\"why\""), "labels are escaped");
+    }
     fn m(r: &str, t: &str) -> (String, String) {
         (r.into(), t.into())
     }
