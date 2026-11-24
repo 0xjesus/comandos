@@ -1,4 +1,5 @@
 import '../../core/platform/native_channel.dart';
+import 'car_text.dart';
 import 'notice.dart';
 
 // Notice → local notification mapping. Pure Dart; unit-tested.
@@ -49,6 +50,7 @@ List<LocalAlert> alertsFor(
   String? openChat,
   bool includeDone = true,
   Set<String>? pending,
+  bool carContent = true,
 }) {
   final Map<String, (int, LocalAlert)> byTag = <String, (int, LocalAlert)>{};
   for (final Notice n in notices) {
@@ -63,7 +65,7 @@ List<LocalAlert> alertsFor(
     if (kind == NoticeKind.done && !includeDone) continue;
     final String? session = n.sessionKey;
     if (session != null && session == openChat) continue;
-    final LocalAlert a = alertFor(n);
+    final LocalAlert a = alertFor(n, carContent: carContent);
     final (int, LocalAlert)? prev = byTag[a.tag];
     if (prev == null || prev.$1 < n.sequence) byTag[a.tag] = (n.sequence, a);
   }
@@ -72,24 +74,30 @@ List<LocalAlert> alertsFor(
   return <LocalAlert>[for (final (int, LocalAlert) e in out) e.$2];
 }
 
-/// The notification for one notice (no filtering).
-LocalAlert alertFor(Notice n) {
+/// The notification for one notice (no filtering). [carContent] false: the
+/// car only says who needs you, never what the agent wrote.
+LocalAlert alertFor(Notice n, {bool carContent = true}) {
   final String who = _clean(n.project ?? n.sessionKey ?? 'Una sesión');
   final NoticeKind kind = n.phoneKind;
   final String title;
   final String fallback;
+  final String state;
   switch (kind) {
     case NoticeKind.needsHuman:
       title = '$who te espera';
       fallback = 'Necesita tu respuesta para seguir.';
+      state = 'Te espera.';
     case NoticeKind.error:
       title = '$who falló';
       fallback = 'Revisa la sesión.';
+      state = 'Falló.';
     case NoticeKind.done:
     case NoticeKind.other:
       title = n.kind == 'turn_cancelled' ? '$who se detuvo' : '$who terminó';
       fallback = 'Terminó su turno.';
+      state = n.kind == 'turn_cancelled' ? 'Se detuvo.' : 'Terminó.';
   }
+  final String heard = carContent ? carText(n.excerpt.isNotEmpty ? n.excerpt : n.title) : '';
   final String excerpt = _clean(n.excerpt);
   final String head = _clean(n.title);
   return LocalAlert(
@@ -101,6 +109,8 @@ LocalAlert alertFor(Notice n) {
     pane: n.paneId,
     whenMs: n.occurredAtMs,
     eventId: n.eventId,
+    speech: n.sessionKey == null ? null : (heard.isEmpty ? state : '$state $heard'),
+    sender: who,
   );
 }
 

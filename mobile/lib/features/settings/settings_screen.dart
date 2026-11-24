@@ -9,6 +9,7 @@ import '../../core/outbox/outbox.dart';
 import '../../ui/format.dart';
 import '../../ui/theme.dart';
 import '../car/car_mode.dart';
+import '../notifications/car_settings.dart';
 import '../notifications/notifications_controller.dart';
 import '../notifications/notifications_hook.dart';
 import '../notifications/notifications_prompt.dart';
@@ -91,6 +92,12 @@ class SettingsScreen extends StatelessWidget {
             const Divider(),
             if (notices != null && server != null) ...<Widget>[
               NotificationSettings(controller: notices),
+              // The car hears the same notices: only while they are on.
+              ListenableBuilder(
+                listenable: notices,
+                builder: (BuildContext context, Widget? _) =>
+                    notices.enabled ? CarSettings(controller: notices) : const SizedBox.shrink(),
+              ),
               const Divider(),
             ],
             ListTile(

@@ -160,4 +160,17 @@ void main() {
     };
     expect(resolvedTags(shown, <String>{'e2'}), <String>['s:a']);
   });
+
+  test('the car hears the state first, a short clean summary and who says it', () {
+    final LocalAlert a = alertFor(n(1, excerpt: '**Listo.** Subí `x` con la llave sk-proj-AbCdEf1234567890xyz.'));
+    expect(a.sender, 'Pagos');
+    expect(a.speech, startsWith('Terminó. Listo.'));
+    expect(a.speech, isNot(contains('sk-proj')));
+    expect(alertFor(ask(2, excerpt: '¿Borro la rama?')).speech, startsWith('Te espera.'));
+    expect(alertFor(n(3, kind: 'turn_failed', category: 'error')).speech, 'Falló.');
+    final LocalAlert private = alertFor(n(4, excerpt: 'Datos del cliente'), carContent: false);
+    expect(private.speech, 'Terminó.', reason: 'private: only who needs you');
+    expect(private.body, 'Datos del cliente', reason: 'the phone shade keeps its text');
+    expect(alertFor(n(5, session: null)).speech, isNull, reason: 'no session: nowhere to reply');
+  });
 }

@@ -7,7 +7,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import org.json.JSONArray
+import org.json.JSONObject
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -28,9 +32,82 @@ class NativeBridge :
     PluginRegistry.ActivityResultListener,
     PluginRegistry.RequestPermissionsResultListener {
 
-    private companion object {
-        const val REQ_SCAN = 7101
-        const val REQ_NOTIF = 7102
+    companion object {
+        private const val REQ_SCAN = 7101
+        private const val REQ_NOTIF = 7102
+        private const val PREFS = "comandos_car"
+        private const val KEY_QUEUE = "replies"
+
+        /** A car reply must be answered before the broadcast window closes. */
+        private const val REPLY_MS = 9000L
+
+        /** The bridge of the running engine (null while no Dart runs). */
+        @Volatile
+        private var live: NativeBridge? = null
+
+        /**
+         * Hands a car reply to Dart and calls [done] once with the outcome to
+         * show. Without a running engine the reply waits on disk and Dart
+         * (started now) handles it as soon as it boots.
+         */
+        fun carReply(context: Context, args: Map<String, String?>, done: (String) -> Unit) {
+            val ch = live?.channel
+            if (ch == null) {
+                queue(context, args)
+                try {
+                    EngineHolder.ensureHeadless(context)
+                } catch (_: Exception) {
+                }
+                done("Guardado; lo proceso en cuanto ComandOS arranque.")
+                return
+            }
+            var finished = false
+            val main = Handler(Looper.getMainLooper())
+            fun finish(outcome: String) {
+                if (finished) return
+                finished = true
+                done(outcome)
+            }
+            main.postDelayed({ finish("Sigue en proceso; revisa la sesión antes de repetirlo.") }, REPLY_MS)
+            ch.invokeMethod("carReply", args, object : MethodChannel.Result {
+                override fun success(result: Any?) = finish(result as? String ?: "Hecho.")
+                override fun error(code: String, message: String?, details: Any?) =
+                    finish("No pude procesar la respuesta; no envié nada.")
+                override fun notImplemented() = finish("ComandOS aún está arrancando; no envié nada.")
+            })
+        }
+
+        fun carRead(tag: String, session: String?) {
+            live?.channel?.invokeMethod("carRead", mapOf("tag" to tag, "session" to session))
+        }
+
+        private fun queue(context: Context, args: Map<String, String?>) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val list = try {
+                JSONArray(prefs.getString(KEY_QUEUE, "[]"))
+            } catch (_: Exception) {
+                JSONArray()
+            }
+            val o = JSONObject()
+            for ((k, v) in args) if (v != null) o.put(k, v)
+            list.put(o)
+            prefs.edit().putString(KEY_QUEUE, list.toString()).apply()
+        }
+
+        private fun takeQueue(context: Context): List<Map<String, String>> {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val raw = prefs.getString(KEY_QUEUE, "[]") ?: "[]"
+            prefs.edit().remove(KEY_QUEUE).apply()
+            val list = try {
+                JSONArray(raw)
+            } catch (_: Exception) {
+                return emptyList()
+            }
+            return (0 until list.length()).mapNotNull { i ->
+                val o = list.optJSONObject(i) ?: return@mapNotNull null
+                o.keys().asSequence().associateWith { k -> o.optString(k) }
+            }
+        }
     }
 
     private lateinit var context: Context
@@ -43,11 +120,13 @@ class NativeBridge :
     override fun onAttachedToEngine(b: FlutterPlugin.FlutterPluginBinding) {
         context = b.applicationContext
         channel = MethodChannel(b.binaryMessenger, "comandos/native").also { it.setMethodCallHandler(this) }
+        live = this
     }
 
     override fun onDetachedFromEngine(b: FlutterPlugin.FlutterPluginBinding) {
         channel?.setMethodCallHandler(null)
         channel = null
+        if (live === this) live = null
     }
 
     // ---- Activity ----------------------------------------------------------
@@ -163,7 +242,23 @@ class NativeBridge :
                     session = call.argument<String>("session"),
                     pane = call.argument<String>("pane"),
                     whenMs = (call.argument<Number>("when") ?: 0).toLong(),
+                    speech = call.argument<String>("speech"),
+                    sender = call.argument<String>("sender"),
+                    askSig = call.argument<String>("askSig"),
                 )
+                result.success(null)
+            }
+            "takeCarReplies" -> result.success(takeQueue(context))
+            "carReplied" -> {
+                val tag = call.argument<String>("tag")
+                if (tag != null) {
+                    Notifier.replied(
+                        context, tag,
+                        call.argument<String>("text") ?: "",
+                        call.argument<String>("say") ?: "Hecho.",
+                        null, null,
+                    )
+                }
                 result.success(null)
             }
             "cancel" -> {

@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../core/connection.dart';
+import '../../core/models/ask_prompt.dart';
+import '../../core/models/transcript.dart';
+import '../car/option_parser.dart';
+import 'car_text.dart';
 import '../../core/platform/native_channel.dart';
 import '../../core/util/atomic_json_file.dart';
 import '../../core/util/clock.dart';
@@ -29,6 +33,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
     this.askUser,
     this.onMessage,
     this.onReachable,
+    this.carSend,
     this.connectivity,
     bool foreground = true,
     TimerFactory timer = systemTimer,
@@ -37,6 +42,8 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
         _foreground = foreground,
         _timer = timer {
     platform.onTap = _handleTap;
+    platform.onCarReply = _carReply;
+    platform.onCarRead = _carRead;
     visibleChat.addListener(_onVisibleChat);
     uiReady.addListener(_handleTap);
     uiReady.addListener(_showLost);
@@ -72,6 +79,13 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   /// True while the network is up (connectivity hint).
   final ValueListenable<bool>? connectivity;
 
+  /// Queues a message dictated in the car (the outbox: never lost) and says
+  /// how it went, in Spanish.
+  final Future<String> Function(String session, String? pane, String text)? carSend;
+
+  /// Tag of the «probar en el coche» conversation: replies stay on the phone.
+  static const String carTestTag = 'comandos:car-test';
+
   final Future<AtomicJsonFile> Function() _file;
   final NoticeTransport _transport;
   final TimerFactory _timer;
@@ -81,6 +95,8 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   bool _enabled = false;
   bool _asked = false;
   bool _alsoDone = true;
+  bool _carContent = true;
+  bool _disposed = false;
   bool _allowed = true;
   bool _keepAliveRefused = false;
   bool _keepAliveLost = false;
@@ -94,6 +110,9 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   bool get enabled => _enabled;
   bool get alsoDone => _alsoDone;
 
+  /// The car reads what the agent wrote (else only who needs you).
+  bool get carContent => _carContent;
+
   /// Android lets the app post notifications.
   bool get allowed => _allowed;
 
@@ -102,6 +121,12 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
 
   /// Android stopped the service in the background; not yet told.
   bool get keepAliveLost => _keepAliveLost;
+  /// Work that finishes after [dispose] (a save, an answer) tells no one.
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   WatcherState get watcherState => _watcher?.state ?? WatcherState.stopped;
   bool get asked => _asked;
 
@@ -186,6 +211,32 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
     notifyListeners();
   }
 
+  Future<void> setCarContent(bool on) async {
+    await _load();
+    _carContent = on;
+    await _save();
+    notifyListeners();
+  }
+
+  /// Posts a conversation the car shows like a real one: hear it, reply,
+  /// and the reply comes back without reaching any agent.
+  Future<String?> testInCar() async {
+    await _load();
+    if (!await platform.notificationsAllowed()) {
+      return 'Android no deja mostrar notificaciones. Permítelas en los ajustes de la app.';
+    }
+    await platform.show(const LocalAlert(
+      tag: carTestTag,
+      urgent: true,
+      title: 'Prueba de ComandOS',
+      body: 'Así te llegará un aviso en el coche. Contesta para probar.',
+      speech: 'Así te llegará un aviso de una sesión. Pulsa responder y di algo para probar; '
+          'no se envía a ningún agente.',
+      sender: 'ComandOS',
+    ));
+    return null;
+  }
+
   Future<void> openSettings({bool notifications = false}) =>
       platform.openSettings(notifications: notifications);
 
@@ -203,6 +254,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
           _enabled = json['enabled'] == true;
           _asked = json['asked'] == true;
           _alsoDone = json['alsoDone'] != false;
+          _carContent = json['carContent'] != false;
           final Object? host = json['host'];
           _host = host is String ? host : null;
           final Object? rev = json['rev'];
@@ -248,6 +300,7 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
         'enabled': _enabled,
         'asked': _asked,
         'alsoDone': _alsoDone,
+        'carContent': _carContent,
         'host': _host,
         'rev': _cursor?.rev,
         'after': _cursor?.after,
@@ -306,16 +359,86 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
   String? get _openChat => _foreground ? visibleChat.value : null;
 
   void _onNotices(List<Notice> notices, Set<String> pending) {
-    final List<LocalAlert> alerts =
-        alertsFor(notices, openChat: _openChat, includeDone: _alsoDone, pending: pending);
+    final List<LocalAlert> alerts = alertsFor(notices,
+        openChat: _openChat, includeDone: _alsoDone, pending: pending, carContent: _carContent);
     for (final LocalAlert a in alerts) {
-      unawaited(platform.show(a));
+      unawaited(_post(a));
       _shown.remove(a.tag);
       _shown[a.tag] = ShownAlert.of(a);
     }
     while (_shown.length > maxShown) {
       _shown.remove(_shown.keys.first);
     }
+  }
+
+  /// Shows [a]; one that waits on you first reads the pane, so the car hears
+  /// the permission it would approve (the command and the options).
+  Future<void> _post(LocalAlert a) async {
+    LocalAlert alert = a;
+    final String? session = a.session;
+    final api = connection.api;
+    if (a.urgent && session != null && a.speech != null && api != null) {
+      try {
+        final TranscriptResponse t = await api
+            .transcript(session: session, pane: a.pane)
+            .timeout(const Duration(seconds: 3));
+        final AskPrompt? ask = t.ask;
+        if (ask != null) alert = a.withSpeech(askCarText(ask), askSig: ask.signature, pane: t.pane);
+      } catch (_) {
+        // Unreachable: the plain notice goes out; a car reply re-reads anyway.
+      }
+    }
+    await platform.show(alert);
+  }
+
+  /// A reply from the car. Every reply re-reads the pane first: a permission
+  /// is only answered when it is the very prompt the driver heard, a message
+  /// never lands on an open menu. Returns the outcome the car shows.
+  Future<String> _carReply(CarReply r) async {
+    if (r.tag == carTestTag) {
+      return r.text.trim().isEmpty
+          ? 'No escuché nada. Es una prueba: no se envió nada.'
+          : 'Te escuché: «${r.text.trim()}». Es una prueba: no se envió a ningún agente.';
+    }
+    final String? session = r.session;
+    if (session == null) return 'No sé a qué sesión va; no envié nada.';
+    final api = connection.api;
+    if (api == null) return 'El teléfono no está vinculado; no envié nada.';
+    AskPrompt? open;
+    String? pane = r.pane;
+    bool checked = false;
+    try {
+      final TranscriptResponse t =
+          await api.transcript(session: session, pane: r.pane).timeout(const Duration(seconds: 4));
+      open = t.ask;
+      pane = t.pane ?? r.pane;
+      checked = true;
+    } catch (_) {
+      // A permission is never answered without looking at it again.
+      if (r.askSig != null) return 'Sin conexión con tu equipo: no respondí el permiso. Vuelve a intentarlo.';
+    }
+    final CarReplyPlan plan = planCarReply(r.text, open: open, heardSig: checked ? r.askSig : null);
+    switch (plan) {
+      case CarRefuse(:final String why):
+        return why;
+      case CarAnswer(:final AskOption option):
+        try {
+          await api.answerAsk(session: session, pane: pane, option: option.key);
+          return 'Respondí la opción ${optionWord(option.key)}: ${speakableLabel(option.label)}.';
+        } catch (_) {
+          return 'No pude responder el permiso; revísalo en la sesión.';
+        }
+      case CarSend(:final String text):
+        final Future<String> Function(String, String?, String)? send = carSend;
+        if (send == null) return 'No pude enviar el mensaje desde aquí.';
+        return send(session, pane, text);
+    }
+  }
+
+  void _carRead(String tag, String? session) {
+    _shown.remove(tag);
+    final api = connection.api;
+    if (session != null && api != null) unawaited(api.sessionSeen(session).catchError((Object _) {}));
   }
 
   void _onPending(Set<String> pending) {
@@ -396,8 +519,11 @@ class NotificationsController extends ChangeNotifier implements NotificationsHoo
 
   @override
   void dispose() {
+    _disposed = true;
     _stopWatcher();
     platform.onTap = null;
+    platform.onCarReply = null;
+    platform.onCarRead = null;
     visibleChat.removeListener(_onVisibleChat);
     uiReady.removeListener(_handleTap);
     uiReady.removeListener(_showLost);

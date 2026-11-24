@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:path_provider/path_provider.dart';
 
 import '../../app_navigator.dart';
 import '../../core/connection.dart';
 import '../../core/locator.dart';
 import '../../core/outbox/outbox.dart';
+import '../../core/outbox/outbox_item.dart';
 import '../../core/platform/native_channel.dart';
 import '../../core/polling/app_visibility.dart';
 import '../../core/polling/connectivity_watch.dart';
@@ -66,10 +69,54 @@ void registerNotifications() {
       final Outbox? outbox = sl.maybe<Outbox>();
       if (outbox != null && outbox.pendingCount > 0) outbox.setActive(true);
     },
+    carSend: carSendThroughOutbox,
     connectivity: net?.online,
     foreground: sl.maybe<AppVisibility>()?.value ?? true,
   );
   sl
     ..register<NotificationsHook>(c)
     ..register<NotificationsController>(c);
+}
+
+/// A message dictated in the car goes through the outbox (durable, never
+/// typed twice) and the car hears how it went: delivered within a few
+/// seconds, or kept to retry.
+Future<String> carSendThroughOutbox(String session, String? pane, String text) async {
+  final Outbox? outbox = sl.maybe<Outbox>();
+  if (outbox == null) return 'No pude enviar el mensaje desde aquí.';
+  final OutboxItem item;
+  try {
+    item = await outbox.enqueue(session: session, pane: pane, text: text);
+  } on OutboxRejection catch (e) {
+    return e.message;
+  }
+  outbox.setActive(true);
+  final Completer<String> done = Completer<String>();
+  void check() {
+    final OutboxItem? now = outbox.byId(item.id);
+    if (done.isCompleted) return;
+    switch (now?.state) {
+      case OutboxState.delivered:
+        done.complete('Enviado.');
+      case OutboxState.failed:
+        done.complete('No se envió: ${outboxFailureMessage(now?.failCode)}');
+      case OutboxState.uncertain:
+        done.complete('Llegó a la sesión pero no se confirmó; revísala antes de repetirlo.');
+      case null:
+      case OutboxState.queued:
+      case OutboxState.sending:
+        break;
+    }
+  }
+
+  outbox.addListener(check);
+  check();
+  try {
+    return await done.future.timeout(
+      const Duration(seconds: 4),
+      onTimeout: () => 'Guardado; se envía en cuanto tu equipo responda.',
+    );
+  } finally {
+    outbox.removeListener(check);
+  }
 }

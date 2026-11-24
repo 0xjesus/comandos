@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 /// Result of [NativeChannel.scanQr].
@@ -28,6 +30,9 @@ class LocalAlert {
     this.pane,
     this.whenMs = 0,
     this.eventId,
+    this.speech,
+    this.sender,
+    this.askSig,
   });
 
   /// Identity: a newer alert with the same tag replaces the old one.
@@ -45,6 +50,42 @@ class LocalAlert {
 
   /// Server event behind it (not sent to Android).
   final String? eventId;
+
+  /// What Android Auto reads aloud: the state first, then the reply made to
+  /// be heard (`car_text.dart`). Null: the notification is not a
+  /// conversation (no reply from the car).
+  final String? speech;
+
+  /// Who «says» it in the car (the session's name).
+  final String? sender;
+
+  /// Signature of the permission prompt [speech] reads, when it reads one:
+  /// a car reply only answers that very prompt.
+  final String? askSig;
+
+  LocalAlert withSpeech(String speech, {String? askSig, String? pane}) => LocalAlert(
+        tag: tag,
+        urgent: urgent,
+        title: title,
+        body: body,
+        session: session,
+        pane: pane ?? this.pane,
+        whenMs: whenMs,
+        eventId: eventId,
+        speech: speech,
+        sender: sender,
+        askSig: askSig,
+      );
+}
+
+/// A reply dictated in the car (Android Auto) or typed in the notification.
+class CarReply {
+  const CarReply({required this.tag, required this.text, this.session, this.pane, this.askSig});
+  final String tag;
+  final String text;
+  final String? session;
+  final String? pane;
+  final String? askSig;
 }
 
 /// What the notifications feature needs from Android. Faked in tests.
@@ -72,6 +113,13 @@ abstract class NotificationPlatform {
   /// Called when a notification was tapped while the app runs.
   set onTap(void Function()? callback);
 
+  /// Handles a reply from the car; returns what the conversation shows (and
+  /// the car may read) as the outcome, in Spanish.
+  set onCarReply(Future<String> Function(CarReply reply)? handler);
+
+  /// The person marked a conversation as read in the car.
+  set onCarRead(void Function(String tag, String? session)? handler);
+
   /// Opens Android's settings for this app ([notifications]: its
   /// notification page).
   Future<void> openSettings({bool notifications = false});
@@ -82,7 +130,24 @@ abstract class NotificationPlatform {
 class NativeChannel implements NotificationPlatform {
   NativeChannel._() {
     _channel.setMethodCallHandler((MethodCall call) async {
-      if (call.method == 'tap') _onTap?.call();
+      final Map<Object?, Object?> a = call.arguments is Map ? call.arguments as Map<Object?, Object?> : const <Object?, Object?>{};
+      String? str(String k) => a[k] is String && (a[k] as String).isNotEmpty ? a[k] as String : null;
+      switch (call.method) {
+        case 'tap':
+          _onTap?.call();
+        case 'carReply':
+          final Future<String> Function(CarReply)? h = _onCarReply;
+          if (h == null) return 'ComandOS aún está arrancando; no envié nada. Vuelve a intentarlo.';
+          return h(CarReply(
+            tag: str('tag') ?? '',
+            text: str('text') ?? '',
+            session: str('session'),
+            pane: str('pane'),
+            askSig: str('askSig'),
+          ));
+        case 'carRead':
+          _onCarRead?.call(str('tag') ?? '', str('session'));
+      }
       return null;
     });
   }
@@ -91,9 +156,40 @@ class NativeChannel implements NotificationPlatform {
   static const MethodChannel _channel = MethodChannel('comandos/native');
 
   void Function()? _onTap;
+  Future<String> Function(CarReply reply)? _onCarReply;
+  void Function(String tag, String? session)? _onCarRead;
 
   @override
   set onTap(void Function()? callback) => _onTap = callback;
+
+  @override
+  set onCarReply(Future<String> Function(CarReply reply)? handler) {
+    _onCarReply = handler;
+    // Replies that arrived while Dart was not running wait in Android.
+    if (handler != null) unawaited(_drainCarReplies());
+  }
+
+  @override
+  set onCarRead(void Function(String tag, String? session)? handler) => _onCarRead = handler;
+
+  Future<void> _drainCarReplies() async {
+    final List<Object?>? queued = await _call<List<Object?>>('takeCarReplies');
+    for (final Object? q in queued ?? const <Object?>[]) {
+      if (q is! Map) continue;
+      final Future<String> Function(CarReply)? h = _onCarReply;
+      if (h == null) return;
+      String? str(String k) => q[k] is String && (q[k] as String).isNotEmpty ? q[k] as String : null;
+      final String tag = str('tag') ?? '';
+      final String say = await h(CarReply(
+        tag: tag,
+        text: str('text') ?? '',
+        session: str('session'),
+        pane: str('pane'),
+        askSig: str('askSig'),
+      ));
+      await _call<void>('carReplied', <String, Object?>{'tag': tag, 'text': str('text') ?? '', 'say': say});
+    }
+  }
 
   Future<T?> _call<T>(String method, [Map<String, Object?>? args]) async {
     try {
@@ -138,6 +234,9 @@ class NativeChannel implements NotificationPlatform {
         'session': a.session,
         'pane': a.pane,
         'when': a.whenMs,
+        'speech': a.speech,
+        'sender': a.sender,
+        'askSig': a.askSig,
       });
 
   @override

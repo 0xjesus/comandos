@@ -25,6 +25,13 @@ class FakePlatform implements NotificationPlatform {
   int cancelAlls = 0;
   ({String? session, String? pane})? tap;
   void Function()? tapCallback;
+  Future<String> Function(CarReply reply)? carReply;
+  void Function(String tag, String? session)? carRead;
+
+  @override
+  set onCarReply(Future<String> Function(CarReply reply)? handler) => carReply = handler;
+  @override
+  set onCarRead(void Function(String tag, String? session)? handler) => carRead = handler;
 
   @override
   Future<bool> notificationsAllowed() async => allowed;
@@ -161,6 +168,8 @@ void main() {
           needsHuman: false, occurredAtMs: 2, project: 'Docs', sessionKey: 'term-r2', paneId: '%2'),
     ], nextAfter: 12, pending: <String>['e11']));
     await settle();
+    // A request first re-reads its pane (up to 3 s) so the car hears the prompt.
+    await until(() => platform.shown.isNotEmpty);
     expect(platform.shown.map((LocalAlert a) => a.title), <String>['Pagos te espera']);
     expect(platform.cancelled, contains(tagForSession('term-r2'))); // opening a chat clears it
 
@@ -285,5 +294,24 @@ void main() {
     await c.onPaired();
     expect(timers.active, isEmpty);
     expect(asked, 1);
+  });
+
+  test('car: the test conversation answers on the phone, a reply without a session sends nothing', () async {
+    expect(await c.testInCar(), isNull);
+    expect(platform.shown.single.tag, NotificationsController.carTestTag);
+    expect(platform.shown.single.speech, isNotNull, reason: 'the car reads it');
+    final String say = await platform.carReply!(const CarReply(tag: NotificationsController.carTestTag, text: 'hola'));
+    expect(say, contains('hola'));
+    expect(say, contains('no se envió'));
+    expect(await platform.carReply!(const CarReply(tag: 's:x', text: 'hola')), contains('no envié nada'));
+  });
+
+  test('car: reading aloud the content can be turned off and is remembered', () async {
+    await c.setCarContent(false);
+    expect(c.carContent, isFalse);
+    c.dispose();
+    c = make();
+    await c.onPaired();
+    expect(c.carContent, isFalse);
   });
 }
