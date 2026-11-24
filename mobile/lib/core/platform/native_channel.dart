@@ -147,6 +147,8 @@ class NativeChannel implements NotificationPlatform {
           ));
         case 'carRead':
           _onCarRead?.call(str('tag') ?? '', str('session'));
+        case 'carButton':
+          if (call.arguments is String) _onCarButton?.call(call.arguments as String);
       }
       return null;
     });
@@ -158,6 +160,21 @@ class NativeChannel implements NotificationPlatform {
   void Function()? _onTap;
   Future<String> Function(CarReply reply)? _onCarReply;
   void Function(String tag, String? session)? _onCarRead;
+  void Function(String button)? _onCarButton;
+
+  /// Steering-wheel / headset buttons while Modo auto is in a call
+  /// (`talk`, `next`, `previous`) and `hangup` from the call notice.
+  set onCarButton(void Function(String button)? handler) => _onCarButton = handler;
+
+  /// Starts the Modo auto call service: ComandOS keeps listening with the
+  /// screen off or another app in front, and gets the steering-wheel buttons.
+  /// False when Android refused.
+  Future<bool> startCarCall() async => await _call<bool>('carStart') ?? false;
+
+  Future<void> stopCarCall() => _call<void>('carStop');
+
+  /// Asks for the car's microphone over Bluetooth (Android 12+).
+  Future<bool> requestBluetooth() async => await _call<bool>('requestBluetooth') ?? false;
 
   @override
   set onTap(void Function()? callback) => _onTap = callback;

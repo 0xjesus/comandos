@@ -48,6 +48,9 @@ enum ReadMode {
   final String label;
 }
 
+/// Modo auto's default voice: Edge, Spanish (Mexico).
+const String kDefaultCarVoice = 'es-MX-DaliaNeural';
+
 /// The voice preferences. Immutable; [VoiceSettingsStore] swaps instances.
 @immutable
 class VoiceSettings {
@@ -60,6 +63,7 @@ class VoiceSettings {
     this.autoReadMode = ReadMode.ending,
     this.continuous = false,
     this.carCloudDictation = false,
+    this.carVoice = kDefaultCarVoice,
     this.silenceSeconds = 2.5,
     this.autoReadSessions = const <String>{},
     this.lastRead = const <String, String>{},
@@ -83,6 +87,10 @@ class VoiceSettings {
   /// (more accurate, costs money). Off: everything in Modo auto uses the
   /// phone's own recognizer and voice, which cost nothing.
   final bool carCloudDictation;
+
+  /// The voice Modo auto speaks with: an Edge neural voice (free, rendered on
+  /// the desktop; the text goes to Microsoft) or '' for the phone's own.
+  final String carVoice;
 
   /// Silence that ends a dictation.
   final double silenceSeconds;
@@ -110,6 +118,7 @@ class VoiceSettings {
     ReadMode? autoReadMode,
     bool? continuous,
     bool? carCloudDictation,
+    String? carVoice,
     double? silenceSeconds,
     Set<String>? autoReadSessions,
     Map<String, String>? lastRead,
@@ -123,6 +132,7 @@ class VoiceSettings {
         autoReadMode: autoReadMode ?? this.autoReadMode,
         continuous: continuous ?? this.continuous,
         carCloudDictation: carCloudDictation ?? this.carCloudDictation,
+        carVoice: carVoice ?? this.carVoice,
         silenceSeconds: silenceSeconds ?? this.silenceSeconds,
         autoReadSessions: autoReadSessions ?? this.autoReadSessions,
         lastRead: lastRead ?? this.lastRead,
@@ -138,6 +148,7 @@ class VoiceSettings {
         'autoReadMode': autoReadMode.name,
         'continuous': continuous,
         'carCloudDictation': carCloudDictation,
+        'carVoice': carVoice,
         'silenceSeconds': silenceSeconds,
         'autoReadSessions': autoReadSessions.toList(),
         'lastRead': lastRead,
@@ -164,6 +175,9 @@ class VoiceSettings {
       autoReadMode: pick(ReadMode.values, json['autoReadMode'], ReadMode.ending),
       continuous: json['continuous'] == true,
       carCloudDictation: json['carCloudDictation'] == true,
+      carVoice: json['carVoice'] is String && RegExp(r'^([a-z]{2,3}-[A-Za-z0-9]{2,4}-[A-Za-z0-9]+Neural)?$').hasMatch(json['carVoice'] as String)
+          ? json['carVoice'] as String
+          : kDefaultCarVoice,
       silenceSeconds: dbl('silenceSeconds', 2.5).clamp(1.0, 6.0),
       autoReadSessions: sessions is List ? <String>{for (final Object? s in sessions) if (s is String) s} : const <String>{},
       lastRead: last is Map

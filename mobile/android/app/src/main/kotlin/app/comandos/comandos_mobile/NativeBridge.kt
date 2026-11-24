@@ -35,6 +35,7 @@ class NativeBridge :
     companion object {
         private const val REQ_SCAN = 7101
         private const val REQ_NOTIF = 7102
+        private const val REQ_BLUETOOTH = 7103
         private const val PREFS = "comandos_car"
         private const val KEY_QUEUE = "replies"
 
@@ -75,6 +76,13 @@ class NativeBridge :
                     finish("No pude procesar la respuesta; no envié nada.")
                 override fun notImplemented() = finish("ComandOS aún está arrancando; no envié nada.")
             })
+        }
+
+        /** A steering-wheel / headset button, or «Colgar» on the call notice. */
+        fun carButton(button: String) {
+            Handler(Looper.getMainLooper()).post {
+                live?.channel?.invokeMethod("carButton", button)
+            }
         }
 
         fun carRead(tag: String, session: String?) {
@@ -192,7 +200,7 @@ class NativeBridge :
         permissions: Array<out String>,
         grantResults: IntArray,
     ): Boolean {
-        if (requestCode != REQ_NOTIF) return false
+        if (requestCode != REQ_NOTIF && requestCode != REQ_BLUETOOTH) return false
         val r = permResult ?: return true
         permResult = null
         r.success(grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
@@ -231,6 +239,26 @@ class NativeBridge :
                 result.success(null)
             }
             "watchRunning" -> result.success(WatchService.isRunning)
+            "carStart" -> result.success(CarService.start(context))
+            "carStop" -> {
+                CarService.stop(context)
+                result.success(null)
+            }
+            "requestBluetooth" -> {
+                // The car's microphone over Bluetooth (Android 12+ asks for it).
+                val activity = binding?.activity
+                when {
+                    Build.VERSION.SDK_INT < 31 -> result.success(true)
+                    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED ->
+                        result.success(true)
+                    activity == null -> result.success(false)
+                    permResult != null -> result.success(false)
+                    else -> {
+                        permResult = result
+                        activity.requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BLUETOOTH)
+                    }
+                }
+            }
             "watchTakeLost" -> result.success(WatchService.takeLost(context))
             "notify" -> {
                 Notifier.show(

@@ -105,23 +105,6 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  List<String> takes() {
-    final Directory d = Directory('${dir.path}/takes');
-    return d.existsSync() ? d.listSync().map((FileSystemEntity e) => e.path).toList() : <String>[];
-  }
-
-  /// One dictation through the ports: returns its outcome (the text is
-  /// then held by the ports until sent, saved or released).
-  Future<DictationOutcome> dictate(String text) async {
-    heard.add(text);
-    final int before = rec.starts;
-    final Future<DictationOutcome> f = ports.listen('s1', onTranscribing: () {});
-    await waitFor(() => rec.starts > before && voice.dictation.phase == DictationPhase.recording);
-    File(rec.path!).writeAsBytesSync(<int>[1, 2, 3]);
-    unawaited(voice.dictation.stop());
-    return f;
-  }
-
   test('5: a message goes to the pane the chat reads, not the feed\'s', () async {
     final SendOutcome r = await ports.send('s1', '%1', 'hola');
     expect(r.kind, SendKind.delivered);
@@ -144,30 +127,25 @@ void main() {
     expect(outbox.items.single.state, OutboxState.queued);
   });
 
-  test('9: a voice answer releases the dictation: no draft, recording deleted', () async {
-    final DictationOutcome o = await dictate('dos');
-    expect(o, isA<DictationText>());
-    expect(takes(), isNotEmpty, reason: 'held until the text is safe or released');
+  test('9: a voice answer releases the dictation: no draft, nothing recorded', () async {
+    stt.answers.add('dos');
+    final DictationOutcome o = await ports.listen('s1', onTranscribing: () {});
+    expect((o as DictationText).text, 'dos');
     ports.releaseDictation();
-    await waitFor(() => takes().isEmpty);
     ports.dispose();
     await settle();
     expect(drafts, isEmpty);
+    expect(rec.starts, 0, reason: 'the phone\'s recognizer: no recording, no OpenAI');
   });
 
-  test('9: a second dictation never orphans the first recording', () async {
-    await dictate('primer texto');
-    final List<String> first = takes();
-    expect(first, isNotEmpty);
+  test('9: a second dictation never loses the first text: it becomes the draft', () async {
+    stt.answers.addAll(<String>['primer texto', 'segundo']);
+    await ports.listen('s1', onTranscribing: () {});
     // No send / save / release happened (a bug path): the next dictation
-    // keeps the text as a draft and lets the recording go.
-    final Future<DictationOutcome> second = dictate('segundo');
-    await waitFor(() => first.every((String p) => !File(p).existsSync()));
+    // keeps the first text as a draft.
+    expect(await ports.listen('s1', onTranscribing: () {}), isA<DictationText>());
     expect(drafts, <(String, String)>[('s1', 'primer texto')]);
-    expect(await second, isA<DictationText>());
     ports.releaseDictation();
-    await waitFor(() => takes().isEmpty);
-    expect(voice.dictation.pendingFor('s1'), isEmpty);
   });
 
   test('3: an answer for another prompt, pane or session is refused without a request', () async {
@@ -211,7 +189,7 @@ void main() {
       p.releaseDictation();
     });
 
-    test('with the setting on, only the dictated message goes to OpenAI', () async {
+    test('even with the old OpenAI setting on, Modo auto never uses OpenAI', () async {
       // A short answer (a permission option) stays on the phone.
       stt.answers.add('dos');
       expect(((await ports.listen('s1', onTranscribing: () {}, shortAnswer: true)) as DictationText).text, 'dos');
@@ -221,9 +199,11 @@ void main() {
       stt.answers.add('cancela');
       expect(await ports.hear(const Duration(seconds: 3)), 'cancela');
       expect(openai, isEmpty);
-      // The message: OpenAI.
-      expect(await dictate('revisa los logs'), isA<DictationText>());
-      expect(openai, <String>['/v1/audio/transcriptions']);
+      // The message: the phone too (Modo auto costs nothing).
+      stt.answers.add('revisa los logs');
+      expect(((await ports.listen('s1', onTranscribing: () {})) as DictationText).text, 'revisa los logs');
+      expect(openai, isEmpty);
+      expect(rec.starts, 0);
       ports.releaseDictation();
     });
 
@@ -238,18 +218,14 @@ void main() {
       expect(outbox.items.single.text, 'despliega');
     });
 
-    test('a phone with no recognizer: OpenAI if there is a key, else a clear refusal', () async {
+    test('a phone with no recognizer: a clear refusal, never OpenAI (even with a key)', () async {
       stt.available = false;
       final LiveCarPorts none = await portsWith(key: null);
-      final DictationOutcome o = await none.listen('s1', onTranscribing: () {});
-      expect(o, isA<DictationDenied>());
+      expect(await none.listen('s1', onTranscribing: () {}), isA<DictationDenied>());
       expect(await none.hear(const Duration(seconds: 3)), isNull);
-      // With a key (even with the setting off) the message still gets
-      // transcribed.
-      await voice.settings.update((VoiceSettings s) => s.copyWith(carCloudDictation: false));
-      expect(await dictate('hola'), isA<DictationText>());
-      expect(openai, <String>['/v1/audio/transcriptions']);
-      ports.releaseDictation();
+      expect(await ports.listen('s1', onTranscribing: () {}), isA<DictationDenied>(),
+          reason: 'a key and the old setting change nothing');
+      expect(openai, isEmpty);
     });
   });
 

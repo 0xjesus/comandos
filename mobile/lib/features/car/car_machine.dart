@@ -8,6 +8,7 @@ import '../../core/util/clock.dart';
 import '../voice/dictation.dart';
 import '../voice/reply_watcher.dart';
 import 'car_commands.dart';
+import '../notifications/car_text.dart';
 import 'option_parser.dart';
 
 /// One split (a pane of a session) as Modo auto sees it.
@@ -197,6 +198,20 @@ abstract class CarPorts {
   Future<void> cue();
 }
 
+/// Buttons on the steering wheel or a headset (media keys).
+enum CarButton {
+  talk,
+  next,
+  previous;
+
+  static CarButton? named(String name) => switch (name) {
+        'talk' => CarButton.talk,
+        'next' => CarButton.next,
+        'previous' => CarButton.previous,
+        _ => null,
+      };
+}
+
 enum CarPhase {
   idle,
   listening,
@@ -251,15 +266,18 @@ class _Choice {
 /// one by one (waiting first): "Pagos, split 2, claude opus 5.", the
 /// permission prompt or the new reply, then it listens on its own. What is
 /// said is a command (`car_commands.dart`), an answer to the prompt, or a
-/// message: "Envío: …" and it goes after [countdown] seconds unless "no" /
-/// "cancela" is heard meanwhile. Silence moves on to the next split that
+/// message: it reads the whole message back, asks «¿Lo envío?» and sends
+/// only on an explicit «sí» (silence or «no» keep it as a draft). Silence
+/// in an open turn moves on to the next split that
 /// waits, or waits quietly (listening for commands for a while) and speaks
 /// when something arrives. Without [startCall] the machine works by taps
 /// (the original Modo auto).
 ///
 /// Safety rules (the person is driving):
-/// * A countdown only starts after its read-back was actually heard; if
-///   speaking fails or is cut, the machine waits for a tap.
+/// * Nothing is sent or answered without an explicit «sí» (or a tap) after
+///   its read-back was actually heard; silence is never a yes. If speaking
+///   fails or is cut, the machine waits for a tap.
+/// * A permission is read with the command it approves.
 /// * A spoken answer goes only to the prompt that was on screen AND read
 ///   aloud before listening started, in the same session and pane; if any
 ///   of that changed, nothing is sent and the new prompt is read.
@@ -276,6 +294,7 @@ class CarMachine extends ChangeNotifier {
     NowMs now = systemNowMs,
     TimerFactory timer = systemTimer,
     this.countdown = 3,
+    this.confirmWindow = const Duration(seconds: 6),
     this.announceGap = const Duration(seconds: 45),
     this.announceTtl = const Duration(minutes: 2),
     this.loadTimeout = const Duration(seconds: 6),
@@ -293,6 +312,9 @@ class CarMachine extends ChangeNotifier {
   final NowMs _now;
   final TimerFactory _timer;
   final int countdown;
+
+  /// How long «¿Lo envío?» / «¿Confirmo?» listens for the answer.
+  final Duration confirmWindow;
   final Duration announceGap;
   final Duration announceTtl;
 
@@ -444,14 +466,14 @@ class CarMachine extends ChangeNotifier {
       case CarPhase.failed:
         return 'No se pudo transcribir';
       case CarPhase.confirming:
-        return _needsTap ? 'Toca Enviar o Cancelar' : 'Envío en $_count…';
+        return _needsTap ? 'Toca Enviar o Cancelar' : '¿Lo envío? Di «sí»';
       case CarPhase.sending:
         return 'Enviando…';
       case CarPhase.reading:
         return 'Leyendo respuesta…';
       case CarPhase.choosing:
         final String w = optionWord(_option?.key ?? '');
-        return _needsTap ? 'Opción $w: toca Confirmar' : 'Opción $w en $_count…';
+        return _needsTap ? 'Opción $w: toca Confirmar' : 'Opción $w: ¿confirmo? Di «sí»';
       case CarPhase.waiting:
         if (_paused) return 'En pausa';
         return _working ? 'Trabajando…' : 'En espera';
@@ -467,7 +489,7 @@ class CarMachine extends ChangeNotifier {
     switch (_phase) {
       case CarPhase.confirming:
       case CarPhase.choosing:
-        return _needsTap ? '' : 'Di «no» para cancelar';
+        return _needsTap ? '' : 'Di «sí» para confirmar o «no» para dejarlo';
       case CarPhase.listening:
         return _ask != null
             ? 'Di la opción, o «siguiente», «repite», «cuelga»'
@@ -861,7 +883,19 @@ class CarMachine extends ChangeNotifier {
       return;
     }
     final int i = _ordered.indexWhere((CarSession s) => s.key == _currentKey);
-    final CarSession to = _ordered[(i + delta + _ordered.length) % _ordered.length];
+    // In a call, «siguiente» / «anterior» go to the next split that waits for
+    // you (with many agents the idle ones are just noise); only when none
+    // waits do they walk through all of them.
+    CarSession to = _ordered[(i + delta + _ordered.length) % _ordered.length];
+    if (_inCall) {
+      for (int k = 1; k < _ordered.length; k++) {
+        final CarSession s = _ordered[(i + delta * k + _ordered.length * k) % _ordered.length];
+        if (s.key != _currentKey && _needsYou(s)) {
+          to = s;
+          break;
+        }
+      }
+    }
     _quiet.remove(to.key);
     await _visit(to);
   }
@@ -939,6 +973,41 @@ class CarMachine extends ChangeNotifier {
       case CarPhase.sending:
       case CarPhase.choosing:
         return;
+    }
+  }
+
+  /// A steering-wheel or headset button (the driver never looks):
+  /// * ⏯ cuts what is being read and opens the turn; at «¿Lo envío?» /
+  ///   «¿Confirmo?» it is the yes; otherwise it starts or ends the dictation.
+  /// * ⏭ the next split that waits; ⏮ repeats the prompt or the last reply.
+  Future<void> wheel(CarButton b) async {
+    if (_disposed || _ended) return;
+    switch (b) {
+      case CarButton.next:
+        if (_inCall) {
+          await _command(CarCommand.next);
+        } else {
+          next();
+        }
+      case CarButton.previous:
+        if (_inCall) await _command(CarCommand.repeat);
+      case CarButton.talk:
+        switch (_phase) {
+          case CarPhase.reading:
+            hush();
+          case CarPhase.confirming:
+            await sendNow();
+          case CarPhase.choosing:
+            await confirmChoice();
+          case CarPhase.idle:
+          case CarPhase.waiting:
+          case CarPhase.listening:
+          case CarPhase.failed:
+            await talk();
+          case CarPhase.transcribing:
+          case CarPhase.sending:
+            return;
+        }
     }
   }
 
@@ -1035,14 +1104,19 @@ class CarMachine extends ChangeNotifier {
     await _announceThenDrain(err == null ? 'Detenido.' : 'No se pudo detener.');
   }
 
-  /// A permission option chosen by button: unambiguous, acts at once, on
-  /// the prompt shown.
+  /// A permission option tapped on screen: like a spoken one, it is read
+  /// back («¿Confirmo?») and needs a yes (voice, ⏯ or Confirmar), so a stray
+  /// tap while driving approves nothing.
   Future<void> chooseOption(AskOption o) async {
     final String? s = _currentId;
     final String? sig = _askSig;
     if (_ask == null || s == null || sig == null || _phase == CarPhase.sending) return;
-    _supersede();
-    await _answer(_Choice(session: s, pane: _pane, sig: sig, option: o), _op);
+    if (_phase == CarPhase.choosing && _choice?.option.key == o.key) {
+      // The same option tapped again: that is the confirmation.
+      await confirmChoice();
+      return;
+    }
+    await _choose(_Choice(session: s, pane: _pane, sig: sig, option: o));
   }
 
   void next() {
@@ -1174,40 +1248,6 @@ class CarMachine extends ChangeNotifier {
     if (!_hearing) return;
     _hearing = false;
     _ports.stopHearing();
-  }
-
-  /// During a countdown (after its read-back was heard): "no" / "cancela"
-  /// cancels, "sí" / "envíalo" skips the wait, "cuelga" hangs up.
-  Future<void> _hearWindow(int op, {required bool choice}) async {
-    final String? h = await _hear(Duration(seconds: countdown), until: (String partial) {
-      final CarCommand? c = parseCarCommand(partial);
-      return c == CarCommand.no || c == CarCommand.cancel || c == CarCommand.hangUp;
-    });
-    if (op != _op || _disposed || h == null) return;
-    final CarCommand? c = parseCarCommand(h);
-    if (c == null || !_countdownCommands.contains(c)) return;
-    switch (c) {
-      case CarCommand.no:
-      case CarCommand.cancel:
-        cancel();
-      case CarCommand.send:
-        await (choice ? confirmChoice() : sendNow());
-      case CarCommand.hangUp:
-        await hangUp();
-      default:
-        return;
-    }
-  }
-
-  Future<void> _wait(Duration d) {
-    final Completer<void> c = Completer<void>();
-    late final Timer t;
-    t = _timer(d, () {
-      _timers.remove(t);
-      c.complete();
-    });
-    _timers.add(t);
-    return c.future;
   }
 
   void _cancelTimers() {
@@ -1422,18 +1462,20 @@ class CarMachine extends ChangeNotifier {
     if (text != null && target != null) unawaited(_ports.saveDraft(target, text));
   }
 
-  /// Shows the text, says "Envío: …", counts down (in a call, listening
-  /// for "no"), sends. If the read-back was not heard, there is no
-  /// countdown: it waits for a tap.
+  /// Reads the whole message back and asks «¿Lo envío?». Only an explicit
+  /// «sí» / «envía» (or Enviar / the steering-wheel button) sends it:
+  /// silence, «no» or anything else keeps it as a draft. Nothing is ever
+  /// sent because the driver said nothing.
   Future<void> _confirm(String text) async {
     _supersede();
     final int op = ++_op;
     _heard = text;
     _phase = CarPhase.confirming;
-    _count = countdown;
+    _count = confirmWindow.inSeconds;
     _needsTap = false;
     notifyListeners();
-    final bool spoken = await _speakIn(op, () => _ports.speak('Envío: ${briefForSpeech(text)}'));
+    final bool spoken =
+        await _speakIn(op, () => _ports.speak('Tu mensaje: ${readBackForSpeech(text)} ¿Lo envío?'));
     if (op != _op || _disposed) return;
     if (!spoken) {
       _needsTap = true;
@@ -1441,15 +1483,62 @@ class CarMachine extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (_inCall) unawaited(_hearWindow(op, choice: false));
-    for (int n = countdown; n > 0; n--) {
-      _count = n;
+    await _confirmByVoice(op, choice: false);
+  }
+
+  /// After a read-back was heard: in a call, listens [confirmWindow] for
+  /// «sí» / «no»; out of a call, waits for a tap. No answer is a no.
+  Future<void> _confirmByVoice(int op, {required bool choice}) async {
+    if (!_inCall) {
+      _needsTap = true;
+      _notice = choice ? 'Toca Confirmar para responder.' : 'Toca Enviar para mandarlo.';
       notifyListeners();
-      await _wait(const Duration(seconds: 1));
-      if (op != _op || _disposed) return;
+      return;
     }
-    _stopHearing();
-    await _send(op);
+    if (!await _cue(op)) return;
+    final String? h = await _hear(confirmWindow, until: (String partial) {
+      final CarCommand? c = parseCarCommand(partial);
+      return c != null && _countdownCommands.contains(c);
+    });
+    if (op != _op || _disposed) return;
+    final bool silent = h == null || h.trim().isEmpty;
+    final CarCommand? c = silent ? null : parseCarCommand(h);
+    switch (c) {
+      case CarCommand.send:
+        await (choice ? confirmChoice() : sendNow());
+      case CarCommand.hangUp:
+        await hangUp();
+      case CarCommand.no:
+      case CarCommand.cancel:
+        cancel();
+      default:
+        // Silence or something else: never a yes.
+        _declined(choice, silent ? 'No te oí confirmar' : 'No era un sí');
+    }
+  }
+
+  /// The driver did not confirm: a message becomes the draft, an answer is
+  /// dropped; the call goes on.
+  void _declined(bool choice, String why) {
+    _supersede();
+    if (choice) {
+      _choice = null;
+      _option = null;
+      _phase = CarPhase.idle;
+      _notice = '$why: no respondí.';
+      notifyListeners();
+      unawaited(_announceThenDrain('$why. No respondí.'));
+      return;
+    }
+    final String? text = _heard;
+    final String? target = _target;
+    _heard = null;
+    _needsTap = false;
+    _phase = CarPhase.idle;
+    _notice = '$why: tu mensaje quedó como borrador.';
+    if (text != null && target != null) unawaited(_ports.saveDraft(target, text));
+    notifyListeners();
+    unawaited(_announceThenDrain('$why. No lo envié; quedó como borrador.'));
   }
 
   Future<void> _send(int op) async {
@@ -1520,8 +1609,8 @@ class CarMachine extends ChangeNotifier {
   Future<void> _readAsk(AskPrompt ask) async {
     final int op = ++_op;
     _phase = CarPhase.idle;
-    final String q = ask.question.trim().isEmpty ? 'El agente te pregunta.' : ask.question.trim();
-    final bool done = await _speakIn(op, () => _ports.speak('$q ${describeOptions(ask.options)}'));
+    // The command or file it approves comes first: a «sí» is never blind.
+    final bool done = await _speakIn(op, () => _ports.speak(askCarText(ask)));
     if (op != _op || _disposed) return;
     final bool same = _askSig == ask.signature;
     if (done && same) _askReadSig = ask.signature;
@@ -1565,8 +1654,8 @@ class CarMachine extends ChangeNotifier {
     await _choose(_Choice(session: session, pane: _pane, sig: sig, option: o));
   }
 
-  /// "Elegiste opción dos, no." then a countdown (in a call, listening for
-  /// "no"), then the answer. Not heard → waits for Confirmar.
+  /// "Opción dos: no. ¿Confirmo?" and only an explicit «sí» answers (the
+  /// prompt is checked again right before). Not heard → waits for Confirmar.
   Future<void> _choose(_Choice c) async {
     _supersede();
     final int op = ++_op;
@@ -1574,11 +1663,11 @@ class CarMachine extends ChangeNotifier {
     _choice = c;
     _option = o;
     _phase = CarPhase.choosing;
-    _count = countdown;
+    _count = confirmWindow.inSeconds;
     _needsTap = false;
     notifyListeners();
-    final bool spoken =
-        await _speakIn(op, () => _ports.speak('Elegiste opción ${optionWord(o.key)}, ${speakableLabel(o.label)}.'));
+    final bool spoken = await _speakIn(
+        op, () => _ports.speak('Opción ${optionWord(o.key)}: ${speakableLabel(o.label)}. ¿Confirmo?'));
     if (op != _op || _disposed) return;
     if (!spoken) {
       _needsTap = true;
@@ -1586,15 +1675,7 @@ class CarMachine extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (_inCall) unawaited(_hearWindow(op, choice: true));
-    for (int n = countdown; n > 0; n--) {
-      _count = n;
-      notifyListeners();
-      await _wait(const Duration(seconds: 1));
-      if (op != _op || _disposed) return;
-    }
-    _stopHearing();
-    await _answerChoice(op);
+    await _confirmByVoice(op, choice: true);
   }
 
   /// Sends the chosen option only if the session, pane and prompt are the
@@ -1651,6 +1732,15 @@ class CarMachine extends ChangeNotifier {
     if (text != null && target != null) unawaited(_ports.saveDraft(target, text));
     super.dispose();
   }
+}
+
+/// The message read back before «¿Lo envío?»: all of it up to [words]
+/// words (a dictated message is rarely longer); beyond that the start and
+/// how much more there is.
+String readBackForSpeech(String text, {int words = 70}) {
+  final List<String> w = text.trim().split(RegExp(r'\s+'));
+  if (w.length <= words) return '«${text.trim()}».';
+  return '«${w.take(words - 10).join(' ')}…» y ${w.length - words + 10} palabras más.';
 }
 
 /// First words of a long message, for the spoken read-back.

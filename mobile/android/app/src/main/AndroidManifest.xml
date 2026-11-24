@@ -22,6 +22,11 @@
          remoteMessaging = relays the agents' messages to this phone. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
+    <!-- Modo auto in a call: keeps listening with the screen off or Maps in
+         front (CarService), and the car's microphone over Bluetooth. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <!-- Restart the watcher after a reboot, only if you turned it on. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
@@ -82,6 +87,11 @@
 
         <!-- Android Auto: each session is a conversation the car reads aloud and
              answers by voice (CarReplyReceiver). No car UI of our own. -->
+        <service
+            android:name=".CarService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback"/>
+
         <receiver
             android:name=".CarReplyReceiver"
             android:exported="false"/>

@@ -103,6 +103,44 @@ class ComandosApi {
     }
   }
 
+  /// `POST /tts`: Edge's neural voice rendered on the desktop (mp3 bytes).
+  /// Anything but audio (no edge-tts there, the service failed) throws.
+  Future<Uint8List> speech({
+    required String text,
+    required String voice,
+    required String rate,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    if (_closed) throw const NetworkException();
+    final Completer<void> abort = Completer<void>();
+    final Timer deadline = Timer(timeout, () {
+      if (!abort.isCompleted) abort.complete();
+    });
+    try {
+      final http.AbortableRequest req = http.AbortableRequest('POST', _uri('/tts'), abortTrigger: abort.future)
+        ..headers['X-Comandos-Token'] = server.token
+        ..headers['Accept'] = 'audio/mpeg'
+        ..headers['Content-Type'] = 'application/json'
+        ..bodyBytes = utf8.encode(jsonEncode(<String, Object?>{'text': text, 'voice': voice, 'rate': rate}));
+      final http.StreamedResponse streamed = await _client.send(req);
+      final Uint8List bytes = await streamed.stream.toBytes();
+      final String type = streamed.headers['content-type'] ?? '';
+      if (streamed.statusCode != 200 || !type.startsWith('audio/') || bytes.isEmpty) {
+        throw const BadResponseException();
+      }
+      return bytes;
+    } on http.RequestAbortedException {
+      throw const RequestTimeoutException();
+    } on SocketException {
+      throw const NetworkException();
+    } on http.ClientException {
+      if (abort.isCompleted) throw const RequestTimeoutException();
+      throw const NetworkException();
+    } finally {
+      deadline.cancel();
+    }
+  }
+
   /// Like [request] but throws a typed [ApiException] for any non-2xx.
   Future<ApiResponse> requestOk(
     String method,

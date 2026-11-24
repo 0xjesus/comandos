@@ -9,6 +9,7 @@ import '../../core/models/ask_prompt.dart';
 import '../../core/models/session_feed.dart';
 import '../../core/models/transcript.dart';
 import '../../core/outbox/outbox.dart';
+import '../../core/platform/native_channel.dart';
 import '../../core/polling/app_visibility.dart';
 import '../../core/polling/connectivity_watch.dart';
 import '../../ui/theme.dart';
@@ -20,6 +21,8 @@ import '../voice/voice_services.dart';
 import '../voice/voice_settings.dart';
 import 'car_machine.dart';
 import 'car_ports.dart';
+import 'edge_voice.dart';
+import 'on_device.dart';
 import 'option_parser.dart';
 
 /// The call screen: Orbita's colours on a black ground, huge type.
@@ -61,6 +64,13 @@ class _CarModeScreenState extends State<CarModeScreen> {
     outbox: _outbox,
     chat: () => _chat,
     connectivity: sl.maybe<ConnectivityWatch>(),
+    // Edge's voice by default (Ajustes › Voz), the phone's as fallback.
+    tts: EdgeVoice(
+      render: () => edgeThrough(_connection.api),
+      voice: () => _v.settings.value.carVoice,
+      phone: DeviceVoice.tts,
+      dir: _v.cacheDir,
+    ),
   );
   late final CarMachine _machine = CarMachine(ports: _ports, session: widget.session, pane: widget.pane);
 
@@ -72,6 +82,13 @@ class _CarModeScreenState extends State<CarModeScreen> {
   String _excerpt = '';
   bool _started = false;
   bool _closing = false;
+
+  /// The call service runs: the call goes on with the screen off or another
+  /// app in front (and the steering-wheel buttons work).
+  bool _service = false;
+
+  /// On screen, or in a call kept alive by the service.
+  bool get _live => _appVisible.value || _service;
 
   @override
   void initState() {
@@ -91,6 +108,8 @@ class _CarModeScreenState extends State<CarModeScreen> {
   @override
   void dispose() {
     _machine.removeListener(_onMachine);
+    NativeChannel.instance.onCarButton = null;
+    unawaited(NativeChannel.instance.stopCarCall());
     _machine.dispose(); // stops speech, keeps anything said
     _ports.dispose();
     _sessions.removeListener(_onFeed);
@@ -106,7 +125,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
   /// listening, no countdown. Back: polls resume and anything pending is
   /// read. The outbox follows the app's usual background rules.
   void _onAppVisible() {
-    final bool on = _appVisible.value;
+    final bool on = _live;
     _machine.setForeground(on);
     _sessions.setVisible(on);
     _chat?.setVisible(on);
@@ -121,10 +140,29 @@ class _CarModeScreenState extends State<CarModeScreen> {
     if (!_started) {
       _started = true;
       // Settings (language, speed) first; never a tap to start the call.
-      unawaited(_v.ready().then((_) {
+      unawaited(_v.ready().then((_) async {
+        await _startService();
         if (mounted) unawaited(_machine.startCall());
       }));
     }
+  }
+
+  /// The call keeps going in the background and hears the steering wheel.
+  /// Asked once: the car's microphone over Bluetooth.
+  Future<void> _startService() async {
+    final NativeChannel native = NativeChannel.instance;
+    await native.requestBluetooth();
+    if (!mounted) return;
+    native.onCarButton = (String b) {
+      if (b == 'hangup') {
+        unawaited(_machine.hangUp());
+        return;
+      }
+      final CarButton? button = CarButton.named(b);
+      if (button != null) unawaited(_machine.wheel(button));
+    };
+    _service = await native.startCarCall();
+    if (mounted) _onAppVisible();
   }
 
   void _onMachine() {
@@ -153,7 +191,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
       outbox: _outbox,
     );
     c.addListener(_onChat);
-    c.setVisible(_appVisible.value);
+    c.setVisible(_live);
   }
 
   void _unbind() {
@@ -339,29 +377,27 @@ class _CarModeScreenState extends State<CarModeScreen> {
               ),
             ),
           const SizedBox(height: 12),
+          // No text to read while driving (and nothing for others to see):
+          // what was heard and what the agent wrote are spoken, not shown.
           Expanded(
-            child: confirming
-                ? Center(
-                    child: Text(
-                      '«${m.heard}»',
-                      textAlign: TextAlign.center,
-                      maxLines: 6,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _C.wait, fontSize: 30, fontWeight: FontWeight.w700, height: 1.2),
-                    ),
-                  )
-                : ask != null
-                    ? _askOptions(ask)
-                    : Text(
-                        m.excerpt,
-                        maxLines: 6,
-                        overflow: TextOverflow.fade,
-                        style: const TextStyle(color: _C.text, fontSize: 24, height: 1.25),
-                      ),
+            child: ask != null && !confirming ? _askOptions(ask) : Center(child: _stateIcon(m)),
           ),
         ],
       ),
     );
+  }
+
+  /// One big glyph for the moment of the call, readable at a glance.
+  Widget _stateIcon(CarMachine m) {
+    final (IconData icon, Color color) = switch (m.phase) {
+      CarPhase.listening => (Icons.mic, _C.stop),
+      CarPhase.transcribing || CarPhase.sending => (Icons.more_horiz, _C.dim),
+      CarPhase.confirming || CarPhase.choosing => (Icons.help_outline, _C.wait),
+      CarPhase.reading => (Icons.volume_up_outlined, _C.go),
+      CarPhase.failed => (Icons.error_outline, _C.stop),
+      CarPhase.idle || CarPhase.waiting => (m.working ? Icons.autorenew : Icons.phone_in_talk_outlined, m.working ? _C.work : _C.go),
+    };
+    return Icon(icon, size: 140, color: color.withValues(alpha: 0.85));
   }
 
   Widget _askOptions(AskPrompt ask) {

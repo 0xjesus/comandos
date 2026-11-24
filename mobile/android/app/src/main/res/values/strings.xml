@@ -13,5 +13,10 @@
     <string name="car_reply">Responder</string>
     <string name="car_read">Leído</string>
     <string name="car_sending">Enviando…</string>
+    <string name="car_channel">Modo auto</string>
+    <string name="car_channel_desc">Aviso fijo mientras el Modo auto está en llamada.</string>
+    <string name="car_title">Modo auto · en llamada</string>
+    <string name="car_text">⏯ hablar o confirmar · ⏭ siguiente · ⏮ repetir</string>
+    <string name="car_hang_up">Colgar</string>
     <string name="scan_hint">Apunta al código QR de «Remoto» en tu equipo</string>
 </resources>

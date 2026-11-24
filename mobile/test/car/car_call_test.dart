@@ -5,6 +5,7 @@ import 'package:comandos_mobile/core/models/session_feed.dart';
 import 'package:comandos_mobile/features/car/car_machine.dart';
 import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:comandos_mobile/features/voice/reply_watcher.dart';
+import 'package:comandos_mobile/features/notifications/car_text.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../voice/voice_fakes.dart';
@@ -71,19 +72,22 @@ void main() {
     expect(ports.listening, isNull, reason: 'waits for the split\'s chat first');
     m.updateCurrent(working: false, ask: ask, pane: '%p2');
     await flush();
-    expect(ports.spoken.last, '¿Ejecutar git push? Opción uno: sí. Opción dos: no.');
+    expect(ports.spoken.last, askCarText(ask));
     expect(ports.cues, 1);
     expect(m.phase, CarPhase.listening);
     expect(ports.shortAnswers.last, isTrue, reason: 'an answer: the phone\'s recognizer, never OpenAI');
 
-    // "La dos": read back, a countdown that listens for "no", then the answer.
+    // "La dos": read back, «¿Confirmo?», and only an explicit «sí» answers.
     ports.dictated(const DictationText('la dos'));
     await flush();
-    expect(ports.spoken.last, 'Elegiste opción dos, no.');
+    expect(ports.spoken.last, 'Opción dos: no. ¿Confirmo?');
     expect(ports.hearing, isNotNull);
-    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.hearWindows.last, const Duration(seconds: 6));
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.answers, isEmpty, reason: 'silence is never a yes');
+    ports.command('sí');
+    await flush();
     expect(ports.answers, <(String, String)>[('p', '2')]);
-    expect(ports.log, contains('stopHearing'));
 
     // Then on to the next split that waits: Web, with an unread reply.
     expect(ports.spoken, containsAllInOrder(<String>['Listo.', 'Web, split 1.']));
@@ -97,7 +101,7 @@ void main() {
     expect(ports.sent, isEmpty);
   });
 
-  test('a message: one-line read-back, sent by itself after 3 s; then it waits quietly', () async {
+  test('a message: whole read-back, «¿Lo envío?», sent only on «sí»; then it waits quietly', () async {
     final CarMachine m = machine(session: 'a');
     m.updateSessions(<CarSession>[sp('a', SessionState.idle)]);
     await start(m);
@@ -106,12 +110,13 @@ void main() {
     ports.dictated(const DictationText('revisa el deploy'));
     await flush();
     expect(m.phase, CarPhase.confirming);
-    expect(ports.spoken.last, 'Envío: revisa el deploy');
-    expect(ports.hearWindows.last, const Duration(seconds: 3), reason: 'listens for "no" during the countdown');
-    expect(m.hint, 'Di «no» para cancelar');
-    await clock.elapse(const Duration(seconds: 2));
-    expect(ports.sent, isEmpty);
-    await clock.elapse(const Duration(seconds: 1));
+    expect(ports.spoken.last, 'Tu mensaje: «revisa el deploy». ¿Lo envío?');
+    expect(ports.hearWindows.last, const Duration(seconds: 6), reason: 'listens for the answer');
+    expect(m.hint, 'Di «sí» para confirmar o «no» para dejarlo');
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.sent, isEmpty, reason: 'silence is never a yes');
+    ports.command('sí');
+    await flush();
     expect(ports.sent, <(String, String?, String)>[('a', '%a1', 'revisa el deploy')]);
     expect(ports.spoken, containsAllInOrder(<String>['Enviado.', 'Nada más por ahora. Te aviso cuando haya algo.']));
     expect(m.phase, CarPhase.waiting);
@@ -189,7 +194,46 @@ void main() {
     ports.dictated(const DictationText('sigue con el deploy'));
     await flush();
     expect(m.phase, CarPhase.confirming);
-    expect(ports.spoken.last, 'Envío: sigue con el deploy');
+    expect(ports.spoken.last, 'Tu mensaje: «sigue con el deploy». ¿Lo envío?');
+  });
+
+  test('«siguiente» jumps to the next split that waits, skipping idle ones', () async {
+    final CarMachine m = machine(session: 'a');
+    m.updateSessions(<CarSession>[
+      sp('a', SessionState.idle, ts: 9),
+      sp('b', SessionState.idle, ts: 8),
+      sp('c', SessionState.ask, ts: 1),
+    ]);
+    await start(m);
+    ports.dictated(const DictationText('siguiente'));
+    await flush();
+    expect(m.currentId, 'c', reason: 'B is idle: nothing to hear there');
+  });
+
+  test('silence after «¿Lo envío?» never sends: the message stays as a draft', () async {
+    final CarMachine m = machine(session: 'a');
+    m.updateSessions(<CarSession>[sp('a', SessionState.idle)]);
+    await start(m);
+    ports.dictated(const DictationText('borra producción'));
+    await flush();
+    ports.command(''); // the window closed with nobody speaking
+    await flush();
+    expect(ports.sent, isEmpty);
+    expect(ports.drafts, <(String, String)>[('a', 'borra producción')]);
+    expect(ports.spoken, contains('No te oí confirmar. No lo envié; quedó como borrador.'));
+  });
+
+  test('anything but a yes after «¿Lo envío?» never sends either', () async {
+    final CarMachine m = machine(session: 'a');
+    m.updateSessions(<CarSession>[sp('a', SessionState.idle)]);
+    await start(m);
+    ports.dictated(const DictationText('arregla el login'));
+    await flush();
+    ports.command('mañana lo vemos');
+    await flush();
+    expect(ports.sent, isEmpty);
+    expect(ports.drafts, <(String, String)>[('a', 'arregla el login')]);
+    expect(ports.spoken, contains('No era un sí. No lo envié; quedó como borrador.'));
   });
 
   test('silence moves on to the next split that waits, then waits; a reply that arrives is read', () async {
@@ -202,7 +246,7 @@ void main() {
     expect(ports.spoken.last, 'B, split 1.');
     m.updateCurrent(working: false, ask: ask);
     await flush();
-    expect(ports.spoken.last, startsWith('¿Ejecutar git push?'));
+    expect(ports.spoken.last, askCarText(ask));
 
     // Silence again: nobody else waits (B is not read again on its own).
     ports.dictated(const DictationNothing());
@@ -327,7 +371,7 @@ void main() {
     expect(m.phase, CarPhase.listening);
   });
 
-  test('hidden during the countdown; back, the read-back and countdown run again (no tap)', () async {
+  test('hidden while confirming; back, the read-back and «¿Lo envío?» run again (no tap)', () async {
     final CarMachine m = machine(session: 'a');
     m.updateSessions(<CarSession>[sp('a', SessionState.idle)]);
     await start(m);
@@ -338,8 +382,9 @@ void main() {
     expect(ports.sent, isEmpty);
     m.setForeground(true);
     await flush();
-    expect(ports.spoken.where((String x) => x == 'Envío: despliega'), hasLength(2));
-    await clock.elapse(const Duration(seconds: 3));
+    expect(ports.spoken.where((String x) => x == 'Tu mensaje: «despliega». ¿Lo envío?'), hasLength(2));
+    ports.command('sí');
+    await flush();
     expect(ports.sent.single.$3, 'despliega');
   });
 

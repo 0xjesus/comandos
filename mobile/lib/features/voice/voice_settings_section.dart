@@ -9,6 +9,7 @@ import 'openai_client.dart';
 import 'openai_key_store.dart';
 import 'speech.dart';
 import 'voice_services.dart';
+import '../car/edge_voice.dart';
 import 'voice_settings.dart';
 
 /// Ajustes › Voz, as a standalone screen (opened when the key is missing).
@@ -288,12 +289,25 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
               (double d) => '${d.toStringAsFixed(1)} s',
               (double d) => _set((VoiceSettings x) => x.copyWith(silenceSeconds: d)),
             ),
-            SwitchListTile(
-              title: const Text('Modo auto: dictar mensajes con OpenAI'),
-              subtitle: const Text('Más preciso, pero cuesta. Apagado, el modo auto usa la voz y el '
-                  'reconocimiento del teléfono, gratis.'),
-              value: s.carCloudDictation,
-              onChanged: (bool on) => _set((VoiceSettings x) => x.copyWith(carCloudDictation: on)),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Text('Modo auto', style: TextStyle(color: Orbita.brand, fontWeight: FontWeight.w600)),
+            ),
+            _choice<String>(
+              'Voz del Modo auto',
+              s.carVoice,
+              <String>[for (final (String v, String _) in kCarVoices) v],
+              (String v) => kCarVoices.firstWhere(((String, String) x) => x.$1 == v).$2,
+              (String v) => _set((VoiceSettings x) => x.copyWith(carVoice: v)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                'Gratis. Las voces de Edge suenan más naturales: tu equipo las genera y el texto que se lee '
+                'pasa por Microsoft. Si Edge falla, habla la voz del teléfono, que no sale del teléfono. '
+                'El dictado en el Modo auto siempre usa el reconocimiento del teléfono: no gasta nada.',
+                style: TextStyle(color: Orbita.dim, fontSize: 12.5, height: 1.35),
+              ),
             ),
           ],
         );

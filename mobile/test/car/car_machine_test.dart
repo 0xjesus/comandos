@@ -8,6 +8,7 @@ import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:comandos_mobile/features/voice/openai_client.dart';
 import 'package:comandos_mobile/features/voice/reply_watcher.dart';
 import 'package:flutter/foundation.dart';
+import 'package:comandos_mobile/features/notifications/car_text.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../voice/voice_fakes.dart';
@@ -206,20 +207,33 @@ void main() {
     expect(o.map((CarSession x) => x.session), <String>['c', 'b', 'd', 'a']);
   });
 
-  test('happy path: Hablar → text → "Envío: …" → 3 s countdown → outbox → "Enviado"', () async {
+  test('happy path: Hablar → text → whole read-back «¿Lo envío?» → only Enviar sends → "Enviado"', () async {
     await speakAndSend('revisa el deploy');
     expect(m.phase, CarPhase.confirming);
     expect(m.heard, 'revisa el deploy');
-    expect(ports.spoken.last, 'Envío: revisa el deploy');
-    expect(m.count, 3);
-    await clock.elapse(const Duration(seconds: 2));
-    expect(ports.sent, isEmpty);
-    expect(m.status, 'Envío en 1…');
-    await clock.elapse(const Duration(seconds: 1));
+    expect(ports.spoken.last, 'Tu mensaje: «revisa el deploy». ¿Lo envío?');
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.sent, isEmpty, reason: 'silence is never a yes');
+    expect(m.status, 'Toca Enviar o Cancelar');
+    await m.sendNow();
     expect(ports.sent, <(String, String?, String)>[('s1', '%s1', 'revisa el deploy')]);
     expect(ports.spoken.last, 'Enviado.');
     expect(m.phase, CarPhase.idle);
     expect(ports.log.first, 'stopSpeaking'); // listening stops any speech first
+  });
+
+  test('steering wheel: ⏯ talks, ends the dictation and is the yes at «¿Lo envío?»', () async {
+    unawaited(m.wheel(CarButton.talk)); // completes when the dictation does
+    await flush();
+    expect(m.phase, CarPhase.listening);
+    await m.wheel(CarButton.talk);
+    expect(m.phase, CarPhase.transcribing);
+    ports.dictated(const DictationText('revisa el deploy'));
+    await flush();
+    expect(m.phase, CarPhase.confirming);
+    expect(ports.sent, isEmpty);
+    await m.wheel(CarButton.talk);
+    expect(ports.sent.single.$3, 'revisa el deploy');
   });
 
   test('Enviar ya skips the countdown', () async {
@@ -274,7 +288,7 @@ void main() {
   test('offline send is spoken as such (the outbox will deliver later)', () async {
     ports.sendResult = const SendOutcome(SendKind.queuedOffline);
     await speakAndSend('hola');
-    await clock.elapse(const Duration(seconds: 3));
+    await m.sendNow();
     expect(ports.sent, hasLength(1));
     expect(ports.spoken.last, 'Sin conexión, se enviará al volver la red.');
     expect(m.notice, contains('Sin conexión'));
@@ -323,12 +337,15 @@ void main() {
     expect(ports.cues, 1);
   });
 
-  test('permission prompt read aloud, answered by a giant button', () async {
+  test('permission prompt read aloud with its command; a giant button asks «¿Confirmo?» first', () async {
     m.updateCurrent(working: false, ask: ask);
     await flush();
-    expect(ports.spoken.last, '¿Ejecutar git push? Opción uno: sí. Opción dos: no.');
+    expect(ports.spoken.last, 'Pide permiso. ¿Ejecutar git push? Responde con el número: uno, sí; dos, no.');
     expect(m.status, 'Te espera: elige una opción');
     await m.chooseOption(ask.options[1]);
+    expect(ports.answers, isEmpty, reason: 'a tap is read back first: a stray tap approves nothing');
+    expect(ports.spoken.last, 'Opción dos: no. ¿Confirmo?');
+    await m.chooseOption(ask.options[1]); // the same option again confirms
     expect(ports.answers, <(String, String)>[('s1', '2')]);
     expect(ports.spoken.last, 'Listo.');
     expect(m.ask, isNull);
@@ -339,7 +356,7 @@ void main() {
     expect(ports.spoken, hasLength(n));
   });
 
-  test('permission answered by voice only after "Elegiste…" and a cancellable countdown', () async {
+  test('permission answered by voice only after «¿Confirmo?» and an explicit yes', () async {
     m.updateCurrent(working: false, ask: ask);
     await flush();
     unawaited(m.talk());
@@ -348,10 +365,10 @@ void main() {
     await flush();
     expect(m.phase, CarPhase.choosing);
     expect(m.pendingOption!.key, '2');
-    expect(ports.spoken.last, 'Elegiste opción dos, no.');
-    await clock.elapse(const Duration(seconds: 2));
-    expect(ports.answers, isEmpty);
-    await clock.elapse(const Duration(seconds: 1));
+    expect(ports.spoken.last, 'Opción dos: no. ¿Confirmo?');
+    await clock.elapse(const Duration(seconds: 30));
+    expect(ports.answers, isEmpty, reason: 'silence is never a yes');
+    await m.confirmChoice();
     expect(ports.answers, <(String, String)>[('s1', '2')]);
   });
 
@@ -523,7 +540,7 @@ void main() {
     await flush();
     ports.dictated(const DictationText('hola'));
     await flush();
-    expect(ports.spoken.last, 'Envío: hola');
+    expect(ports.spoken.last, 'Tu mensaje: «hola». ¿Lo envío?');
     m.hush();
     await flush();
     await clock.elapse(const Duration(seconds: 30));
@@ -552,10 +569,11 @@ void main() {
     expect(m.phase, CarPhase.choosing);
     m.updateCurrent(working: false, ask: other, pane: '%1');
     await flush();
-    await clock.elapse(const Duration(seconds: 10));
+    await m.confirmChoice();
+    await flush();
     expect(ports.answers, isEmpty);
     expect(m.phase, isNot(CarPhase.choosing));
-    expect(ports.spoken, contains('¿Borrar la base? Opción uno: sí. Opción dos: no.'));
+    expect(ports.spoken, contains(askCarText(other)));
   });
 
   test('3: a pane change during the countdown cancels the choice', () async {
@@ -571,7 +589,7 @@ void main() {
     await promptThenTalk(three, pane: '%4');
     ports.dictated(const DictationText('la tercera'));
     await flush();
-    await clock.elapse(const Duration(seconds: 3));
+    await m.confirmChoice();
     expect(ports.answers, <(String, String)>[('s1', '3')]);
     expect(ports.answerBindings.single, ('%4', three.signature));
   });
@@ -585,7 +603,7 @@ void main() {
     await flush();
     m.updateSessions(<CarSession>[s('s2', SessionState.work)]);
     expect(m.currentId, 's1');
-    await clock.elapse(const Duration(seconds: 3));
+    await m.sendNow();
     expect(ports.sent.single.$1, 's1');
     // Idle again: now it may move on.
     m.updateSessions(<CarSession>[s('s2', SessionState.work)]);
@@ -603,7 +621,7 @@ void main() {
     expect(ports.answers, isEmpty);
     expect(ports.sent, isEmpty);
     expect(ports.drafts, <(String, String)>[('s1', 'No, primero revisa los logs')]);
-    expect(ports.spoken, contains('¿Ejecutar rm? ${describeOptions(three.options)}'));
+    expect(ports.spoken, contains(askCarText(three)));
   });
 
   test('4: a prompt on screen but not read to the end is not answered by speech', () async {
@@ -636,14 +654,14 @@ void main() {
   test('5: messages go to the pane the chat reads', () async {
     m.updateCurrent(working: false, pane: '%7');
     await speakAndSend('hola');
-    await clock.elapse(const Duration(seconds: 3));
+    await m.sendNow();
     expect(ports.sent.single.$2, '%7');
   });
 
   test('7: a queue blocked by an earlier message is reported as such', () async {
     ports.sendResult = const SendOutcome(SendKind.blocked);
     await speakAndSend('hola');
-    await clock.elapse(const Duration(seconds: 3));
+    await m.sendNow();
     expect(ports.spoken.last, 'Hay un mensaje anterior sin resolver. Ábrelo en el chat.');
     expect(m.notice, isNot(contains('Sin conexión')));
   });
@@ -696,7 +714,7 @@ void main() {
     expect(ports.log.where((String x) => x == 'release'), hasLength(1));
     ports.dictated(const DictationText('opción tres'));
     await flush();
-    await clock.elapse(const Duration(seconds: 3));
+    await m.confirmChoice();
     expect(ports.log.where((String x) => x == 'release'), hasLength(2));
     expect(ports.answers.single.$2, '3');
     m.dispose();

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../../core/models/ask_prompt.dart';
 import '../../core/outbox/outbox.dart';
 import '../../core/outbox/outbox_item.dart';
 import '../../core/polling/connectivity_watch.dart';
@@ -57,17 +58,7 @@ class LiveCarPorts implements CarPorts {
 
   VoiceSettings get _settings => _v.settings.value;
 
-  /// OpenAI may transcribe the dictated message: the setting is on and
-  /// there is a key.
-  Future<bool> _cloud() async => _settings.carCloudDictation && await _hasKey();
 
-  Future<bool> _hasKey() async {
-    try {
-      return await _v.keys.read() != null;
-    } catch (_) {
-      return false;
-    }
-  }
 
   String? _sinkOwner;
   Completer<void>? _release;
@@ -131,15 +122,10 @@ class LiveCarPorts implements CarPorts {
     final String? owner = _sinkOwner;
     final String? held = _held;
     if (owner != null && held != null && _release != null) await saveDraft(owner, held);
-    if (shortAnswer || !await _cloud()) {
-      final DictationOutcome? o = await _listenOnDevice(session, shortAnswer: shortAnswer);
-      if (o != null) return o;
-      // The phone cannot listen: OpenAI, if there is a key at all.
-      if (!await _hasKey()) {
-        return DictationDenied(_stt.problem ?? 'Este teléfono no tiene reconocimiento de voz.');
-      }
-    }
-    return _watch(session, () => _d.start(session, requireSpeech: requireSpeech), onTranscribing);
+    // Modo auto costs nothing: always the phone's own recognizer, never
+    // OpenAI (not even as a fallback).
+    final DictationOutcome? o = await _listenOnDevice(session, shortAnswer: shortAnswer);
+    return o ?? DictationDenied(_stt.problem ?? 'Este teléfono no tiene reconocimiento de voz.');
   }
 
   /// One dictation with the phone's recognizer; null when it cannot
@@ -327,10 +313,15 @@ class LiveCarPorts implements CarPorts {
   Future<String?> answer(String session, String optionKey, {String? pane, required String promptSig}) async {
     final ChatController? c = _chat();
     if (c == null || c.session != session) return 'La sesión cambió; no respondí.';
-    if (c.ask?.signature != promptSig || (pane != null && c.pane != pane)) {
+    final AskPrompt? shown = c.ask;
+    if (shown == null || shown.signature != promptSig || (pane != null && c.pane != pane)) {
       return 'La pregunta cambió; no respondí.';
     }
-    return c.answer(optionKey);
+    final AskOption? option = shown.options.where((AskOption o) => o.key == optionKey).firstOrNull;
+    if (option == null) return 'Esa opción ya no está; no respondí.';
+    // Reads the pane again on the server: only the very prompt that was read
+    // aloud is answered, never one that replaced it a second ago.
+    return c.answerPrompt(shown, option);
   }
 
   @override

@@ -1,7 +1,7 @@
 # car
 
-"Modo auto": a hands-free **call** for a phone on a car mount. Not Android
-Auto. Open it with `CarMode.open(context, session:, pane:)` (sessions app bar,
+"Modo auto": a hands-free **call** for a phone on a car mount (in Android Auto,
+sessions are conversations instead: `features/notifications/car_text.dart`). Open it with `CarMode.open(context, session:, pane:)` (sessions app bar,
 chat menu, settings).
 
 ## The call (no button is ever required)
@@ -11,9 +11,12 @@ chat menu, settings).
    first: "Pagos, split 2, claude opus 5.", then the permission prompt and its
    options, or the new reply; then an earcon and it listens.
 2. What is said is a command, an answer, or a message. A message is read back
-   ("Envío: …") and sent after 3 s unless «no» / «cancela» is heard (then it is
-   kept as a draft and it listens again; «envíalo» sends at once). A prompt is
-   answered by saying the option ("uno", "sí", "la dos"), read back the same way.
+   whole ("Tu mensaje: «…». ¿Lo envío?") and sent **only on an explicit «sí» /
+   «envíalo»** (or ⏯ / Enviar): silence, «no» or anything else keeps it as a
+   draft. A prompt is read with the command it approves, answered by saying the
+   option ("uno", "sí", "la dos"), read back ("Opción dos: no. ¿Confirmo?") and
+   answered only on a «sí"; the pane is read again on the server right before.
+   A tapped option asks «¿Confirmo?» too.
 3. Commands, as the whole utterance (`car_commands.dart`): «siguiente»,
    «anterior», «repite», «no»/«cancela», «para»/«cuelga» (hang up), «espera»
    (pause; «sigue» resumes, or it resumes alone after 2 min), «mensaje» (open a
@@ -21,18 +24,23 @@ chat menu, settings).
 4. Silence moves on to the next split that waits; with none, it says "Nada más
    por ahora", listens for commands a few rounds, then stays silent and speaks
    as soon as a reply, a prompt or another split arrives.
-5. Commands are heard when it listens (after each turn, during the 3 s
-   read-backs, while waiting), not over its own voice: the "Callar" button cuts
-   a long reading.
+5. Commands are heard when it listens (after each turn, after «¿Lo envío?»,
+   while waiting), not over its own voice: ⏯ on the steering wheel (or Callar)
+   cuts a long reading. «siguiente» / «anterior» go to the next split that waits.
+6. In a call `CarService` (Android, microphone + media playback) keeps it going
+   with the screen off or Maps in front, and its media session gets the
+   steering-wheel / headset buttons: ⏯ talk, cut the reading or confirm; ⏭ next
+   split; ⏮ repeat. «Colgar» on its notice hangs up. The screen shows only the
+   state and a big glyph, never the reply or the dictated text.
 
 ## Cost
 
-Everything it says is the phone's text-to-speech (`flutter_tts`); commands,
-answers and quiet listening use the phone's recognizer (`speech_to_text`):
-free. OpenAI transcribes only a dictated message, and only with Ajustes › Voz ›
-"Modo auto: dictar mensajes con OpenAI" on (off by default) and a key, or when
-the phone has no recognizer at all and there is a key. No key: everything on
-the phone.
+Nothing costs money. It speaks with an Edge neural voice by default
+(`edge_voice.dart`: the desktop renders it with `edge-tts` at `POST /tts`; the
+text goes to Microsoft) or the phone's voice (Ajustes › Voz › Voz del Modo
+auto); when Edge fails or is slow the phone's voice speaks at once and stays
+for 2 minutes. Listening is always the phone's recognizer (`speech_to_text`),
+never OpenAI, not even as a fallback.
 
 ## Files
 
