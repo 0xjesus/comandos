@@ -167,6 +167,13 @@ fn tabs_line(line: &str) -> Option<Vec<(String, bool)>> {
     (!tabs.is_empty()).then_some(tabs)
 }
 
+/// A line of Claude's quoted question block: `│ text`, open on the right (a boxed
+/// dialog closes its lines with `│` too).
+fn quoted(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with('│') && !t.ends_with('│') && !screen_line(line).is_empty()
+}
+
 /// `[ ] Label` / `[✔] Label` → (Some(ticked), "Label").
 fn checkbox(label: &str) -> (Option<bool>, String) {
     for (mark, on) in [("[ ]", false), ("[✔]", true), ("[x]", true), ("[X]", true), ("[✓]", true), ("☐", false), ("☒", true)] {
@@ -281,6 +288,12 @@ pub fn parse(screen: &str) -> Option<Menu> {
         }
         if !is_rule(lines[at]) {
             question = t.to_owned();
+            // Claude quotes a long question in a `│ ` block that wraps over
+            // several lines: all of it is the question.
+            while quoted(lines[at]) && at > 0 && quoted(lines[at - 1]) {
+                at -= 1;
+                question = format!("{} {question}", screen_line(lines[at]));
+            }
         }
         break;
     }
@@ -498,6 +511,49 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
         assert_eq!(moves(&m, 2).unwrap(), ["Down", "Down"]);
         assert_eq!(moves(&m, 0).unwrap(), Vec::<&str>::new());
         assert!(moves(&m, 9).is_none());
+    }
+
+    #[test]
+    fn a_long_quoted_question_is_read_whole() {
+        let screen = "\
+❯ borra lo viejo
+────────────────────────────────────────
+←  ☐ Borrar  ✔ Submit  →
+
+│ ¿Qué borro del proyecto viejo? Lo que se borra no se puede
+│ recuperar. Antes de borrar dejo respaldo; el motor se
+│ apagaría.
+
+  1. [ ] Despliegues automáticos
+         Quito los workflows que fallan.
+  2. [ ] Servidor
+         El droplet de la web.
+❯    Submit
+────────────────────────────────────────
+  3. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+";
+        let m = parse(screen).expect("menu");
+        assert_eq!(
+            m.question,
+            "¿Qué borro del proyecto viejo? Lo que se borra no se puede recuperar. Antes de borrar dejo respaldo; el motor se apagaría."
+        );
+        assert!(m.detail.is_empty(), "{:?}", m.detail);
+        assert_eq!(m.tabs, vec![("Borrar".to_owned(), false)]);
+        // A boxed dialog keeps one line as its question and the rest as context.
+        let boxed = "\
+╭──────────────────────────────╮
+│ Bash command                 │
+│   rm -rf build               │
+│ Do you want to proceed?      │
+│ ❯ 1. Yes                     │
+│   2. No                      │
+╰──────────────────────────────╯
+";
+        let m = parse(boxed).expect("boxed");
+        assert_eq!(m.question, "Do you want to proceed?");
+        assert_eq!(m.detail, vec!["Bash command".to_owned(), "rm -rf build".to_owned()]);
     }
 
     #[test]
