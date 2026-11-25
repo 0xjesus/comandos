@@ -24,9 +24,10 @@ import 'car_ports.dart';
 import 'edge_voice.dart';
 import 'on_device.dart';
 import 'option_parser.dart';
+import 'orchestrator_screen.dart' show CarModeSwitch;
 
 /// The call screen: Orbita's colours on a black ground, huge type.
-abstract final class _C {
+abstract final class CarColors {
   static const Color bg = Color(0xFF000000);
   static const Color text = Orbita.text;
   static const Color dim = Orbita.dim;
@@ -251,9 +252,9 @@ class _CarModeScreenState extends State<CarModeScreen> {
   @override
   Widget build(BuildContext context) {
     return Theme(
-      data: Theme.of(context).copyWith(scaffoldBackgroundColor: _C.bg),
+      data: Theme.of(context).copyWith(scaffoldBackgroundColor: CarColors.bg),
       child: Scaffold(
-        backgroundColor: _C.bg,
+        backgroundColor: CarColors.bg,
         body: SafeArea(
           child: ListenableBuilder(
             listenable: _machine,
@@ -262,14 +263,26 @@ class _CarModeScreenState extends State<CarModeScreen> {
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Expanded(flex: 3, child: Column(children: <Widget>[_header(), Expanded(child: _middle())])),
+                        Expanded(
+                          flex: 3,
+                          child: Column(children: <Widget>[
+                            CarModeSwitch(orchestrator: false, session: widget.session, pane: widget.pane),
+                            _header(),
+                            Expanded(child: _middle()),
+                          ]),
+                        ),
                         const SizedBox(width: 12),
                         Expanded(flex: 2, child: _controls(compact: true)),
                       ],
                     )
                   : Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[_header(), Expanded(child: _middle()), _controls()],
+                      children: <Widget>[
+                        CarModeSwitch(orchestrator: false, session: widget.session, pane: widget.pane),
+                        _header(),
+                        Expanded(child: _middle()),
+                        _controls(),
+                      ],
                     ),
             ),
           ),
@@ -279,9 +292,9 @@ class _CarModeScreenState extends State<CarModeScreen> {
   }
 
   Color _stateColor(SessionState? s) => switch (s) {
-        SessionState.ask || SessionState.limit => _C.wait,
-        SessionState.work => _C.work,
-        _ => _C.go,
+        SessionState.ask || SessionState.limit => CarColors.wait,
+        SessionState.work => CarColors.work,
+        _ => CarColors.go,
       };
 
   Widget _header() {
@@ -306,7 +319,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _C.text, fontSize: 32, fontWeight: FontWeight.w800, height: 1.1),
+                  style: const TextStyle(color: CarColors.text, fontSize: 32, fontWeight: FontWeight.w800, height: 1.1),
                 ),
                 if (sub.isNotEmpty)
                   Text(
@@ -314,7 +327,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: _C.dim, fontSize: 18, fontWeight: FontWeight.w600),
+                    style: const TextStyle(color: CarColors.dim, fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 if (s != null)
                   Text(
@@ -345,10 +358,10 @@ class _CarModeScreenState extends State<CarModeScreen> {
             textAlign: TextAlign.center,
             style: TextStyle(
               color: switch (m.phase) {
-                CarPhase.listening => _C.stop,
-                CarPhase.failed => _C.stop,
-                CarPhase.confirming || CarPhase.choosing => _C.wait,
-                _ => m.working ? _C.work : _C.go,
+                CarPhase.listening => CarColors.stop,
+                CarPhase.failed => CarColors.stop,
+                CarPhase.confirming || CarPhase.choosing => CarColors.wait,
+                _ => m.working ? CarColors.work : CarColors.go,
               },
               fontSize: 30,
               fontWeight: FontWeight.w800,
@@ -362,7 +375,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _C.wait, fontSize: 20, fontWeight: FontWeight.w600),
+                style: const TextStyle(color: CarColors.wait, fontSize: 20, fontWeight: FontWeight.w600),
               ),
             ),
           if (m.notice != null)
@@ -373,7 +386,7 @@ class _CarModeScreenState extends State<CarModeScreen> {
                 textAlign: TextAlign.center,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _C.dim, fontSize: 18),
+                style: const TextStyle(color: CarColors.dim, fontSize: 18),
               ),
             ),
           const SizedBox(height: 12),
@@ -390,12 +403,12 @@ class _CarModeScreenState extends State<CarModeScreen> {
   /// One big glyph for the moment of the call, readable at a glance.
   Widget _stateIcon(CarMachine m) {
     final (IconData icon, Color color) = switch (m.phase) {
-      CarPhase.listening => (Icons.mic, _C.stop),
-      CarPhase.transcribing || CarPhase.sending => (Icons.more_horiz, _C.dim),
-      CarPhase.confirming || CarPhase.choosing => (Icons.help_outline, _C.wait),
-      CarPhase.reading => (Icons.volume_up_outlined, _C.go),
-      CarPhase.failed => (Icons.error_outline, _C.stop),
-      CarPhase.idle || CarPhase.waiting => (m.working ? Icons.autorenew : Icons.phone_in_talk_outlined, m.working ? _C.work : _C.go),
+      CarPhase.listening => (Icons.mic, CarColors.stop),
+      CarPhase.transcribing || CarPhase.sending => (Icons.more_horiz, CarColors.dim),
+      CarPhase.confirming || CarPhase.choosing => (Icons.help_outline, CarColors.wait),
+      CarPhase.reading => (Icons.volume_up_outlined, CarColors.go),
+      CarPhase.failed => (Icons.error_outline, CarColors.stop),
+      CarPhase.idle || CarPhase.waiting => (m.working ? Icons.autorenew : Icons.phone_in_talk_outlined, m.working ? CarColors.work : CarColors.go),
     };
     return Icon(icon, size: 140, color: color.withValues(alpha: 0.85));
   }
@@ -408,16 +421,16 @@ class _CarModeScreenState extends State<CarModeScreen> {
           ask.question.isEmpty ? 'El agente te pregunta' : ask.question,
           maxLines: 3,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: _C.text, fontSize: 24, fontWeight: FontWeight.w700),
+          style: const TextStyle(color: CarColors.text, fontSize: 24, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
         for (final AskOption o in ask.choices)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: _BigButton(
+            child: CarBigButton(
               label: '${o.key}. ${speakableLabel(o.label)}',
-              color: _machine.pendingOption?.key == o.key ? _C.wait : _C.panel,
-              textColor: _machine.pendingOption?.key == o.key ? _C.bg : _C.text,
+              color: _machine.pendingOption?.key == o.key ? CarColors.wait : CarColors.panel,
+              textColor: _machine.pendingOption?.key == o.key ? CarColors.bg : CarColors.text,
               height: 80,
               fontSize: 24,
               onTap: busy ? null : () => _machine.chooseOption(o),
@@ -436,33 +449,33 @@ class _CarModeScreenState extends State<CarModeScreen> {
     switch (m.phase) {
       case CarPhase.confirming:
         row = Row(children: <Widget>[
-          Expanded(child: _BigButton(label: 'Cancelar', color: _C.panel, textColor: _C.stop, onTap: m.cancel, height: h)),
+          Expanded(child: CarBigButton(label: 'Cancelar', color: CarColors.panel, textColor: CarColors.stop, onTap: m.cancel, height: h)),
           const SizedBox(width: 12),
           Expanded(
-            child: _BigButton(label: m.needsTap ? 'Enviar' : 'Enviar ya', color: _C.go, onTap: m.sendNow, height: h),
+            child: CarBigButton(label: m.needsTap ? 'Enviar' : 'Enviar ya', color: CarColors.go, onTap: m.sendNow, height: h),
           ),
         ]);
       case CarPhase.choosing:
         row = Row(children: <Widget>[
-          Expanded(child: _BigButton(label: 'Cancelar', color: _C.panel, textColor: _C.stop, onTap: m.cancel, height: h)),
+          Expanded(child: CarBigButton(label: 'Cancelar', color: CarColors.panel, textColor: CarColors.stop, onTap: m.cancel, height: h)),
           const SizedBox(width: 12),
-          Expanded(child: _BigButton(label: 'Confirmar', color: _C.go, onTap: m.confirmChoice, height: h)),
+          Expanded(child: CarBigButton(label: 'Confirmar', color: CarColors.go, onTap: m.confirmChoice, height: h)),
         ]);
       case CarPhase.failed:
         row = Row(children: <Widget>[
-          Expanded(child: _BigButton(label: 'Descartar', color: _C.panel, textColor: _C.stop, onTap: m.discard, height: h)),
+          Expanded(child: CarBigButton(label: 'Descartar', color: CarColors.panel, textColor: CarColors.stop, onTap: m.discard, height: h)),
           const SizedBox(width: 12),
-          Expanded(child: _BigButton(label: 'Reintentar', color: _C.wait, onTap: m.talk, height: h)),
+          Expanded(child: CarBigButton(label: 'Reintentar', color: CarColors.wait, onTap: m.talk, height: h)),
         ]);
       case CarPhase.listening:
         row = Row(children: <Widget>[
-          Expanded(child: _BigButton(label: 'Cancelar', color: _C.panel, textColor: _C.stop, onTap: m.cancel, height: h)),
+          Expanded(child: CarBigButton(label: 'Cancelar', color: CarColors.panel, textColor: CarColors.stop, onTap: m.cancel, height: h)),
           const SizedBox(width: 12),
-          Expanded(child: _BigButton(label: 'Terminar', color: _C.go, onTap: m.talk, height: h)),
+          Expanded(child: CarBigButton(label: 'Terminar', color: CarColors.go, onTap: m.talk, height: h)),
         ]);
       case CarPhase.transcribing:
       case CarPhase.sending:
-        row = _BigButton(label: m.status, color: _C.panel, onTap: null, height: h);
+        row = CarBigButton(label: m.status, color: CarColors.panel, onTap: null, height: h);
       case CarPhase.idle:
       case CarPhase.reading:
       case CarPhase.waiting:
@@ -470,13 +483,13 @@ class _CarModeScreenState extends State<CarModeScreen> {
           Expanded(
             flex: 2,
             child: m.speaking
-                ? _BigButton(label: 'Callar', color: _C.panel, textColor: _C.wait, onTap: m.hush, height: h)
-                : _BigButton(label: 'Hablar', color: _C.go, onTap: m.talk, height: h),
+                ? CarBigButton(label: 'Callar', color: CarColors.panel, textColor: CarColors.wait, onTap: m.hush, height: h)
+                : CarBigButton(label: 'Hablar', color: CarColors.go, onTap: m.talk, height: h),
           ),
           if (m.working) ...<Widget>[
             const SizedBox(width: 12),
             Expanded(
-              child: _BigButton(label: 'Detener', color: _C.panel, textColor: _C.stop, onTap: m.stopAgent, height: h),
+              child: CarBigButton(label: 'Detener', color: CarColors.panel, textColor: CarColors.stop, onTap: m.stopAgent, height: h),
             ),
           ],
         ]);
@@ -489,10 +502,10 @@ class _CarModeScreenState extends State<CarModeScreen> {
         children: <Widget>[
           row,
           const SizedBox(height: 12),
-          _BigButton(
+          CarBigButton(
             label: 'Colgar',
-            color: _C.hangUp,
-            textColor: _C.text,
+            color: CarColors.hangUp,
+            textColor: CarColors.text,
             icon: Icons.call_end,
             height: compact ? 104 : 132,
             fontSize: 38,
@@ -510,12 +523,13 @@ class _CarModeScreenState extends State<CarModeScreen> {
   }
 }
 
-class _BigButton extends StatelessWidget {
-  const _BigButton({
+class CarBigButton extends StatelessWidget {
+  const CarBigButton({
+    super.key,
     required this.label,
     required this.color,
     required this.onTap,
-    this.textColor = _C.bg,
+    this.textColor = CarColors.bg,
     this.height = 88,
     this.fontSize = 28,
     this.icon,
@@ -541,7 +555,7 @@ class _BigButton extends StatelessWidget {
         height: height,
         width: double.infinity,
         child: Material(
-          color: on ? color : _C.panel,
+          color: on ? color : CarColors.panel,
           borderRadius: BorderRadius.circular(22),
           child: InkWell(
             borderRadius: BorderRadius.circular(22),
@@ -591,7 +605,7 @@ class _BigIcon extends StatelessWidget {
           tooltip: label,
           onPressed: onTap,
           iconSize: 64,
-          color: _C.text,
+          color: CarColors.text,
           disabledColor: Orbita.line2,
           icon: Icon(icon),
         ),

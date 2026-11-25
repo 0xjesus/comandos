@@ -72,6 +72,12 @@ use std::{
 
 mod launch;
 
+/// `/session-new` on behalf of another route of this server (Modo auto's
+/// orchestrator), with the same checks and effects.
+pub(crate) async fn new_session_for(native: &Native, data: &Map<String, Value>) -> Answer {
+    launch::session_new(native, data).await
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionsRoute {
     RecoverTab,

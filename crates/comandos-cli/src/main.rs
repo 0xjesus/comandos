@@ -41,6 +41,7 @@ fn main() {
         Command::Raise(args) => comandos_cli::raise::main(&args),
         Command::Winstart(args) => comandos_cli::winstart::main(&args),
         Command::Next(args) => comandos_cli::next::main(&args),
+        Command::Auto(args) => comandos_cli::auto::main(&args),
         Command::PaneModel(args) => comandos_cli::pane_model::main(&args),
         Command::Snapshot(args) => comandos_cli::snapshot::main(&args),
         Command::Agents(args) => comandos_cli::agents::main(&args),

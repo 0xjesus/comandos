@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/locator.dart';
+import '../voice/voice_services.dart';
 import 'car_mode_screen.dart';
+import 'orchestrator_screen.dart';
 
 /// Builds the "Modo auto" screen. [session]/[pane] are set when opened from a
 /// chat, null when opened from the sessions list.
@@ -25,10 +27,13 @@ class CarMode {
   }
 }
 
-/// Registers Modo auto (`car_mode_screen.dart`, state machine in `car_machine.dart`).
+/// Registers Modo auto: split by split (`car_mode_screen.dart`, state
+/// machine in `car_machine.dart`) or with the orchestrator session
+/// (`orchestrator_screen.dart`), whichever was chosen last.
 void registerCarMode() {
   sl.register<CarMode>(CarMode(
-    (BuildContext context, String? session, String? pane) =>
-        CarModeScreen(session: session, pane: pane),
+    (BuildContext context, String? session, String? pane) => VoiceServices.instance.settings.value.carOrchestrator
+        ? const OrchestratorScreen()
+        : CarModeScreen(session: session, pane: pane),
   ));
 }

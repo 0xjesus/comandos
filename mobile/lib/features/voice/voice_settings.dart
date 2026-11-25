@@ -64,6 +64,7 @@ class VoiceSettings {
     this.continuous = false,
     this.carCloudDictation = false,
     this.carVoice = kDefaultCarVoice,
+    this.carOrchestrator = false,
     this.silenceSeconds = 2.5,
     this.autoReadSessions = const <String>{},
     this.lastRead = const <String, String>{},
@@ -92,6 +93,10 @@ class VoiceSettings {
   /// the desktop; the text goes to Microsoft) or '' for the phone's own.
   final String carVoice;
 
+  /// Modo auto talks to one Claude Code session that drives the others
+  /// (the orchestrator) instead of going split by split.
+  final bool carOrchestrator;
+
   /// Silence that ends a dictation.
   final double silenceSeconds;
 
@@ -119,6 +124,7 @@ class VoiceSettings {
     bool? continuous,
     bool? carCloudDictation,
     String? carVoice,
+    bool? carOrchestrator,
     double? silenceSeconds,
     Set<String>? autoReadSessions,
     Map<String, String>? lastRead,
@@ -133,6 +139,7 @@ class VoiceSettings {
         continuous: continuous ?? this.continuous,
         carCloudDictation: carCloudDictation ?? this.carCloudDictation,
         carVoice: carVoice ?? this.carVoice,
+        carOrchestrator: carOrchestrator ?? this.carOrchestrator,
         silenceSeconds: silenceSeconds ?? this.silenceSeconds,
         autoReadSessions: autoReadSessions ?? this.autoReadSessions,
         lastRead: lastRead ?? this.lastRead,
@@ -149,6 +156,7 @@ class VoiceSettings {
         'continuous': continuous,
         'carCloudDictation': carCloudDictation,
         'carVoice': carVoice,
+        'carOrchestrator': carOrchestrator,
         'silenceSeconds': silenceSeconds,
         'autoReadSessions': autoReadSessions.toList(),
         'lastRead': lastRead,
@@ -175,6 +183,7 @@ class VoiceSettings {
       autoReadMode: pick(ReadMode.values, json['autoReadMode'], ReadMode.ending),
       continuous: json['continuous'] == true,
       carCloudDictation: json['carCloudDictation'] == true,
+      carOrchestrator: json['carOrchestrator'] == true,
       carVoice: json['carVoice'] is String && RegExp(r'^([a-z]{2,3}-[A-Za-z0-9]{2,4}-[A-Za-z0-9]+Neural)?$').hasMatch(json['carVoice'] as String)
           ? json['carVoice'] as String
           : kDefaultCarVoice,
