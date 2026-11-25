@@ -50,8 +50,24 @@ pub fn account_of(account: &Value) -> Result<String> {
     }
     .into())
 }
+/// Cuentas que son el mismo login con dos nombres (`"claude:main"` →
+/// `"trabajo"` cuando `~/.claude` entró con el correo de esa cuenta): la
+/// misma cuota, así que sus turnos y su cupo van a una sola tarjeta. Lo fija el
+/// servidor en cada refresco de límites ([`set_account_twins`]).
+static TWINS: std::sync::RwLock<BTreeMap<String, String>> = std::sync::RwLock::new(BTreeMap::new());
+
+/// Reemplaza el mapa de gemelas: `"<proveedor>:<alias>"` → alias que la absorbe.
+pub fn set_account_twins(twins: BTreeMap<String, String>) {
+    *TWINS.write().unwrap_or_else(|p| p.into_inner()) = twins;
+}
+
 pub fn account_id(provider: &str, account: &Value) -> Result<String> {
-    Ok(format!("{provider}:{}", account_of(account)?))
+    let id = format!("{provider}:{}", account_of(account)?);
+    let twins = TWINS.read().unwrap_or_else(|p| p.into_inner());
+    Ok(match twins.get(&id) {
+        Some(alias) => format!("{provider}:{alias}"),
+        None => id,
+    })
 }
 fn python_whitespace(c: char) -> bool {
     c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
@@ -589,6 +605,12 @@ fn cycles<'a>(snapshots: &'a [Value], acc: &str) -> Result<Vec<&'a Value>> {
         numeric_cmp(&b["resets_at"], &a["resets_at"])
             .expect("validated numbers")
             .unwrap_or(Ordering::Equal)
+    });
+    // Una cuenta gemela guarda la misma foto con su otro nombre: un ciclo una vez.
+    // El reinicio puede diferir un segundo entre las dos lecturas.
+    out.dedup_by(|a, b| match (a["resets_at"].as_f64(), b["resets_at"].as_f64()) {
+        (Some(x), Some(y)) => (x - y).abs() < 120.,
+        _ => a["resets_at"] == b["resets_at"],
     });
     Ok(out)
 }
@@ -1247,4 +1269,23 @@ pub fn build_week(input: &WeekInput<'_>) -> Result<Value> {
         ("waste", Value::Array(waste)),
         ("pomodoros", Value::Array(pomodoros)),
     ]))
+}
+
+#[cfg(test)]
+mod twin_tests {
+    use super::*;
+
+    #[test]
+    fn a_twin_login_counts_as_one_account_and_one_cycle() {
+        set_account_twins(BTreeMap::from([("claude:twin-a".to_owned(), "twin-b".to_owned())]));
+        assert_eq!(account_id("claude", &json!("twin-a")).unwrap(), "claude:twin-b");
+        assert_eq!(account_id("codex", &json!("twin-a")).unwrap(), "codex:twin-a");
+        let snap = |acc: &str, reset: f64, pct: f64| {
+            json!({"provider": "claude", "account": acc, "window": "7d", "scope": "", "resets_at": reset, "percent": pct})
+        };
+        let snapshots = [snap("twin-a", 1000., 40.), snap("twin-b", 999., 40.), snap("twin-b", 2000., 70.)];
+        let w = waste(&snapshots, &[json!({"id": "claude:twin-b"})], 5000.).unwrap();
+        assert_eq!(w[0]["cyc"], json!([30, 60]));
+        set_account_twins(BTreeMap::new());
+    }
 }

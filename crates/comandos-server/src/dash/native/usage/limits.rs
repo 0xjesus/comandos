@@ -343,6 +343,19 @@ fn mark_error(health: &mut Map<String, Value>, error: &str) {
 /// Python guardaría el `str(e)` de su excepción o las filas.
 pub const OAUTH_UNSURE_ERROR: &str = "respuesta OAuth no reproducible por el frente";
 
+/// `~/.claude` («main») con el mismo correo que una cuenta con nombre es esa
+/// cuenta: misma cuota, una sola tarjeta en Consumos.
+fn claude_twins(emails: &[(String, String)]) -> std::collections::BTreeMap<String, String> {
+    let mut twins = std::collections::BTreeMap::new();
+    let main = emails.iter().find(|(alias, _)| alias == "main");
+    if let Some((_, address)) = main
+        && let Some((alias, _)) = emails.iter().find(|(a, e)| a != "main" && e == address)
+    {
+        twins.insert("claude:main".to_owned(), alias.clone());
+    }
+    twins
+}
+
 /// `networked` pasa a `true` antes de la primera petición de red.
 async fn collect(
     cache: &Arc<LimitsCache>,
@@ -375,6 +388,7 @@ async fn collect(
 
     let mut claude: Vec<Value> = Vec::new();
     let mut health = Map::new();
+    let mut emails: Vec<(String, String)> = Vec::new();
     for (alias, path, token) in accounts {
         let ts = secs(o);
         let mut h = Map::new();
@@ -416,6 +430,9 @@ async fn collect(
         })
         .await
         .and_then(Result::ok);
+        if let Some(address) = email.as_ref().and_then(Value::as_str).filter(|e| !e.is_empty()) {
+            emails.push((alias.clone(), address.to_lowercase()));
+        }
         for row in &mut rows {
             if let Some(row) = row.as_object_mut() {
                 row.insert("account".into(), alias.as_str().into());
@@ -455,6 +472,7 @@ async fn collect(
         health.insert(key, Value::Object(h));
         claude.extend(rows);
     }
+    comandos_core::analytics_week::set_account_twins(claude_twins(&emails));
 
     let quotas = blocking({
         let (home, hooks) = (o.home.clone(), o.hooks.clone());
@@ -735,6 +753,16 @@ fn python_error(e: &reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_logged_into_a_named_account_is_that_account() {
+        let e = |a: &str, m: &str| (a.to_owned(), m.to_owned());
+        let twins = claude_twins(&[e("main", "ana@work.test"), e("work", "ana@work.test"), e("home", "ana@home.test")]);
+        assert_eq!(twins.get("claude:main").map(String::as_str), Some("work"));
+        assert_eq!(twins.len(), 1);
+        // Otro correo en main: dos cuentas de verdad.
+        assert!(claude_twins(&[e("main", "a@x.io"), e("work", "b@x.io")]).is_empty());
+    }
 
     #[test]
     fn dns_errors_read_like_urllib() {

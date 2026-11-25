@@ -197,9 +197,16 @@ async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
     };
     let snapshots_since = (now - SNAPSHOT_LOOKBACK_S) as i64;
     let past = offset < 0;
+    let current = native.limits.current();
+    // Una cuenta que no contestó (429 tras un reinicio) toma su última lectura
+    // guardada; con todas al día no hace falta leerla.
+    let failed = current
+        .health
+        .values()
+        .any(|h| h.get("status").and_then(Value::as_str) == Some("error"));
     let rows = native
         .usage
-        .with(move |u| -> Result<UsageRows, ReadError> {
+        .with(move |u| -> Result<(WeekRows, Vec<Value>, Vec<Value>), ReadError> {
             let mut rows = WeekRows::new(now);
             usage_read::each_week_row(&u.conn, since, true, |kind, row| match kind {
                 WeekRow::Turn => rows.push_turn(row),
@@ -210,17 +217,17 @@ async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
             } else {
                 Vec::new()
             };
-            Ok((rows, snapshots))
+            let stored = if failed {
+                usage_read::quota_snapshots(&u.conn, now as i64)?
+            } else {
+                Vec::new()
+            };
+            Ok((rows, snapshots, stored))
         })
         .await?;
-    let (rows, snapshots) = rows.map_err(read_fault)?;
-    let limits: Vec<Value> = native
-        .limits
-        .current()
-        .rows
-        .into_iter()
-        .map(Value::Object)
-        .collect();
+    let (rows, snapshots, stored) = rows.map_err(read_fault)?;
+    let mut limits: Vec<Value> = current.rows.into_iter().map(Value::Object).collect();
+    add_stored(&mut limits, stored);
     let built = tokio::task::spawn_blocking(move || {
         let accounts = analytics_week::sidebar_week(&WeekInput {
             now,
@@ -251,6 +258,30 @@ async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
 fn build(input: &WeekInput<'_>) -> Answer {
     let result = analytics_week::build_week(input).map_err(|_| failure())?;
     Reply::json(StatusCode::OK, &result).map_err(|_| Fault::Decline)
+}
+
+/// Si el proveedor no contesta (p. ej. 429 tras un reinicio), la cuenta
+/// conserva su última lectura guardada en vez de quedarse sin cupo. La clave usa
+/// la cuenta ya resuelta (`account_id`), así que una gemela con lectura en vivo
+/// no se pisa con la foto vieja de su otro nombre.
+fn add_stored(limits: &mut Vec<Value>, stored: Vec<Value>) {
+    let key = |row: &Value| {
+        let get = |k: &str| row.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let account = analytics_week::account_id(&get("provider"), row.get("account").unwrap_or(&Value::Null))
+            .unwrap_or_else(|_| format!("{}:main", get("provider")));
+        (account, get("window"), get("scope"))
+    };
+    let mut live: std::collections::HashSet<_> = limits.iter().map(key).collect();
+    // `quota_snapshots` viene por reinicio ascendente: la más reciente primero,
+    // para que un ciclo viejo (otra cuenta que usó ese nombre) no la tape.
+    for mut row in stored.into_iter().rev() {
+        if live.insert(key(&row))
+            && let Some(map) = row.as_object_mut()
+        {
+            map.insert("stale".into(), Value::Bool(true));
+            limits.push(row);
+        }
+    }
 }
 
 /// GET `/usage/board`: el tablero de Ajustes › Consumos (proyectos → sesiones
@@ -293,23 +324,7 @@ pub async fn board(native: &Native) -> Answer {
         .collect();
     // Si el proveedor no contesta (p. ej. 429 tras un reinicio), la cuenta
     // conserva su última lectura en vez de desaparecer del tablero.
-    let key = |row: &Value| {
-        let get = |k: &str| row.get(k).and_then(Value::as_str).unwrap_or_default().to_owned();
-        let account = match get("account").as_str() {
-            "" | "unknown" => "main".to_owned(),
-            other => other.to_owned(),
-        };
-        (get("provider"), account, get("window"), get("scope"))
-    };
-    let live: std::collections::HashSet<_> = limits.iter().map(key).collect();
-    for mut row in stored {
-        if !live.contains(&key(&row))
-            && let Some(map) = row.as_object_mut()
-        {
-            map.insert("stale".into(), Value::Bool(true));
-            limits.push(row);
-        }
-    }
+    add_stored(&mut limits, stored);
     tokio::task::spawn_blocking(move || {
         let accounts = analytics_week::sidebar_week(&WeekInput {
             now,
