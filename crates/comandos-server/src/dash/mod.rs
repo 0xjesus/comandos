@@ -560,6 +560,16 @@ async fn handle(state: &DashState, request: Request) -> Result<Reply, HandlerErr
             };
             match native.dispatch(route, &request).await? {
                 native::Outcome::Reply(reply) => Ok(reply),
+                // A read declines when the store is busy for a moment: try it
+                // once more before the legacy server (usually not running, so
+                // the gear's Temas/Terminal came up empty on a 502).
+                native::Outcome::Decline if request.method == Method::GET => {
+                    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                    match native.dispatch(route, &request).await? {
+                        native::Outcome::Reply(reply) => Ok(reply),
+                        native::Outcome::Decline => forward_to_legacy(state, request).await,
+                    }
+                }
                 native::Outcome::Decline => forward_to_legacy(state, request).await,
             }
         }

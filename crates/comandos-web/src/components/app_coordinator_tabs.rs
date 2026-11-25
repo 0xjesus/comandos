@@ -1072,7 +1072,10 @@ fn init_sort() -> Result<(), JsValue> {
     )
 }
 fn init_app() -> Result<(), JsValue> {
-    if !truthy(&global("WEBTERM")) {
+    // A page that shows one panel (`?panel=settings|news…`, the APK's gear
+    // and news) is not the workspace: `body.app` would clip it to one screen
+    // and mount the news reader inside the hidden #panes.
+    if !truthy(&global("WEBTERM")) || truthy(&global("ONLY_PANEL")) {
         return Ok(());
     }
     classes(&body(), "app", true);

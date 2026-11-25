@@ -214,7 +214,7 @@ html.nr-open,html.nr-open body{overflow:hidden}
 /* ===== Resúmenes dentro del espacio de trabajo (grill 29-sep): la barra
    izquierda, pestañas y avisos siguen visibles; con terminal, la terminal
    real queda a la izquierda y el resumen a la derecha. */
-body.app #news-reader.nr-embedded{position:relative;inset:auto;z-index:5;grid-column:1;grid-row:2;min-width:0;min-height:0}
+body.app #news-reader.nr-embedded{position:relative;inset:auto;z-index:12;grid-column:1;grid-row:2/5;min-width:0;min-height:0}
 body.app.split #news-reader.nr-embedded{grid-area:term;border-left:1px solid var(--line)}
 body.app.split.nr-reading.nr-docked #news-reader.nr-embedded{justify-self:end;width:var(--nr-share,58%)}
 body.app.split.nr-reading.nr-docked #term-area{justify-self:start;width:calc(100% - var(--nr-share,58%))}

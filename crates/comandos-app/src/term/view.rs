@@ -673,8 +673,15 @@ impl TermView {
         }
         geom
     }
+    /// The whole tmux window in cells. A pane-native view's engine holds one
+    /// pane at a time, so its size is not the window's: without this the
+    /// split dividers (and their drag grips) were never placed.
     pub fn grid_size(&self) -> (u16, u16) {
-        self.inner.model.borrow().engine.size()
+        let m = self.inner.model.borrow();
+        if self.inner.pane_native_wanted() && m.window_cells != (0, 0) {
+            return m.window_cells;
+        }
+        m.engine.size()
     }
     /// El gesto pertenece a esta terminal, como _last_ctrl_c del objeto VTE original.
     pub fn ctrl_c_action(
