@@ -571,13 +571,23 @@ class CarBigButton extends StatelessWidget {
                       const SizedBox(width: 12),
                     ],
                     Flexible(
-                      child: Text(
-                        label,
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: fg, fontSize: fontSize, fontWeight: FontWeight.w800),
-                      ),
+                      // One word shrinks to fit instead of breaking («Deten-er»).
+                      child: label.contains(' ')
+                          ? Text(
+                              label,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: fg, fontSize: fontSize, fontWeight: FontWeight.w800),
+                            )
+                          : FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                style: TextStyle(color: fg, fontSize: fontSize, fontWeight: FontWeight.w800),
+                              ),
+                            ),
                     ),
                   ],
                 ),

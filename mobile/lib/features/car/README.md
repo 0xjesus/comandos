@@ -33,6 +33,15 @@ chat menu, settings).
    split; ⏮ repeat. «Colgar» on its notice hangs up. The screen shows only the
    state and a big glyph, never the reply or the dictated text.
 
+## «OK ComandOS» (Orquestador)
+
+The orchestrator call works like «OK Google»: after it speaks it listens; 10 s
+without the person's voice and it sleeps («Di «OK ComandOS»»). The phrase is
+heard offline by Vosk's small Spanish model (`WakeWord.kt`; the model is fetched
+and checked at build time, never committed) and matched in Dart
+(`wake_phrase.dart`). Nothing it hears while asleep leaves the phone. The
+steering wheel or «Hablar» wakes it too; «espera» puts it to sleep now.
+
 ## Cost
 
 Nothing costs money. It speaks with an Edge neural voice by default

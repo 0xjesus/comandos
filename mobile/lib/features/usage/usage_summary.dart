@@ -142,7 +142,8 @@ class _UsageSummaryState extends State<UsageSummary> {
     return ColoredBox(
       color: _Cs.panel2,
       child: ListView.builder(
-        padding: const EdgeInsets.only(bottom: 18),
+        // Clear Android's navigation buttons (edge-to-edge).
+        padding: EdgeInsets.only(bottom: 18 + MediaQuery.paddingOf(context).bottom),
         itemCount: 1 + count,
         itemBuilder: (BuildContext context, int index) {
           if (index == 0) return const _Head();

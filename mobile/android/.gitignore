@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Vosk model for «OK ComandOS», fetched at build time.
+/.vosk-cache/

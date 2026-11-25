@@ -241,9 +241,24 @@ class NativeBridge :
             "watchRunning" -> result.success(WatchService.isRunning)
             "carStart" -> result.success(CarService.start(context))
             "carStop" -> {
+                Thread { WakeWord.stop() }.start()
                 CarService.stop(context)
                 result.success(null)
             }
+            // «OK ComandOS»: offline listening while the Modo auto call sleeps.
+            // Starting and stopping wait for the microphone, so off the main thread.
+            "wakeStart" -> Thread {
+                WakeWord.start(
+                    context,
+                    { text, final -> channel?.invokeMethod("wakeText", mapOf("text" to text, "final" to final)) },
+                    { why -> channel?.invokeMethod("wakeError", why) },
+                )
+                Handler(Looper.getMainLooper()).post { result.success(true) }
+            }.start()
+            "wakeStop" -> Thread {
+                WakeWord.stop()
+                Handler(Looper.getMainLooper()).post { result.success(null) }
+            }.start()
             "requestBluetooth" -> {
                 // The car's microphone over Bluetooth (Android 12+ asks for it).
                 val activity = binding?.activity

@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -59,7 +62,57 @@ android {
 dependencies {
     // QR decoding for the pairing scanner (ScanActivity). R8 keeps only the QR reader.
     implementation("com.google.zxing:core:3.5.3")
+    // «OK ComandOS» in Modo auto: offline speech recognition (WakeWord.kt).
+    implementation("com.alphacephei:vosk-android:0.3.75")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
 }
+
+// The wake phrase runs on Vosk's small Spanish model (Apache-2.0, ~40 MB). It
+// is fetched once at build time into android/.vosk-cache (git-ignored), checked
+// against its SHA-256 and packed as the assets folder `vosk-es`: never
+// committed, never downloaded by the phone.
+val voskModel = "vosk-model-small-es-0.42"
+val voskSha256 = "09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f"
+val voskAssets = layout.buildDirectory.dir("generated/vosk/assets")
+val fetchVosk by tasks.registering {
+    inputs.property("sha256", voskSha256)
+    outputs.dir(voskAssets)
+    doLast {
+        val zip = rootProject.file(".vosk-cache/$voskModel.zip")
+        fun sha(f: File): String = MessageDigest.getInstance("SHA-256").let { md ->
+            f.inputStream().use { s ->
+                val b = ByteArray(1 shl 16)
+                while (true) {
+                    val n = s.read(b)
+                    if (n < 0) break
+                    md.update(b, 0, n)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        }
+        if (!zip.exists() || sha(zip) != voskSha256) {
+            zip.parentFile.mkdirs()
+            URI("https://alphacephei.com/vosk/models/$voskModel.zip").toURL().openStream().use { i ->
+                zip.outputStream().use { o -> i.copyTo(o) }
+            }
+            check(sha(zip) == voskSha256) { "$voskModel.zip: SHA-256 does not match" }
+        }
+        val out = voskAssets.get().asFile
+        out.deleteRecursively()
+        val tmp = File(out, "tmp")
+        project.copy {
+            from(zipTree(zip))
+            into(tmp)
+        }
+        val dir = File(out, "vosk-es")
+        File(tmp, voskModel).renameTo(dir)
+        tmp.deleteRecursively()
+        // StorageService copies the model out of the APK again only when this changes.
+        File(dir, "uuid").writeText(voskSha256.take(16) + "\n")
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(voskAssets)
+tasks.named("preBuild") { dependsOn(fetchVosk) }
 
 flutter {
     source = "../.."

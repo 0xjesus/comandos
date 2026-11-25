@@ -149,6 +149,10 @@ class NativeChannel implements NotificationPlatform {
           _onCarRead?.call(str('tag') ?? '', str('session'));
         case 'carButton':
           if (call.arguments is String) _onCarButton?.call(call.arguments as String);
+        case 'wakeText':
+          _onWake?.call(str('text') ?? '', a['final'] == true);
+        case 'wakeError':
+          if (call.arguments is String) _onWakeError?.call(call.arguments as String);
       }
       return null;
     });
@@ -172,6 +176,20 @@ class NativeChannel implements NotificationPlatform {
   Future<bool> startCarCall() async => await _call<bool>('carStart') ?? false;
 
   Future<void> stopCarCall() => _call<void>('carStop');
+
+  void Function(String text, bool last)? _onWake;
+  void Function(String why)? _onWakeError;
+
+  /// What the offline listener heard while Modo auto sleeps (`WakeWord.kt`).
+  set onWake(void Function(String text, bool last)? handler) => _onWake = handler;
+
+  set onWakeError(void Function(String why)? handler) => _onWakeError = handler;
+
+  /// Starts the offline «OK ComandOS» listener. False when it is missing.
+  Future<bool> startWake() async => await _call<bool>('wakeStart') ?? false;
+
+  /// Stops it; the microphone is free when this completes.
+  Future<void> stopWake() => _call<void>('wakeStop');
 
   /// Asks for the car's microphone over Bluetooth (Android 12+).
   Future<bool> requestBluetooth() async => await _call<bool>('requestBluetooth') ?? false;

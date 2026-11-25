@@ -136,7 +136,7 @@ class _FeedViewState extends State<FeedView> {
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: EdgeInsets.only(bottom: 10 + MediaQuery.paddingOf(context).bottom),
                   itemCount: items.length,
                   itemBuilder: (BuildContext context, int i) {
                     final Object it = items[i];

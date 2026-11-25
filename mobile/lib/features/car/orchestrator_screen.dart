@@ -13,6 +13,7 @@ import '../../core/outbox/outbox.dart';
 import '../../core/platform/native_channel.dart';
 import '../../core/polling/app_visibility.dart';
 import '../../core/polling/connectivity_watch.dart';
+import '../../ui/theme.dart';
 import '../chat/chat_controller.dart';
 import '../voice/voice_services.dart';
 import 'car_machine.dart';
@@ -22,6 +23,7 @@ import 'car_ports.dart';
 import 'edge_voice.dart';
 import 'on_device.dart';
 import 'orchestrator_call.dart';
+import 'wake_phrase.dart';
 
 /// The orchestrator session through the app's own chat controller.
 class LiveOrchestratorLink extends ChangeNotifier implements OrchestratorLink {
@@ -178,7 +180,7 @@ class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTick
       dir: _v.cacheDir,
     ),
   );
-  late final OrchestratorCall _call = OrchestratorCall(ports: _ports, link: _link);
+  late final OrchestratorCall _call = OrchestratorCall(ports: _ports, link: _link, wake: NativeWake());
   late final AnimationController _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
     ..repeat();
   bool _service = false;
@@ -244,6 +246,7 @@ class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTick
         OrchPhase.speaking => CarColors.go,
         OrchPhase.thinking || OrchPhase.sending || OrchPhase.connecting => CarColors.work,
         OrchPhase.asking => CarColors.wait,
+        OrchPhase.sleeping => Orbita.brand,
         OrchPhase.failed => CarColors.stop,
         OrchPhase.idle || OrchPhase.ended => CarColors.dim,
       };
@@ -253,6 +256,7 @@ class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTick
         OrchPhase.speaking => Icons.graphic_eq,
         OrchPhase.thinking || OrchPhase.sending || OrchPhase.connecting => Icons.hub_outlined,
         OrchPhase.asking => Icons.help_outline,
+        OrchPhase.sleeping => Icons.hearing,
         OrchPhase.failed => Icons.error_outline,
         OrchPhase.idle || OrchPhase.ended => Icons.phone_in_talk_outlined,
       };

@@ -9,6 +9,7 @@ import '../voice/dictation.dart';
 import 'car_commands.dart';
 import 'car_machine.dart';
 import 'option_parser.dart';
+import 'wake_phrase.dart';
 
 /// The orchestrator session as the call sees it.
 class OrchSnapshot {
@@ -37,7 +38,7 @@ abstract class OrchestratorLink implements Listenable {
   void close();
 }
 
-enum OrchPhase { connecting, sending, thinking, speaking, listening, asking, idle, failed, ended }
+enum OrchPhase { connecting, sending, thinking, speaking, listening, asking, sleeping, idle, failed, ended }
 
 /// Modo auto as a phone call with ONE Claude Code session (the orchestrator,
 /// `dash/native/auto.rs`) that sees and drives the other sessions. The phone
@@ -46,18 +47,39 @@ enum OrchPhase { connecting, sending, thinking, speaking, listening, asking, idl
 /// orchestrator asks for a «sí» before it sends or answers anything in
 /// another session, so a misheard sentence never reaches a project.
 ///
+/// Like «OK Google»: after it speaks it listens; when [quiet] (10 s) passes
+/// without the person's voice it sleeps, and «OK ComandOS» (offline, never
+/// sent anywhere: [WakeListener]) or the steering wheel wakes it.
+///
 /// Commands that stay on the phone (whole utterance): «cuelga», «repite»,
-/// «espera». Steering wheel: play / next = talk (or interrupt the reading),
-/// hang-up = hang up.
+/// «espera» (sleeps now). Steering wheel: play / next = talk (or interrupt
+/// the reading), hang-up = hang up.
 class OrchestratorCall extends ChangeNotifier {
-  OrchestratorCall({required CarPorts ports, required OrchestratorLink link, Duration? settle, Duration? patience})
-      : _ports = ports,
+  OrchestratorCall({
+    required CarPorts ports,
+    required OrchestratorLink link,
+    WakeListener? wake,
+    Duration? settle,
+    Duration? patience,
+    Duration? quiet,
+    DateTime Function()? clock,
+  })  : _ports = ports,
         _link = link,
+        _wake = wake,
         _settle = settle ?? const Duration(milliseconds: 3200),
-        _patience = patience ?? const Duration(minutes: 4);
+        _patience = patience ?? const Duration(minutes: 4),
+        _quiet = quiet ?? const Duration(seconds: 10),
+        _clock = clock ?? DateTime.now;
 
   final CarPorts _ports;
   final OrchestratorLink _link;
+  final WakeListener? _wake;
+
+  /// Silence that puts it to sleep.
+  final Duration _quiet;
+  final DateTime Function() _clock;
+
+  static const String sleepingStatus = 'Di «OK ComandOS»';
 
   /// A reply is complete when the last message is the orchestrator's and
   /// nothing changed for this long.
@@ -90,7 +112,9 @@ class OrchestratorCall extends ChangeNotifier {
   /// Bumped by anything that changes the plan (talk, hang up): a running
   /// step that sees another generation stops.
   int _gen = 0;
-  int _silent = 0;
+
+  /// The wake phrase cannot be heard on this phone: sleeping waits for a tap.
+  bool _noWake = false;
 
   void _set(OrchPhase p, String status) {
     _phase = p;
@@ -141,6 +165,7 @@ class OrchestratorCall extends ChangeNotifier {
     final int gen = ++_gen;
     final String? s = _session;
     if (s == null) return;
+    await _wake?.stop();
     if (!quiet) heard = text;
     _set(OrchPhase.sending, 'Enviando…');
     final List<ChatMessage> before = _link.now.messages;
@@ -294,8 +319,9 @@ class OrchestratorCall extends ChangeNotifier {
     return null;
   }
 
-  /// The person's turn.
-  Future<void> _listen() async {
+  /// The person's turn. [since]: when the quiet window started (a repeated
+  /// listen within it plays no cue).
+  Future<void> _listen({DateTime? since}) async {
     final int gen = _gen;
     final String? s = _session;
     if (s == null || _ended) return;
@@ -304,13 +330,15 @@ class OrchestratorCall extends ChangeNotifier {
       return;
     }
     _set(OrchPhase.listening, 'Te escucho');
-    await _ports.cue();
-    if (gen != _gen || _ended) return;
+    if (since == null) {
+      await _ports.cue();
+      if (gen != _gen || _ended) return;
+    }
+    since ??= _clock();
     final DictationOutcome o = await _ports.listen(s, onTranscribing: () => _set(OrchPhase.thinking, 'Entendiendo…'), requireSpeech: true);
     if (gen != _gen || _ended) return;
     switch (o) {
       case DictationText(:final String text):
-        _silent = 0;
         final CarCommand? c = parseCarCommand(text);
         if (c == CarCommand.hangUp) {
           _ports.releaseDictation();
@@ -328,28 +356,53 @@ class OrchestratorCall extends ChangeNotifier {
         }
         if (c == CarCommand.pause) {
           _ports.releaseDictation();
-          await _ports.speak('Va, aquí espero. Toca Hablar o el botón del volante.');
-          _set(OrchPhase.idle, 'En espera');
+          await _ports.speak(_wake == null || _noWake
+              ? 'Va, aquí espero. Toca Hablar o el botón del volante.'
+              : 'Va. Dime OK ComandOS cuando me necesites.');
+          if (gen == _gen && !_ended) await _sleep();
           return;
         }
         await _turn(text);
       case DictationNothing():
-        _silent++;
-        if (_silent < 2) {
-          await _listen();
+        // Still within the quiet window: keep listening, without a new cue.
+        if (_clock().difference(since) < _quiet) {
+          await _listen(since: since);
         } else {
-          _silent = 0;
-          _set(OrchPhase.idle, 'En espera');
+          await _sleep();
         }
       case DictationFailed(:final PendingTake take):
         await _ports.discard(take.id);
         await _ports.speak('No te entendí. Otra vez.');
         if (gen == _gen && !_ended) await _listen();
       case DictationCancelled():
-        _set(OrchPhase.idle, 'En espera');
+        await _sleep();
       case DictationDenied(:final String message):
         _set(OrchPhase.failed, message);
         await _ports.speak(message);
+    }
+  }
+
+  /// Asleep until «OK ComandOS» (or a tap / the steering wheel: [talk]).
+  Future<void> _sleep() async {
+    final int gen = _gen;
+    if (_ended) return;
+    final WakeListener? w = _wake;
+    if (w == null || _noWake || !_foreground) {
+      _set(OrchPhase.idle, 'En espera');
+      return;
+    }
+    _set(OrchPhase.sleeping, sleepingStatus);
+    final WakeResult r = await w.wait();
+    if (gen != _gen || _ended) return;
+    switch (r) {
+      case WakeResult.heard:
+        await _listen();
+      case WakeResult.stopped:
+        _set(OrchPhase.idle, 'En espera');
+      case WakeResult.unavailable:
+        _noWake = true;
+        _set(OrchPhase.idle, 'En espera');
+        await _ports.speak('${w.problem ?? 'No puedo escuchar OK ComandOS.'} Toca Hablar o el botón del volante.');
     }
   }
 
@@ -363,15 +416,15 @@ class OrchestratorCall extends ChangeNotifier {
     _gen++;
     _ports.stopSpeaking();
     _ports.stopHearing();
-    _silent = 0;
+    await _wake?.stop();
     await _listen();
   }
 
-  /// Stops the reading without listening.
+  /// Stops the reading; sleeps until «OK ComandOS».
   void hush() {
     _gen++;
     _ports.stopSpeaking();
-    _set(OrchPhase.idle, 'En espera');
+    unawaited(_sleep());
   }
 
   /// Esc in the orchestrator.
@@ -387,6 +440,7 @@ class OrchestratorCall extends ChangeNotifier {
     _ports.stopSpeaking();
     _ports.cancelListening();
     _ports.stopHearing();
+    unawaited(_wake?.stop());
     _set(OrchPhase.ended, 'Llamada terminada');
   }
 
@@ -400,6 +454,7 @@ class OrchestratorCall extends ChangeNotifier {
     _ended = true;
     _ports.stopSpeaking();
     _ports.cancelListening();
+    unawaited(_wake?.stop());
     _link.close();
     super.dispose();
   }

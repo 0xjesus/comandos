@@ -3,7 +3,7 @@ description: "ComandOS for Android: sessions, chat and a never-lose-a-message ou
 publish_to: 'none'
 
 # versionName+versionCode for Android.
-version: 2.1.0+13
+version: 2.1.1+14
 
 environment:
   sdk: ^3.10.3
