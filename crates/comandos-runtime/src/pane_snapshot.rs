@@ -581,6 +581,10 @@ impl PaneInspector {
         }
         let mut queue = VecDeque::from([pane.pid]);
         let mut seen = HashSet::new();
+        // Un `claude` sin registro de sesión (p. ej. uno suspendido con Ctrl+Z
+        // bajo el shell) cede ante un hermano que sí lo tiene: ése es el que
+        // se ve en el pane.
+        let mut unregistered = None;
         while let Some(pid) = queue.pop_front() {
             if !seen.insert(pid) {
                 continue;
@@ -595,7 +599,11 @@ impl PaneInspector {
             // El CLI real antes que sus subprocesos o subagentes.
             let exe = pathlib_name(first);
             if exe == "claude" {
-                return Ok(self.known(&self.claude, pid, "claude"));
+                if self.claude.contains_key(&pid) {
+                    return Ok(self.known(&self.claude, pid, "claude"));
+                }
+                unregistered.get_or_insert(pid);
+                continue;
             }
             if GROK_EXES.contains(&exe) {
                 return Ok(self.known(&self.grok, pid, "grok"));
@@ -609,6 +617,9 @@ impl PaneInspector {
             if let Some(kids) = self.children.get(&pid) {
                 queue.extend(kids);
             }
+        }
+        if let Some(pid) = unregistered {
+            return Ok(self.known(&self.claude, pid, "claude"));
         }
         Ok(obs([("agent", Value::from(""))]))
     }

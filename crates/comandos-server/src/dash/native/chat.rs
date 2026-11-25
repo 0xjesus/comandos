@@ -224,6 +224,60 @@ pub fn ask(screen: &str) -> Option<Value> {
     super::ask::parse(screen).map(|m| super::ask::to_json(&m))
 }
 
+/// Claude Code can carry a conversation on in a background job (a fork, or one
+/// sent to the background): the pane's process keeps its first session id, the
+/// screen shows the job, and the first transcript ends with a `continued-in`
+/// record. Follow it to the job's transcript (`<config>/jobs/*/state.json`, the
+/// one that moved last) so the chat shows what the pane shows.
+fn continued(mut path: String) -> String {
+    for _ in 0..4 {
+        match next_transcript(&path) {
+            Some(next) if next != path => path = next,
+            _ => break,
+        }
+    }
+    path
+}
+
+fn next_transcript(path: &str) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(8192))).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let last = String::from_utf8_lossy(&tail);
+    let last: Value = serde_json::from_str(last.lines().rev().find(|l| !l.trim().is_empty())?).ok()?;
+    if last["type"] != "continued-in" {
+        return None;
+    }
+    let sid = last["sessionId"].as_str()?;
+    let into = last["continuedInSessionId"].as_str().unwrap_or("");
+    let project = std::path::Path::new(path).parent()?;
+    let config = project.parent()?.parent()?;
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for job in std::fs::read_dir(config.join("jobs")).ok()?.flatten() {
+        let Ok(text) = std::fs::read_to_string(job.path().join("state.json")) else {
+            continue;
+        };
+        let Ok(state) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let job_sid = state["sessionId"].as_str().unwrap_or("");
+        let related = state["forkParentSessionId"].as_str() == Some(sid) || (!into.is_empty() && job_sid == into);
+        if !related || job_sid.is_empty() || job_sid.contains('/') {
+            continue;
+        }
+        let candidate = project.join(format!("{job_sid}.jsonl"));
+        let Ok(modified) = std::fs::metadata(&candidate).and_then(|m| m.modified()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(at, _)| modified > *at) {
+            best = Some((modified, candidate.to_string_lossy().into_owned()));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
     let Some(body) = request.data.as_ref().and_then(Value::as_object) else {
         return error(StatusCode::BAD_REQUEST, "Expected chat request");
@@ -306,6 +360,7 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
                 if path.is_empty() {
                     continue;
                 }
+                let path = continued(path);
                 paths()
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -349,6 +404,28 @@ pub async fn answer(native: &Arc<Native>, request: &Request) -> Answer {
 #[cfg(test)]
 mod tests {
     use super::{bubble, parse};
+    #[test]
+    fn a_conversation_continued_in_a_background_job_is_followed() {
+        let root = std::env::temp_dir().join(format!("comandos-chat-fork-{}", std::process::id()));
+        let project = root.join("projects/-p");
+        std::fs::create_dir_all(&project).unwrap();
+        for job in ["aaaa", "bbbb"] {
+            std::fs::create_dir_all(root.join("jobs").join(job)).unwrap();
+        }
+        let first = project.join("s1.jsonl");
+        std::fs::write(&first, "{\"type\":\"user\",\"message\":{\"content\":\"hola\"}}\n{\"type\":\"continued-in\",\"sessionId\":\"s1\",\"continuedInSessionId\":\"s2\"}\n").unwrap();
+        // The parked job (only a title) and the fork that kept going.
+        std::fs::write(project.join("s2.jsonl"), "{\"type\":\"ai-title\"}\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(project.join("s3.jsonl"), "{\"type\":\"user\",\"message\":{\"content\":\"sigue\"}}\n").unwrap();
+        std::fs::write(root.join("jobs/aaaa/state.json"), r#"{"sessionId":"s2"}"#).unwrap();
+        std::fs::write(root.join("jobs/bbbb/state.json"), r#"{"sessionId":"s3","forkParentSessionId":"s1"}"#).unwrap();
+        let got = super::continued(first.to_string_lossy().into_owned());
+        let plain = super::continued(project.join("s3.jsonl").to_string_lossy().into_owned());
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(got.ends_with("/s3.jsonl"), "{got}");
+        assert!(plain.ends_with("/s3.jsonl"), "{plain}");
+    }
     #[test]
     fn bubbles_carry_markdown_and_their_buttons() {
         let a = bubble("a", "**hola** <b>x</b>");
