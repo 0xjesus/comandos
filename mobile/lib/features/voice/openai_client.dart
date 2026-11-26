@@ -211,7 +211,9 @@ class OpenAiClient {
       key: key,
       contentType: body.contentType,
       body: body.finish(),
-      timeout: sttTimeout,
+      // A long dictation takes longer to upload and transcribe: one more
+      // second per second of audio (32 kbps ≈ 4 KB/s), on top of the base.
+      timeout: sttTimeout + Duration(seconds: audio.length ~/ 4000),
       abort: abort,
     );
     try {

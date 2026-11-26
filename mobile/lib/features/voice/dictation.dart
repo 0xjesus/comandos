@@ -70,8 +70,8 @@ typedef Transcriber = Future<String> Function(String path, Future<void> abort);
 const String kMicDenied = 'Sin permiso de micrófono. Actívalo en Ajustes de Android › Apps › '
     'ComandOS › Permisos › Micrófono.';
 
-/// One microphone, many screens. Records, auto-stops on silence or at the
-/// cap, transcribes with retries, and NEVER drops a recording that has not
+/// One microphone, many screens. Records until tapped again (Modo auto: until
+/// a silence) or the cap, transcribes with retries, and NEVER drops a recording that has not
 /// produced text: on failure the file stays on disk (also across restarts)
 /// until a retry succeeds or the person discards it.
 class DictationController extends ChangeNotifier {
@@ -87,7 +87,7 @@ class DictationController extends ChangeNotifier {
     NowMs now = systemNowMs,
     TimerFactory timer = systemTimer,
     Future<void> Function(Duration d)? delay,
-    this.maxDuration = const Duration(minutes: 3),
+    this.maxDuration = const Duration(minutes: 20),
     this.retryDelays = const <Duration>[Duration(seconds: 1), Duration(seconds: 3)],
   })  : _recorder = recorder,
         _transcribe = transcribe,
@@ -268,12 +268,13 @@ class DictationController extends ChangeNotifier {
 
   // ---- Recording --------------------------------------------------------------
 
-  /// Records for [owner] until [stop], silence or the cap, then transcribes.
+  /// Records for [owner] until [stop] or the cap ([maxDuration]), then
+  /// transcribes. A pause, however long, never ends a tapped dictation.
   ///
-  /// [requireSpeech] (Modo auto's automatic rounds): if no speech was
-  /// detected in the recording, it is deleted without transcribing and the
-  /// result is [DictationNothing], so silence or road noise is never turned
-  /// into a message.
+  /// [requireSpeech] (Modo auto's hands-free rounds): the take also ends
+  /// after the configured silence, and if no speech was detected in it, it
+  /// is deleted without transcribing ([DictationNothing]), so silence or
+  /// road noise is never turned into a message.
   Future<DictationOutcome> start(String owner, {bool requireSpeech = false}) async {
     if (_phase != DictationPhase.idle) return const DictationDenied('Ya hay una grabación en curso.');
     _phase = DictationPhase.recording; // claim the mic before any await
@@ -341,7 +342,9 @@ class DictationController extends ChangeNotifier {
     _elapsedMs = now - _startedMs;
     _level = SilenceDetector.meter(db);
     notifyListeners();
-    if (_detector?.add(db, now) ?? false) unawaited(stop());
+    // Only Modo auto's hands-free rounds end on their own; a tapped
+    // dictation records until it is tapped again (or the cap).
+    if ((_detector?.add(db, now) ?? false) && _requireSpeech) unawaited(stop());
   }
 
   void _stopSignals() {

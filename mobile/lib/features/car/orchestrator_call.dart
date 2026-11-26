@@ -7,7 +7,7 @@ import '../../core/models/transcript.dart';
 import '../notifications/car_text.dart';
 import '../voice/dictation.dart';
 import 'car_commands.dart';
-import 'car_machine.dart';
+import 'car_ports.dart';
 import 'option_parser.dart';
 import 'wake_phrase.dart';
 
@@ -114,6 +114,9 @@ class OrchestratorCall extends ChangeNotifier {
 
   /// The wake phrase cannot be heard on this phone: sleeping waits for a tap.
   bool _noWake = false;
+
+  /// «OK ComandOS» does not work here: only a tap or the steering wheel wake it.
+  bool get noWake => _wake == null || _noWake;
 
   void _set(OrchPhase p, String status) {
     _phase = p;

@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -13,13 +11,10 @@ import '../../core/outbox/outbox.dart';
 import '../../core/platform/native_channel.dart';
 import '../../core/polling/app_visibility.dart';
 import '../../core/polling/connectivity_watch.dart';
-import '../../ui/theme.dart';
 import '../chat/chat_controller.dart';
 import '../voice/voice_services.dart';
-import 'car_machine.dart';
-import 'car_mode.dart';
-import 'car_mode_screen.dart';
 import 'car_ports.dart';
+import 'orchestrator_view.dart';
 import 'edge_voice.dart';
 import 'on_device.dart';
 import 'orchestrator_call.dart';
@@ -78,83 +73,9 @@ class LiveOrchestratorLink extends ChangeNotifier implements OrchestratorLink {
   }
 }
 
-/// «Por sesiones» / «Orquestador» at the top of both Modo auto screens. The
-/// choice is remembered (Ajustes › Voz) and switches the screen right away.
-class CarModeSwitch extends StatelessWidget {
-  const CarModeSwitch({super.key, required this.orchestrator, this.session, this.pane});
-
-  final bool orchestrator;
-  final String? session;
-  final String? pane;
-
-  Future<void> _pick(BuildContext context, bool want) async {
-    if (want == orchestrator) return;
-    await VoiceServices.instance.settings.update((s) => s.copyWith(carOrchestrator: want));
-    if (!context.mounted) return;
-    await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
-      settings: const RouteSettings(name: CarMode.routeName),
-      builder: (BuildContext c) => want ? const OrchestratorScreen() : CarModeScreen(session: session, pane: pane),
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Widget pill(String label, IconData icon, bool on, bool value) => Expanded(
-          child: Semantics(
-            button: true,
-            selected: on,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: () => unawaited(_pick(context, value)),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                height: 52,
-                decoration: BoxDecoration(
-                  color: on ? CarColors.panel : Colors.transparent,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: on ? CarColors.go.withValues(alpha: 0.55) : Colors.transparent),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                alignment: Alignment.center,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Icon(icon, size: 22, color: on ? CarColors.go : CarColors.dim),
-                      const SizedBox(width: 8),
-                      Text(label,
-                          style: TextStyle(
-                              color: on ? CarColors.text : CarColors.dim, fontSize: 18, fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: CarColors.panel),
-        ),
-        child: Row(children: <Widget>[
-          pill('Por sesiones', Icons.view_carousel_outlined, !orchestrator, false),
-          const SizedBox(width: 4),
-          pill('Orquestador', Icons.hub_outlined, orchestrator, true),
-        ]),
-      ),
-    );
-  }
-}
-
-/// Modo auto with the orchestrator: a phone call with one Claude Code session
-/// that drives the others (`OrchestratorCall`). Same call manners as the
-/// split-by-split mode: it starts talking on its own, listens after each
-/// answer, the steering wheel talks, one huge hang-up; no text to read.
+/// Modo auto: a phone call with one Claude Code session that drives the
+/// others (`OrchestratorCall`). It opens asleep and listens after «OK
+/// ComandOS», a tap or the steering wheel; the replies are read aloud.
 class OrchestratorScreen extends StatefulWidget {
   const OrchestratorScreen({super.key});
 
@@ -162,7 +83,7 @@ class OrchestratorScreen extends StatefulWidget {
   State<OrchestratorScreen> createState() => _OrchestratorScreenState();
 }
 
-class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTickerProviderStateMixin {
+class _OrchestratorScreenState extends State<OrchestratorScreen>  {
   final VoiceServices _v = VoiceServices.instance;
   final Connection _connection = sl.get<Connection>();
   final Outbox _outbox = sl.get<Outbox>();
@@ -181,8 +102,6 @@ class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTick
     ),
   );
   late final OrchestratorCall _call = OrchestratorCall(ports: _ports, link: _link, wake: NativeWake());
-  late final AnimationController _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
-    ..repeat();
   bool _service = false;
   bool _closing = false;
 
@@ -236,172 +155,32 @@ class _OrchestratorScreenState extends State<OrchestratorScreen> with SingleTick
     unawaited(NativeChannel.instance.stopCarCall());
     _call.dispose();
     _ports.dispose();
-    _pulse.dispose();
     unawaited(WakelockPlus.disable().catchError((Object _) {}));
     super.dispose();
   }
 
-  Color get _tone => switch (_call.phase) {
-        OrchPhase.listening => CarColors.stop,
-        OrchPhase.speaking => CarColors.go,
-        OrchPhase.thinking || OrchPhase.sending || OrchPhase.connecting => CarColors.work,
-        OrchPhase.asking => CarColors.wait,
-        OrchPhase.sleeping => Orbita.brand,
-        OrchPhase.failed => CarColors.stop,
-        OrchPhase.idle || OrchPhase.ended => CarColors.dim,
-      };
-
-  IconData get _glyph => switch (_call.phase) {
-        OrchPhase.listening => Icons.mic,
-        OrchPhase.speaking => Icons.graphic_eq,
-        OrchPhase.thinking || OrchPhase.sending || OrchPhase.connecting => Icons.hub_outlined,
-        OrchPhase.asking => Icons.help_outline,
-        OrchPhase.sleeping => Icons.hearing,
-        OrchPhase.failed => Icons.error_outline,
-        OrchPhase.idle || OrchPhase.ended => Icons.phone_in_talk_outlined,
-      };
-
-  /// The call's centre: a breathing orb in the colour of the moment.
-  Widget _orb(double size) => AnimatedBuilder(
-        animation: _pulse,
-        builder: (BuildContext context, Widget? _) {
-          final bool moving = _call.phase != OrchPhase.idle && _call.phase != OrchPhase.failed;
-          final double t = moving ? _pulse.value : 0;
-          return SizedBox.square(
-            dimension: size,
-            child: Stack(
-              alignment: Alignment.center,
-              children: <Widget>[
-                for (int ring = 0; ring < 3; ring++)
-                  Opacity(
-                    opacity: moving ? (1 - ((t + ring / 3) % 1)) * 0.35 : 0.12,
-                    child: Container(
-                      width: size * (0.55 + 0.45 * ((t + ring / 3) % 1)),
-                      height: size * (0.55 + 0.45 * ((t + ring / 3) % 1)),
-                      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: _tone, width: 3)),
-                    ),
-                  ),
-                Container(
-                  width: size * 0.5,
-                  height: size * 0.5,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(colors: <Color>[
-                      _tone.withValues(alpha: 0.95),
-                      _tone.withValues(alpha: 0.35 + 0.15 * math.sin(t * math.pi * 2).abs()),
-                    ]),
-                    boxShadow: <BoxShadow>[BoxShadow(color: _tone.withValues(alpha: 0.45), blurRadius: 48, spreadRadius: 4)],
-                  ),
-                  child: Icon(_glyph, size: size * 0.22, color: CarColors.bg),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-
-  Widget _middle() => Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          const Text('Orquestador',
-              style: TextStyle(color: CarColors.dim, fontSize: 20, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (BuildContext c, BoxConstraints b) =>
-                _orb(math.min(b.maxWidth, 300).clamp(160, 300).toDouble()),
-          ),
-          const SizedBox(height: 16),
-          Text(_call.status,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: _tone, fontSize: 32, fontWeight: FontWeight.w800)),
-        ],
-      );
-
-  Widget _controls({bool compact = false}) {
-    final OrchestratorCall c = _call;
-    final double h = compact ? 80 : 88;
-    final bool speaking = c.phase == OrchPhase.speaking;
-    final bool thinking = c.phase == OrchPhase.thinking || c.phase == OrchPhase.sending;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Row(children: <Widget>[
-            Expanded(
-              flex: 2,
-              child: speaking
-                  ? CarBigButton(label: 'Callar', color: CarColors.panel, textColor: CarColors.wait, onTap: c.hush, height: h)
-                  : CarBigButton(
-                      label: c.phase == OrchPhase.listening ? 'Listo' : 'Hablar',
-                      color: CarColors.go,
-                      onTap: () => unawaited(c.talk()),
-                      height: h,
-                    ),
-            ),
-            if (thinking) ...<Widget>[
-              const SizedBox(width: 12),
-              Expanded(
-                child: CarBigButton(
-                    label: 'Detener',
-                    color: CarColors.panel,
-                    textColor: CarColors.stop,
-                    onTap: () => unawaited(c.stopIt()),
-                    height: h),
-              ),
-            ],
-          ]),
-          const SizedBox(height: 12),
-          CarBigButton(
-            label: 'Colgar',
-            color: CarColors.hangUp,
-            textColor: CarColors.text,
-            icon: Icons.call_end,
-            height: compact ? 104 : 132,
-            fontSize: 38,
-            onTap: () => unawaited(c.ended ? Navigator.of(context).maybePop() : c.hangUp()),
-          ),
-        ],
-      ),
-    );
+  Future<void> _hangUp() async {
+    if (_call.ended) {
+      await Navigator.of(context).maybePop();
+    } else {
+      await _call.hangUp();
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Theme(
-        data: Theme.of(context).copyWith(scaffoldBackgroundColor: CarColors.bg),
-        child: Scaffold(
-          backgroundColor: CarColors.bg,
-          body: SafeArea(
-            child: ListenableBuilder(
-              listenable: _call,
-              builder: (BuildContext context, Widget? _) => OrientationBuilder(
-                builder: (BuildContext context, Orientation o) => o == Orientation.landscape
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          Expanded(
-                            flex: 3,
-                            child: Column(children: <Widget>[
-                              const CarModeSwitch(orchestrator: true),
-                              Expanded(child: _middle()),
-                            ]),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(flex: 2, child: _controls(compact: true)),
-                        ],
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          const CarModeSwitch(orchestrator: true),
-                          Expanded(child: _middle()),
-                          _controls(),
-                        ],
-                      ),
-              ),
-            ),
-          ),
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Listenable.merge(<Listenable>[_call, _v.dictation]),
+        builder: (BuildContext context, Widget? _) => OrchestratorCallView(
+          phase: _call.phase,
+          status: _call.status,
+          heard: _call.heard,
+          said: _call.said,
+          wake: !_call.noWake,
+          level: _call.phase == OrchPhase.listening ? _v.dictation.level : 0,
+          onTalk: () => unawaited(_call.talk()),
+          onHush: _call.hush,
+          onStop: () => unawaited(_call.stopIt()),
+          onHangUp: () => unawaited(_hangUp()),
         ),
       );
 }

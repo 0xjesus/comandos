@@ -12,18 +12,106 @@ import '../voice/dictation.dart';
 import '../voice/text_prep.dart';
 import '../voice/voice_services.dart';
 import '../voice/voice_settings.dart';
-import 'car_machine.dart';
 import 'on_device.dart';
+
+enum SendKind {
+  delivered,
+  queuedOffline,
+  failed,
+  rejected,
+
+  /// An earlier message of that session is failed / uncertain: this one
+  /// waits behind it until the person acts in the chat.
+  blocked,
+
+  /// The desktop refused because a permission prompt is open; the outbox
+  /// delivers it once the prompt is answered.
+  waitingPrompt,
+}
+
+class SendOutcome {
+  const SendOutcome(this.kind, [this.message = '']);
+  final SendKind kind;
+  final String message;
+}
+
+/// Everything Modo auto does to the outside world. The live version wires
+/// dictation, speech, the outbox and the chat; tests use a fake.
+abstract class CarPorts {
+  /// Conversación continua.
+  bool get continuous;
+
+  /// Records (auto-stops on silence) and transcribes for [session].
+  /// [onTranscribing] fires when recording ends and transcription starts.
+  /// [requireSpeech]: a recording in which no speech was detected is
+  /// dropped without transcribing ([DictationNothing]).
+  /// [shortAnswer]: an answer to a permission prompt ("dos", "sí"): the
+  /// phone's own recognizer, never OpenAI.
+  Future<DictationOutcome> listen(String session,
+      {required VoidCallback onTranscribing, bool requireSpeech = false, bool shortAnswer = false});
+  void stopListening();
+  void cancelListening();
+
+  /// Listens once, with the phone's own recognizer (free), for a spoken
+  /// command: '' when nothing was said, null when nothing can listen.
+  /// [until] may end it early on a partial result.
+  Future<String?> hear(Duration window, {bool Function(String partial)? until});
+
+  /// Ends [hear] now (it completes with '').
+  void stopHearing();
+  Future<DictationOutcome> retry(String takeId);
+  Future<void> discard(String takeId);
+
+  /// The last dictated text was consumed as a spoken answer (or a failed
+  /// attempt at one): let its recording go, without keeping it as a draft.
+  void releaseDictation();
+
+  /// Speaks plain text. True only when it played to the end.
+  Future<bool> speak(String text);
+
+  /// Reads a reply (markdown) with the configured read mode.
+  Future<bool> speakReply(String markdown);
+  void stopSpeaking();
+
+  /// Through the outbox (durable); reports how delivery went.
+  Future<SendOutcome> send(String session, String? pane, String text);
+
+  /// Keeps dictated text that will not be sent (as the session's draft).
+  Future<void> saveDraft(String session, String text);
+
+  /// Answers the prompt whose [promptSig] the choice was made for, in
+  /// [pane]. Returns an error (and sends nothing) if the chat now shows
+  /// another session, pane or prompt.
+  Future<String?> answer(String session, String optionKey, {String? pane, required String promptSig});
+  Future<String?> interrupt(String session);
+  void markRead(String session, String replyId);
+
+  /// Earcon + haptic: "your turn". Completes when the earcon ended.
+  Future<void> cue();
+}
+
+/// Buttons on the steering wheel or a headset (media keys).
+enum CarButton {
+  talk,
+  next,
+  previous;
+
+  static CarButton? named(String name) => switch (name) {
+        'talk' => CarButton.talk,
+        'next' => CarButton.next,
+        'previous' => CarButton.previous,
+        _ => null,
+      };
+}
 
 /// [CarPorts] for the real app: the phone's own voice and recognizer, the
 /// shared dictation engine (OpenAI), the outbox and the current split's
 /// [ChatController].
 ///
-/// Cost: everything Modo auto says (announcements, read-backs, replies) is
-/// the phone's text-to-speech, and commands, answers and quiet listening
-/// use the phone's recognizer: free. OpenAI is used only to transcribe a
-/// dictated message, and only with "Modo auto: dictar mensajes con
-/// OpenAI" on and a key; or when the phone has no recognizer at all.
+/// Voice: Modo auto speaks with Edge (free, rendered by the desktop) or the
+/// phone's voice. What the person says is recorded and transcribed like
+/// the chat's dictation (OpenAI with the person's key); without a key, and
+/// for short spoken answers, the phone's recognizer.
 ///
 /// Text safety: Modo auto receives dictated text through a dictation sink
 /// that stays open until the text is either durable in the outbox or saved
@@ -122,8 +210,15 @@ class LiveCarPorts implements CarPorts {
     final String? owner = _sinkOwner;
     final String? held = _held;
     if (owner != null && held != null && _release != null) await saveDraft(owner, held);
-    // Modo auto costs nothing: always the phone's own recognizer, never
-    // OpenAI (not even as a fallback).
+    // What the person says is transcribed like the chat's dictation (the
+    // same recording, silence detection and OpenAI transcription, which
+    // understands whole sentences); the phone's recognizer cut sentences
+    // short and misheard them. Without a key, or for a short answer, the
+    // phone's recognizer.
+    await _v.keys.load();
+    if (!shortAnswer && _v.keys.status.value.present) {
+      return _watch(session, () => _d.start(session, requireSpeech: requireSpeech), onTranscribing);
+    }
     final DictationOutcome? o = await _listenOnDevice(session, shortAnswer: shortAnswer);
     return o ?? DictationDenied(_stt.problem ?? 'Este teléfono no tiene reconocimiento de voz.');
   }

@@ -210,17 +210,46 @@ void main() {
     expect(calls, 1);
   });
 
-  test('silence after speech auto-stops; the 3-minute cap too', () async {
+  test('a tapped dictation never ends on a pause; only the tap or the 20-minute cap', () async {
     final Future<DictationOutcome> f = await record('s1');
+    void level(double db) => rec.levelsCtl.add(db);
+    // Ten minutes of talking with pauses of up to 8 s: still recording.
+    for (int minute = 0; minute < 10; minute++) {
+      for (int i = 0; i < 520; i++) {
+        clock.nowMs += 100;
+        level(i < 440 ? -20 : -60);
+      }
+      await flush(2);
+    }
+    expect(d.phase, DictationPhase.recording);
+    await d.stop();
+    await settle();
+    expect(await f, isA<DictationText>());
+
+    final Future<DictationOutcome> g = await record('s1');
+    await clock.elapse(const Duration(minutes: 19));
+    expect(d.phase, DictationPhase.recording);
+    await clock.elapse(const Duration(minutes: 1));
+    await settle();
+    expect(await g, isA<DictationText>());
+  });
+
+  test('Modo auto (requireSpeech): the silence after speech ends the take', () async {
+    final int before = rec.starts;
+    final Future<DictationOutcome> f = d.start('s1', requireSpeech: true);
+    await waitFor(() => rec.starts > before && d.phase == DictationPhase.recording);
+    File(rec.path!).writeAsBytesSync(<int>[1, 2, 3]);
     void level(double db) => rec.levelsCtl.add(db);
     for (int i = 0; i < 5; i++) {
       clock.nowMs += 100;
       level(-60);
     }
-    for (int i = 0; i < 10; i++) {
+    // A long sentence without a breath: never cut while talking.
+    for (int i = 0; i < 300; i++) {
       clock.nowMs += 100;
-      level(-20); // speech
+      level(-20);
     }
+    await flush(2);
     expect(d.phase, DictationPhase.recording);
     for (int i = 0; i < 26; i++) {
       clock.nowMs += 100;
@@ -229,11 +258,6 @@ void main() {
     }
     await settle();
     expect(await f, isA<DictationText>());
-
-    final Future<DictationOutcome> g = await record('s1');
-    await clock.elapse(const Duration(minutes: 3));
-    await settle();
-    expect(await g, isA<DictationText>());
   });
 
   test('deliver skips a given sink (car → composer) and falls back to the draft', () async {
@@ -266,6 +290,17 @@ void main() {
       }
       expect(stopped, isFalse);
       expect(feed(-35), isTrue);
+    });
+
+    test('a minute of speech without a pause is still speech (the floor does not climb to it)', () {
+      final SilenceDetector s = SilenceDetector(silence: const Duration(milliseconds: 2500));
+      int t = 0;
+      for (int i = 0; i < 20; i++) {
+        s.add(-50, t += 100);
+      }
+      for (int i = 0; i < 600; i++) {
+        expect(s.add(-22 + (i % 5).toDouble(), t += 100), isFalse, reason: 'cut after ${i / 10} s of speech');
+      }
     });
 
     test('nothing heard: ends after the no-speech timeout', () {

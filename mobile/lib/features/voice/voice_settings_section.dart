@@ -282,16 +282,16 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
               (ReadMode m) => m.label,
               (ReadMode m) => _set((VoiceSettings x) => x.copyWith(autoReadMode: m)),
             ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Text('Modo auto', style: TextStyle(color: Orbita.brand, fontWeight: FontWeight.w600)),
+            ),
             _choice<double>(
-              'Terminar el dictado tras un silencio de',
+              'Deja de escucharte tras un silencio de',
               s.silenceSeconds,
               const <double>[1.5, 2.5, 4.0],
               (double d) => '${d.toStringAsFixed(1)} s',
               (double d) => _set((VoiceSettings x) => x.copyWith(silenceSeconds: d)),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: Text('Modo auto', style: TextStyle(color: Orbita.brand, fontWeight: FontWeight.w600)),
             ),
             _choice<String>(
               'Voz del Modo auto',
@@ -305,7 +305,8 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
               child: Text(
                 'Gratis. Las voces de Edge suenan más naturales: tu equipo las genera y el texto que se lee '
                 'pasa por Microsoft. Si Edge falla, habla la voz del teléfono, que no sale del teléfono. '
-                'El dictado en el Modo auto siempre usa el reconocimiento del teléfono: no gasta nada.',
+                '«OK ComandOS» se escucha en el teléfono. Lo que le dices después se transcribe igual que el '
+                'dictado del chat (OpenAI, con tu llave); sin llave, con el reconocimiento del teléfono.',
                 style: TextStyle(color: Orbita.dim, fontSize: 12.5, height: 1.35),
               ),
             ),

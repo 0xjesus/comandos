@@ -4,9 +4,9 @@ Dictation (mic → text in the composer) and read-aloud, both through the OpenAI
 API with the person's own key. Nothing here runs at app start: `registerVoice()`
 registers empty forwarders; `VoiceServices` is built on first use.
 
-Modo auto does not use OpenAI's voice: it talks and listens with the phone's
-own engines (`car/on_device.dart`, free) and asks OpenAI only to transcribe a
-dictated message when "Modo auto: dictar mensajes con OpenAI" is on.
+Modo auto speaks with Edge or the phone's voice (free), never OpenAI's. What
+is said to it after «OK ComandOS» goes through this same dictation (OpenAI
+transcription); without a key, the phone's recognizer (`car/on_device.dart`).
 
 | File | What |
 |---|---|
@@ -54,10 +54,14 @@ errors / timeouts / 5xx / rate limits retry 3 times (1 s, 3 s); then
 Orphan audio older than 24 h and pending recordings older than 7 days are
 deleted on the first voice use of each process.
 
-`start(owner, requireSpeech: true)` (Modo auto's automatic rounds only): if the
-silence detector never heard speech, the recording is deleted without being
-transcribed (`DictationNothing`), so silence or road noise is never sent. A
-tapped dictation always transcribes (a quiet voice is not discarded). The
+A tapped dictation records until it is tapped again: no pause ends it, only
+the 20-minute cap (≈ 5 MB, under OpenAI's 25 MB), and the transcription
+timeout grows with the audio. `start(owner, requireSpeech: true)` (Modo auto's
+hands-free rounds) also ends after the configured silence, and if the silence
+detector never heard speech, the recording is deleted without being
+transcribed (`DictationNothing`), so silence or road noise is never sent. The
+detector's noise floor does not climb while someone talks, so a long sentence
+is never taken for background noise. The
 earcon gives audio focus back right after playing, so music comes back up.
 
 `audio_session` is imported transitively (it is just_audio's dependency) to

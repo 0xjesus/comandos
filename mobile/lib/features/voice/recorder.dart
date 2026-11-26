@@ -26,7 +26,7 @@ class PackageRecorder implements Recorder {
   AudioRecorder? _rec;
 
   /// Compact speech settings: AAC-LC in .m4a, mono, 16 kHz, 32 kbps
-  /// (≈ 240 KB per minute, well under OpenAI's 25 MB limit at 3 minutes).
+  /// (≈ 240 KB per minute: 20 minutes are ≈ 5 MB, under OpenAI's 25 MB).
   static const RecordConfig config = RecordConfig(
     encoder: AudioEncoder.aacLc,
     bitRate: 32000,
@@ -113,9 +113,12 @@ class SilenceDetector {
     _startMs ??= atMs;
     final double level = db.isFinite ? db.clamp(-120.0, 0.0) : -120.0;
     final double floor = _floor ?? level;
-    // Floor follows quiet quickly and loud slowly.
-    _floor = level < floor ? level : floor + (level - floor) * 0.02;
-    if (level >= minSpeechDb && level >= floor + speechMarginDb) _lastLoudMs = atMs;
+    final bool speech = level >= minSpeechDb && level >= floor + speechMarginDb;
+    // The floor follows quiet at once and noise slowly, and barely moves
+    // while someone speaks: a minute of talking without a pause must not
+    // become the new «background» (it used to after ~4 s and cut the take).
+    _floor = level < floor ? level : floor + (level - floor) * (speech ? 0.0005 : 0.02);
+    if (speech) _lastLoudMs = atMs;
     final int? loud = _lastLoudMs;
     if (loud != null) return atMs - loud >= silence.inMilliseconds;
     return atMs - _startMs! >= noSpeech.inMilliseconds;

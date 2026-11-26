@@ -62,9 +62,7 @@ class VoiceSettings {
     this.speed = 1.0,
     this.autoReadMode = ReadMode.ending,
     this.continuous = false,
-    this.carCloudDictation = false,
     this.carVoice = kDefaultCarVoice,
-    this.carOrchestrator = false,
     this.silenceSeconds = 2.5,
     this.autoReadSessions = const <String>{},
     this.lastRead = const <String, String>{},
@@ -84,20 +82,11 @@ class VoiceSettings {
   /// always works as a call; kept for the settings file.)
   final bool continuous;
 
-  /// Modo auto: transcribe the messages dictated for an agent with OpenAI
-  /// (more accurate, costs money). Off: everything in Modo auto uses the
-  /// phone's own recognizer and voice, which cost nothing.
-  final bool carCloudDictation;
-
   /// The voice Modo auto speaks with: an Edge neural voice (free, rendered on
   /// the desktop; the text goes to Microsoft) or '' for the phone's own.
   final String carVoice;
 
-  /// Modo auto talks to one Claude Code session that drives the others
-  /// (the orchestrator) instead of going split by split.
-  final bool carOrchestrator;
-
-  /// Silence that ends a dictation.
+  /// Modo auto: the silence that ends the person's turn.
   final double silenceSeconds;
 
   /// Chats with "Leer respuestas nuevas" on.
@@ -122,9 +111,7 @@ class VoiceSettings {
     double? speed,
     ReadMode? autoReadMode,
     bool? continuous,
-    bool? carCloudDictation,
     String? carVoice,
-    bool? carOrchestrator,
     double? silenceSeconds,
     Set<String>? autoReadSessions,
     Map<String, String>? lastRead,
@@ -137,9 +124,7 @@ class VoiceSettings {
         speed: (speed ?? this.speed).clamp(minSpeed, maxSpeed),
         autoReadMode: autoReadMode ?? this.autoReadMode,
         continuous: continuous ?? this.continuous,
-        carCloudDictation: carCloudDictation ?? this.carCloudDictation,
         carVoice: carVoice ?? this.carVoice,
-        carOrchestrator: carOrchestrator ?? this.carOrchestrator,
         silenceSeconds: silenceSeconds ?? this.silenceSeconds,
         autoReadSessions: autoReadSessions ?? this.autoReadSessions,
         lastRead: lastRead ?? this.lastRead,
@@ -154,9 +139,7 @@ class VoiceSettings {
         'speed': speed,
         'autoReadMode': autoReadMode.name,
         'continuous': continuous,
-        'carCloudDictation': carCloudDictation,
         'carVoice': carVoice,
-        'carOrchestrator': carOrchestrator,
         'silenceSeconds': silenceSeconds,
         'autoReadSessions': autoReadSessions.toList(),
         'lastRead': lastRead,
@@ -182,8 +165,6 @@ class VoiceSettings {
       speed: dbl('speed', 1.0).clamp(minSpeed, maxSpeed),
       autoReadMode: pick(ReadMode.values, json['autoReadMode'], ReadMode.ending),
       continuous: json['continuous'] == true,
-      carCloudDictation: json['carCloudDictation'] == true,
-      carOrchestrator: json['carOrchestrator'] == true,
       carVoice: json['carVoice'] is String && RegExp(r'^([a-z]{2,3}-[A-Za-z0-9]{2,4}-[A-Za-z0-9]+Neural)?$').hasMatch(json['carVoice'] as String)
           ? json['carVoice'] as String
           : kDefaultCarVoice,

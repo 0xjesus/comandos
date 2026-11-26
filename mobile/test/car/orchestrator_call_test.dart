@@ -8,7 +8,7 @@ import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'car_machine_test.dart' show FakePorts;
+import 'fake_ports.dart';
 
 class FakeLink extends ChangeNotifier implements OrchestratorLink {
   final List<ChatMessage> messages = <ChatMessage>[];

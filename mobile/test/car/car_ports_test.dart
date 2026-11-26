@@ -9,12 +9,10 @@ import 'package:comandos_mobile/core/outbox/outbox.dart';
 import 'package:comandos_mobile/core/outbox/outbox_item.dart';
 import 'package:comandos_mobile/core/outbox/outbox_store.dart';
 import 'package:comandos_mobile/core/outbox/send_result.dart';
-import 'package:comandos_mobile/features/car/car_machine.dart';
 import 'package:comandos_mobile/features/car/car_ports.dart';
 import 'package:comandos_mobile/features/chat/chat_controller.dart';
 import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:comandos_mobile/features/voice/voice_services.dart';
-import 'package:comandos_mobile/features/voice/voice_settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -93,9 +91,8 @@ void main() {
     openai = <String>[];
     tts = FakeDeviceSpeech();
     stt = FakeDeviceListener();
-    voice = voiceWith(key: 'sk-' 'test-0000000000000000000000abcd');
-    // These tests dictate through OpenAI (the setting is on).
-    await voice.settings.update((VoiceSettings s) => s.copyWith(carCloudDictation: true));
+    // No key: these tests dictate with the phone's recognizer.
+    voice = voiceWith(key: null);
     ports = LiveCarPorts(voice: voice, outbox: outbox, chat: () => chat, tts: tts, stt: stt);
   });
 
@@ -155,15 +152,12 @@ void main() {
     expect(requests, isEmpty);
   });
 
-  group('tokens: the phone\'s own voice and recognizer unless OpenAI is allowed', () {
-    Future<LiveCarPorts> portsWith({String? key, bool cloud = false}) async {
-      final VoiceServices v = voiceWith(key: key);
-      await v.settings.update((VoiceSettings s) => s.copyWith(carCloudDictation: cloud));
-      return LiveCarPorts(voice: v, outbox: outbox, chat: () => chat, tts: tts, stt: stt);
-    }
+  group('dictation: like the chat (OpenAI) with a key, the phone without one', () {
+    Future<LiveCarPorts> portsWith({String? key}) async =>
+        LiveCarPorts(voice: voiceWith(key: key), outbox: outbox, chat: () => chat, tts: tts, stt: stt);
 
     test('without a key everything is on the phone: nothing goes to OpenAI', () async {
-      final LiveCarPorts p = await portsWith(key: null, cloud: true);
+      final LiveCarPorts p = await portsWith(key: null);
       stt.answers.addAll(<String>['revisa el deploy', 'siguiente']);
       final DictationOutcome o = await p.listen('s1', onTranscribing: () {});
       expect((o as DictationText).text, 'revisa el deploy');
@@ -180,31 +174,35 @@ void main() {
       expect(drafts, <(String, String)>[('s1', 'revisa el deploy')]);
     });
 
-    test('with a key but the setting off (the default), dictation stays on the phone', () async {
+    test('with a key, what is said is recorded and transcribed like the chat\'s dictation', () async {
       final LiveCarPorts p = await portsWith(key: 'sk-' 'test-0000000000000000000000abcd');
-      stt.answers.add('hola');
-      expect(await p.listen('s1', onTranscribing: () {}), isA<DictationText>());
-      expect(rec.starts, 0);
-      expect(openai, isEmpty);
-      p.releaseDictation();
+      heard.add('dile a Relotto que siga con el deploy de mañana');
+      bool transcribing = false;
+      final Future<DictationOutcome> f = p.listen('s1', onTranscribing: () => transcribing = true);
+      await waitFor(() => rec.starts == 1 && rec.path != null);
+      File(rec.path!).writeAsBytesSync(<int>[1, 2, 3]);
+      p.stopListening(); // «Listo» / the silence
+      final DictationOutcome o = await f;
+      expect((o as DictationText).text, 'dile a Relotto que siga con el deploy de mañana');
+      expect(transcribing, isTrue);
+      expect(openai, <String>['/v1/audio/transcriptions']);
+      expect(stt.answers, isEmpty);
+      // Sent: durable in the outbox, the recording is let go, no draft.
+      expect((await p.send('s1', null, o.text)).kind, SendKind.delivered);
+      p.dispose();
+      await settle();
+      expect(drafts, isEmpty);
     });
 
-    test('even with the old OpenAI setting on, Modo auto never uses OpenAI', () async {
-      // A short answer (a permission option) stays on the phone.
+    test('a short answer (a permission option) and commands stay on the phone', () async {
+      final LiveCarPorts p = await portsWith(key: 'sk-' 'test-0000000000000000000000abcd');
       stt.answers.add('dos');
-      expect(((await ports.listen('s1', onTranscribing: () {}, shortAnswer: true)) as DictationText).text, 'dos');
-      expect(rec.starts, 0);
-      ports.releaseDictation();
-      // Commands too.
+      expect(((await p.listen('s1', onTranscribing: () {}, shortAnswer: true)) as DictationText).text, 'dos');
+      p.releaseDictation();
       stt.answers.add('cancela');
-      expect(await ports.hear(const Duration(seconds: 3)), 'cancela');
-      expect(openai, isEmpty);
-      // The message: the phone too (Modo auto costs nothing).
-      stt.answers.add('revisa los logs');
-      expect(((await ports.listen('s1', onTranscribing: () {})) as DictationText).text, 'revisa los logs');
-      expect(openai, isEmpty);
+      expect(await p.hear(const Duration(seconds: 3)), 'cancela');
       expect(rec.starts, 0);
-      ports.releaseDictation();
+      expect(openai, isEmpty);
     });
 
     test('a sent on-device message is durable in the outbox, not left as a draft', () async {
@@ -218,13 +216,11 @@ void main() {
       expect(outbox.items.single.text, 'despliega');
     });
 
-    test('a phone with no recognizer: a clear refusal, never OpenAI (even with a key)', () async {
+    test('no key and no recognizer: a clear refusal', () async {
       stt.available = false;
       final LiveCarPorts none = await portsWith(key: null);
       expect(await none.listen('s1', onTranscribing: () {}), isA<DictationDenied>());
       expect(await none.hear(const Duration(seconds: 3)), isNull);
-      expect(await ports.listen('s1', onTranscribing: () {}), isA<DictationDenied>(),
-          reason: 'a key and the old setting change nothing');
       expect(openai, isEmpty);
     });
   });
