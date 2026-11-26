@@ -47,9 +47,10 @@ enum OrchPhase { connecting, sending, thinking, speaking, listening, asking, sle
 /// orchestrator asks for a «sí» before it sends or answers anything in
 /// another session, so a misheard sentence never reaches a project.
 ///
-/// Like «OK Google»: after it speaks it listens; when [quiet] (10 s) passes
-/// without the person's voice it sleeps, and «OK ComandOS» (offline, never
-/// sent anywhere: [WakeListener]) or the steering wheel wakes it.
+/// Like «OK Google»: it opens asleep and only listens after «OK ComandOS»
+/// (offline, never sent anywhere: [WakeListener]), a tap or the steering
+/// wheel. After it speaks it listens for a follow-up; when [quiet] (10 s)
+/// passes without the person's voice it sleeps again.
 ///
 /// Commands that stay on the phone (whole utterance): «cuelga», «repite»,
 /// «espera» (sleeps now). Steering wheel: play / next = talk (or interrupt
@@ -87,8 +88,6 @@ class OrchestratorCall extends ChangeNotifier {
 
   /// Longest wait for a reply.
   final Duration _patience;
-
-  static const String kickoff = 'Empieza la llamada: dime en una o dos frases qué me espera.';
 
   OrchPhase _phase = OrchPhase.connecting;
   OrchPhase get phase => _phase;
@@ -138,7 +137,9 @@ class OrchestratorCall extends ChangeNotifier {
     }
     if (_ended) return;
     await _loaded();
-    await _turn(kickoff, quiet: true);
+    if (_ended) return;
+    if (_wake != null) await _ports.speak('Listo. Di OK ComandOS cuando me necesites.');
+    if (!_ended) await _sleep();
   }
 
   Future<void> _loaded() async {
@@ -161,12 +162,12 @@ class OrchestratorCall extends ChangeNotifier {
   }
 
   /// Sends [text] to the orchestrator, reads its answer, listens again.
-  Future<void> _turn(String text, {bool quiet = false}) async {
+  Future<void> _turn(String text) async {
     final int gen = ++_gen;
     final String? s = _session;
     if (s == null) return;
     await _wake?.stop();
-    if (!quiet) heard = text;
+    heard = text;
     _set(OrchPhase.sending, 'Enviando…');
     final List<ChatMessage> before = _link.now.messages;
     final int? base = before.isEmpty ? null : before.last.hash;

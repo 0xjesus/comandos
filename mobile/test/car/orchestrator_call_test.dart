@@ -79,28 +79,47 @@ void main() {
   OrchestratorCall call(FakePorts p, FakeLink l) =>
       OrchestratorCall(ports: p, link: l, settle: const Duration(milliseconds: 30), patience: const Duration(seconds: 5));
 
-  test('the call opens the orchestrator, asks what waits, reads the answer and listens', () async {
+  test('it opens asleep: nothing is heard or sent until «OK ComandOS»', () async {
+    final FakePorts p = FakePorts();
+    final FakeLink l = FakeLink();
+    final FakeWake w = FakeWake();
+    final OrchestratorCall c = OrchestratorCall(
+        ports: p, link: l, wake: w, settle: const Duration(milliseconds: 30), patience: const Duration(seconds: 5));
+    unawaited(c.start());
+    await until(() => w.waiting != null);
+    expect(c.phase, OrchPhase.sleeping);
+    expect(c.status, OrchestratorCall.sleepingStatus);
+    expect(p.listening, isNull);
+    expect(p.cues, 0);
+    expect(p.sent, isEmpty);
+
+    // «OK ComandOS»: a cue, and what the person says goes as it is.
+    w.hear();
+    await until(() => p.listening != null);
+    expect(p.cues, 1);
+    p.dictated(const DictationText('dile a Relotto que siga'));
+    await until(() => p.sent.length == 1);
+    expect(p.sent.single, ('auto', '%9', 'dile a Relotto que siga'));
+    l.add(ChatRole.user, 'dile a Relotto que siga');
+    l.add(ChatRole.tool, 'Bash · comandos auto sesiones');
+    l.add(ChatRole.assistant, 'Le mando a Relotto: que siga. ¿Sí?');
+    // After the answer it listens for the «sí» without the phrase.
+    await until(() => p.listening != null);
+    expect(p.spoken.last, 'REPLY:Le mando a Relotto: que siga. ¿Sí?');
+    expect(c.phase, OrchPhase.listening);
+    c.dispose();
+  });
+
+  test('without the phrase on this phone it waits for a tap, it never listens alone', () async {
     final FakePorts p = FakePorts();
     final FakeLink l = FakeLink();
     final OrchestratorCall c = call(p, l);
     unawaited(c.start());
-    await until(() => p.sent.isNotEmpty);
-    expect(p.sent.single, ('auto', '%9', OrchestratorCall.kickoff));
-    l.add(ChatRole.user, OrchestratorCall.kickoff);
-    l.add(ChatRole.tool, 'Bash · comandos auto sesiones');
-    l.add(ChatRole.assistant, 'Te espera Relotto.');
+    await until(() => c.phase == OrchPhase.idle);
+    expect(p.listening, isNull);
+    expect(p.sent, isEmpty);
+    unawaited(c.talk());
     await until(() => p.listening != null);
-    expect(p.spoken, contains('REPLY:Te espera Relotto.'));
-    expect(c.phase, OrchPhase.listening);
-
-    // What the person says goes to the orchestrator as it is.
-    p.dictated(const DictationText('dile a Relotto que siga'));
-    await until(() => p.sent.length == 2);
-    expect(p.sent.last.$3, 'dile a Relotto que siga');
-    l.add(ChatRole.user, 'dile a Relotto que siga');
-    l.add(ChatRole.assistant, 'Le mando a Relotto: que siga. ¿Sí?');
-    await until(() => p.listening != null);
-    expect(p.spoken.last, 'REPLY:Le mando a Relotto: que siga. ¿Sí?');
     c.dispose();
   });
 
@@ -109,13 +128,12 @@ void main() {
     final FakeLink l = FakeLink();
     final OrchestratorCall c = call(p, l);
     unawaited(c.start());
-    await until(() => p.sent.isNotEmpty);
-    l.add(ChatRole.user, OrchestratorCall.kickoff);
-    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => c.phase == OrchPhase.idle);
+    unawaited(c.talk());
     await until(() => p.listening != null);
     p.dictated(const DictationText('cuelga'));
     await until(() => c.ended);
-    expect(p.sent, hasLength(1));
+    expect(p.sent, isEmpty);
     c.dispose();
   });
 
@@ -146,10 +164,14 @@ void main() {
       clock: () => now,
     );
     unawaited(c.start());
-    await until(() => p.sent.isNotEmpty);
-    l.add(ChatRole.user, OrchestratorCall.kickoff);
-    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => w.waiting != null);
+    w.hear();
     await until(() => p.listening != null);
+    p.dictated(const DictationText('qué hay'));
+    await until(() => p.sent.isNotEmpty);
+    l.add(ChatRole.user, 'qué hay');
+    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => p.listening != null && p.spoken.contains('REPLY:Nada pendiente.'));
     final int cues = p.cues;
 
     // The recognizer gave up after 6 s: still within the window, it listens
@@ -185,10 +207,14 @@ void main() {
     final OrchestratorCall c = OrchestratorCall(
         ports: p, link: l, wake: w, settle: const Duration(milliseconds: 30), patience: const Duration(seconds: 5));
     unawaited(c.start());
-    await until(() => p.sent.isNotEmpty);
-    l.add(ChatRole.user, OrchestratorCall.kickoff);
-    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => w.waiting != null);
+    w.hear();
     await until(() => p.listening != null);
+    p.dictated(const DictationText('qué hay'));
+    await until(() => p.sent.isNotEmpty);
+    l.add(ChatRole.user, 'qué hay');
+    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => p.listening != null && p.spoken.contains('REPLY:Nada pendiente.'));
     p.dictated(const DictationText('espera'));
     await until(() => w.waiting != null);
     expect(c.phase, OrchPhase.sleeping);
@@ -206,10 +232,14 @@ void main() {
     final OrchestratorCall c = OrchestratorCall(
         ports: p, link: l, wake: w, settle: const Duration(milliseconds: 30), patience: const Duration(seconds: 5));
     unawaited(c.start());
-    await until(() => p.sent.isNotEmpty);
-    l.add(ChatRole.user, OrchestratorCall.kickoff);
-    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => w.waiting != null);
+    w.hear();
     await until(() => p.listening != null);
+    p.dictated(const DictationText('qué hay'));
+    await until(() => p.sent.isNotEmpty);
+    l.add(ChatRole.user, 'qué hay');
+    l.add(ChatRole.assistant, 'Nada pendiente.');
+    await until(() => p.listening != null && p.spoken.contains('REPLY:Nada pendiente.'));
     p.dictated(const DictationText('espera'));
     await until(() => w.waiting != null);
     w.waiting!.complete(WakeResult.unavailable);
