@@ -505,6 +505,28 @@ pub fn quota_snapshots(conn: &Connection, since: i64) -> Result<Vec<Value>> {
     Ok(out)
 }
 
+/// The quota readings still in their cycle, oldest capture first: the fallback
+/// when a provider does not answer takes the newest one per account and window
+/// (`quota_snapshots` sorts by reset, and an account logged into another login
+/// keeps the old login's later reset under the same name).
+pub fn current_quota_snapshots(conn: &Connection, now: i64) -> Result<Vec<Value>> {
+    let mut stmt = conn.prepare(
+        "select provider, account, win, scope, resets_at, percent from usage_quota_snapshots \
+         where resets_at >= ? order by captured_at, resets_at",
+    )?;
+    let mut cursor = stmt.query(params![now])?;
+    let keys = ["provider", "account", "window", "scope", "resets_at", "percent"];
+    let mut out = Vec::new();
+    while let Some(row) = cursor.next()? {
+        let mut item = Object::new();
+        for (i, key) in keys.iter().enumerate() {
+            item.insert((*key).to_owned(), column(row, i)?);
+        }
+        out.push(Value::Object(item));
+    }
+    Ok(out)
+}
+
 /// `_measured_usage` (cc_usage.py:1935): `day_start` es la medianoche local de `now`
 /// (`LocalZone::day_start`). Sin turnos en 7 días → `None`.
 pub fn measured_usage(
@@ -1707,4 +1729,30 @@ pub fn record_quota_snapshots(conn: &Connection, rows: &[Value], now: i64) -> Re
     drop(stmt);
     tx.commit()?;
     Ok(keep.len())
+}
+
+#[cfg(test)]
+mod current_quota_tests {
+    use super::*;
+
+    #[test]
+    fn the_newest_capture_comes_last_even_with_an_earlier_reset() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "create table usage_quota_snapshots (limit_id text, provider text, account text, win text, \
+             scope text, resets_at integer, percent real, captured_at integer)",
+        )
+        .unwrap();
+        // `main` logged into another account: the old login's cycle resets later.
+        for (reset, percent, captured) in [(3_000, 50.0, 100), (2_000, 1.0, 200), (500, 9.0, 300)] {
+            conn.execute(
+                "insert into usage_quota_snapshots values ('main:w', 'claude', 'main', '7d', '', ?, ?, ?)",
+                params![reset, percent, captured],
+            )
+            .unwrap();
+        }
+        let rows = current_quota_snapshots(&conn, 1_000).unwrap();
+        let got: Vec<f64> = rows.iter().map(|r| r["percent"].as_f64().unwrap()).collect();
+        assert_eq!(got, [50.0, 1.0], "a cycle already over is out; the newest capture is last");
+    }
 }

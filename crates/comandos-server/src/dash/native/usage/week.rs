@@ -198,12 +198,6 @@ async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
     let snapshots_since = (now - SNAPSHOT_LOOKBACK_S) as i64;
     let past = offset < 0;
     let current = native.limits.current();
-    // Una cuenta que no contestó (429 tras un reinicio) toma su última lectura
-    // guardada; con todas al día no hace falta leerla.
-    let failed = current
-        .health
-        .values()
-        .any(|h| h.get("status").and_then(Value::as_str) == Some("error"));
     let rows = native
         .usage
         .with(move |u| -> Result<(WeekRows, Vec<Value>, Vec<Value>), ReadError> {
@@ -217,11 +211,9 @@ async fn sidebar_payload(native: &Native, offset: i64) -> Answer {
             } else {
                 Vec::new()
             };
-            let stored = if failed {
-                usage_read::quota_snapshots(&u.conn, now as i64)?
-            } else {
-                Vec::new()
-            };
+            // Una cuenta que no contestó (429 tras un reinicio) toma su última
+            // lectura guardada, como el tablero; con lectura en vivo no se usa.
+            let stored = usage_read::current_quota_snapshots(&u.conn, now as i64)?;
             Ok((rows, snapshots, stored))
         })
         .await?;
@@ -272,8 +264,8 @@ fn add_stored(limits: &mut Vec<Value>, stored: Vec<Value>) {
         (account, get("window"), get("scope"))
     };
     let mut live: std::collections::HashSet<_> = limits.iter().map(key).collect();
-    // `quota_snapshots` viene por reinicio ascendente: la más reciente primero,
-    // para que un ciclo viejo (otra cuenta que usó ese nombre) no la tape.
+    // `current_quota_snapshots` viene por captura ascendente: la más reciente
+    // primero, para que un ciclo viejo (otro login con ese nombre) no la tape.
     for mut row in stored.into_iter().rev() {
         if live.insert(key(&row))
             && let Some(map) = row.as_object_mut()
@@ -309,7 +301,7 @@ pub async fn board(native: &Native) -> Answer {
             })?;
             let (turns, spans) = usage_read::board_rows(&u.conn, since)?;
             // Ventanas que aún no reinician: su última lectura guardada.
-            let stored = usage_read::quota_snapshots(&u.conn, now as i64)?;
+            let stored = usage_read::current_quota_snapshots(&u.conn, now as i64)?;
             Ok::<_, ReadError>((rows, turns, spans, stored))
         })
         .await?;
