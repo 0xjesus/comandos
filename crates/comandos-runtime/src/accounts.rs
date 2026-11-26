@@ -309,7 +309,14 @@ fn auth(provider: &str, home: &Path, auth_file: &str) -> (bool, String, &'static
         "claude" => {
             let oauth = &data["claudeAiOauth"];
             subscription = truthy(&oauth["accessToken"]) || truthy(&oauth["refreshToken"]);
-            let mut metadata = read_json(&home.join(".claude.json"));
+            // «main» (`~/.claude`) keeps its login in `~/.claude.json`; a
+            // `~/.claude/.claude.json` there is a stale leftover (agent_procs).
+            let beside = home.parent().map(|p| read_json(&p.join(".claude.json")));
+            let main = home.file_name().is_some_and(|n| n == ".claude");
+            let mut metadata = match beside {
+                Some(b) if main && truthy(&b) => b,
+                _ => read_json(&home.join(".claude.json")),
+            };
             if !truthy(&metadata)
                 && let Some(parent) = home.parent()
             {

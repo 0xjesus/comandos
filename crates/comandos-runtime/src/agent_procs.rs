@@ -923,8 +923,15 @@ impl AccountCache {
             b".claude.json"
         };
         let mut cfg = path_join(path, name);
-        if agent == "claude" && fs::metadata(os(&cfg)).is_err() {
-            cfg = path_join(&dirname(rstrip_slash(path)), b".claude.json");
+        if agent == "claude" {
+            // Without CLAUDE_CONFIG_DIR («main», `~/.claude`) Claude Code keeps the
+            // login in `~/.claude.json`; a `~/.claude/.claude.json` there is a stale
+            // leftover that kept naming the account logged in before.
+            let beside = path_join(&dirname(rstrip_slash(path)), b".claude.json");
+            let main = rstrip_slash(path).rsplit(|&b| b == b'/').next() == Some(b".claude".as_slice());
+            if fs::metadata(os(&cfg)).is_err() || main && fs::metadata(os(&beside)).is_ok() {
+                cfg = beside;
+            }
         }
         let sig = signature(&cfg);
         let key = (path.to_vec(), agent.to_owned());
@@ -1019,6 +1026,28 @@ mod tests {
         assert_eq!(dirname(b"/a/b/"), b"/a/b");
         assert_eq!(dirname(b"x"), b"");
         assert_eq!(path_join(b"", b".claude.json"), b".claude.json");
+    }
+
+    #[test]
+    fn main_claude_reads_the_login_beside_its_folder() {
+        let root = std::env::temp_dir().join(format!("comandos-email-{}", std::process::id()));
+        let main = root.join(".claude");
+        let named = root.join("accounts").join("work");
+        fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(&named).unwrap();
+        let login = |p: &std::path::Path, email: &str| {
+            fs::write(p, format!("{{\"oauthAccount\":{{\"emailAddress\":\"{email}\"}}}}")).unwrap();
+        };
+        login(&main.join(".claude.json"), "old@stale.test");
+        login(&root.join(".claude.json"), "now@main.test");
+        login(&named.join(".claude.json"), "work@named.test");
+        let mut cache = AccountCache::default();
+        let email = |c: &mut AccountCache, p: &std::path::Path| c.email_for_dir(p.as_os_str().as_bytes(), "claude").unwrap();
+        assert_eq!(email(&mut cache, &main), Value::from("now@main.test"), "~/.claude.json wins over a leftover");
+        assert_eq!(email(&mut cache, &named), Value::from("work@named.test"), "an account folder keeps its own file");
+        fs::remove_file(root.join(".claude.json")).unwrap();
+        assert_eq!(email(&mut cache, &main), Value::from("old@stale.test"), "no file beside it: the one inside");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
