@@ -6,7 +6,10 @@
 //! draw tmux under it. It opens and closes only with the tab strip's chat button; the
 //! wheel always scrolls tmux. The timer only fetches while the view is visible; an
 //! unchanged transcript costs one tiny answer from the server.
+//! «Ponerse al día» (the key beside the chat's) walks a queue of the splits that wait or
+//! finished, like the phone: ‹ › in the header, and sending or answering moves on.
 use super::*;
+use crate::catch_up;
 use crate::ui::chat_page;
 use webkit2gtk::WebViewExt;
 
@@ -36,6 +39,9 @@ pub(super) struct Owned {
     /// Scripts for the page before it finished loading.
     queue: RefCell<Vec<String>>,
     ready: Cell<bool>,
+    /// «Ponerse al día»: the splits to go through, and the pending move to the next one.
+    deck: RefCell<catch_up::Queue>,
+    advance: RefCell<Option<glib::SourceId>>,
 }
 struct View {
     stack: gtk::Stack,
@@ -43,6 +49,10 @@ struct View {
     title: gtk::Label,
     chips: gtk::Box,
     toggle: gtk::Button,
+    catch_key: gtk::Button,
+    /// ‹ «Al día 3 de 9» › while the queue runs.
+    nav: gtk::Box,
+    position: gtk::Label,
 }
 
 /// Where the collapsed view starts: the last agent answer (and what followed it), or
@@ -138,6 +148,25 @@ fn save_image(data_url: &str) -> Option<std::path::PathBuf> {
     Some(path)
 }
 
+/// ‹ «Al día 3 de 9» ›, hidden until «Ponerse al día» starts.
+fn build_nav() -> (gtk::Box, gtk::Button, gtk::Label, gtk::Button) {
+    let nav = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    nav.style_context().add_class("cv-queue");
+    let prev = ui::icons::button("chevron-left", 16, "Split anterior");
+    let next = ui::icons::button("chevron-right", 16, "Siguiente split");
+    let position = gtk::Label::new(None);
+    position.style_context().add_class("cv-queue-at");
+    for b in [&prev, &next] {
+        b.style_context().add_class("cv-queue-step");
+        b.set_can_focus(false);
+    }
+    nav.pack_start(&prev, false, false, 0);
+    nav.pack_start(&position, false, false, 0);
+    nav.pack_start(&next, false, false, 0);
+    nav.set_no_show_all(true);
+    (nav, prev, position, next)
+}
+
 /// Header: the session's name and, in a split, one chip per pane.
 fn build_head() -> (gtk::Box, gtk::Label, gtk::Box) {
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -161,6 +190,18 @@ impl App {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.style_context().add_class("cv-root");
         let (bar, title, chips) = build_head();
+        let (nav, prev, position, next) = build_nav();
+        if let Some(head) = chips.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) {
+            head.pack_end(&nav, false, false, 0);
+        }
+        for (button, delta) in [(&prev, -1), (&next, 1)] {
+            let weak = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(app) = weak.upgrade() {
+                    app.catch_step(delta);
+                }
+            });
+        }
         let weak = Rc::downgrade(self);
         let web = chat_page::view(move |message| {
             if let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) {
@@ -180,13 +221,26 @@ impl App {
                 let on = !app.chat.on.get();
                 if on {
                     app.chat.pane.replace(String::new());
+                } else if app.chat.deck.borrow().on() {
+                    app.catch_stop();
                 }
                 app.chat_show(on);
             }
         });
+        let catch_key = ui::icons::button("deck", 18, "Ponerse al día");
+        catch_key.set_widget_name("catch-up");
+        catch_key.style_context().add_class("cc-key");
+        let weak = Rc::downgrade(self);
+        catch_key.connect_clicked(move |_| {
+            if let Some(app) = weak.upgrade() {
+                app.catch_toggle();
+            }
+        });
+        self.tab_layout.actions().pack_start(&catch_key, false, false, 0);
         self.tab_layout.actions().pack_start(&toggle, false, false, 0);
+        catch_key.show();
         toggle.show();
-        *self.chat.view.borrow_mut() = Some(View { stack: stack.clone(), web, title, chips, toggle });
+        *self.chat.view.borrow_mut() = Some(View { stack: stack.clone(), web, title, chips, toggle, catch_key, nav, position });
         let weak = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(1500), move || {
             let Some(app) = weak.upgrade().filter(|a| !a.closed.load(Ordering::Acquire)) else {
@@ -482,15 +536,107 @@ impl App {
             move || dash.post(path, &body, Duration::from_secs(5)),
             move |result| {
                 let Some(app) = weak.upgrade() else { return };
+                let done = matches!(&result, Ok((status, _)) if *status < 300);
                 if let Err(error) = result {
                     app.status.set_text(&format!("Chat: {error:?}"));
                 }
                 if path == "/send" {
                     app.chat_js("sent", &Value::Null);
                 }
+                // Sent or answered while catching up: on to the next split once the
+                // bubble had a moment on screen.
+                if done && matches!(path, "/send" | "/chat/answer") && app.chat.deck.borrow().on() {
+                    app.catch_later();
+                }
                 app.chat_tick(true);
             },
         );
+    }
+}
+
+impl App {
+    /// The deck key: starts the queue from the feed, or leaves it.
+    fn catch_toggle(self: &Rc<Self>) {
+        self.catch_cancel();
+        if self.chat.deck.borrow().on() {
+            self.catch_stop();
+            self.status.set_text("Saliste de Ponerse al día");
+            return;
+        }
+        let cards = catch_up::deck(self.feed.feed.borrow().as_ref());
+        if !self.chat.deck.borrow_mut().start(cards) {
+            self.status.set_text("Nada pendiente: ningún split te espera");
+            return;
+        }
+        let n = self.chat.deck.borrow().len();
+        self.catch_go();
+        self.status.set_text(&format!("{n} splits · ‹ › o envía para pasar al siguiente"));
+    }
+    /// Opens the current card: its tab, its split in the chat.
+    fn catch_go(self: &Rc<Self>) {
+        let Some(card) = self.chat.deck.borrow().current().cloned() else { return };
+        if self.terms.borrow().contains_key(&card.session) {
+            self.select(&card.session);
+        } else {
+            let label = self
+                .feed
+                .feed
+                .borrow()
+                .as_ref()
+                .and_then(|f| f.sessions.get(&card.session))
+                .map(|e| e.label.clone())
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| card.session.clone());
+            self.open_tab(&card.session, "claude", &label, true);
+        }
+        self.chat.pane.replace(card.pane.clone());
+        self.catch_paint();
+        self.chat_show(true);
+    }
+    fn catch_step(self: &Rc<Self>, delta: i32) {
+        self.catch_cancel();
+        let next = self.chat.deck.borrow_mut().step(delta).is_some();
+        if next {
+            self.catch_go();
+        } else {
+            self.catch_paint();
+            self.status.set_text("Listo: ya te pusiste al día");
+        }
+    }
+    fn catch_later(self: &Rc<Self>) {
+        self.catch_cancel();
+        let weak = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(Duration::from_millis(700), move || {
+            if let Some(app) = weak.upgrade() {
+                app.chat.advance.replace(None);
+                app.catch_step(1);
+            }
+        });
+        self.chat.advance.replace(Some(id));
+    }
+    fn catch_cancel(&self) {
+        if let Some(id) = self.chat.advance.borrow_mut().take() {
+            id.remove();
+        }
+    }
+    fn catch_stop(&self) {
+        self.catch_cancel();
+        self.chat.deck.borrow_mut().stop();
+        self.catch_paint();
+    }
+    /// The key lit and the header's ‹ «Al día 3 de 9» › while the queue runs.
+    fn catch_paint(&self) {
+        let Some(view) = &*self.chat.view.borrow() else { return };
+        let deck = self.chat.deck.borrow();
+        let on = deck.on();
+        let ctx = view.catch_key.style_context();
+        if on { ctx.add_class("cv-on") } else { ctx.remove_class("cv-on") }
+        view.catch_key.set_tooltip_text(Some(if on { "Salir de Ponerse al día" } else { "Ponerse al día" }));
+        view.position.set_text(&if on { format!("Al día {}", deck.position()) } else { String::new() });
+        view.nav.set_visible(on);
+        if on {
+            view.nav.show_all();
+        }
     }
 }
 

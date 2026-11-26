@@ -135,6 +135,9 @@ paned separator { background: @LINE@; min-width: 2px; }
 .cv-chip { background-image: none; background-color: @BAR@; color: @DIM@; border: 1px solid @LINE2@; border-radius: 999px; padding: 2px 12px; min-height: 26px; font-size: 12px; font-weight: 600; }
 .cv-chip:hover { color: @TEXT@; border-color: @BRAND@; }
 .cv-chip.on { background-color: @BRAND@; border-color: @BRAND@; color: #ffffff; }
+.cv-queue-at { color: @TEXT@; font-size: 12px; font-weight: 600; padding: 0 6px; }
+.cv-queue-step { background-image: none; background-color: @BAR@; border: 1px solid @LINE2@; border-radius: 999px; min-height: 26px; min-width: 26px; padding: 0 4px; }
+.cv-queue-step:hover { border-color: @BRAND@; }
 .cv-ghost { background-image: none; background-color: transparent; color: @FAINT@; border: 1px solid transparent; border-radius: 8px; padding: 2px 9px; min-height: 26px; font-size: 12px; font-weight: 600; box-shadow: none; }
 .cv-ghost:hover { color: @TEXT@; background-color: @BAR@; border-color: @LINE2@; }
 .cv-ghost.cv-primary { background-color: @BRAND@; border-color: @BRAND@; color: #ffffff; }

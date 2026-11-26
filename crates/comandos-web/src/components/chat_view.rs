@@ -5,12 +5,14 @@
 //! (`dock`) and the keys and actions are forwarded to it.
 //! One 1 s timer; it fetches only while the view is visible and the page is shown, and
 //! the server answers `unchanged` when the transcript did not move.
+//! «Ponerse al día» (the deck key beside the chat's, like the APK): a queue of the
+//! splits that wait or finished, walked with ‹ › and swipe; sending or answering moves on.
 #[cfg(target_arch = "wasm32")]
 pub use web::{install, tab_detail};
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-use super::{PaneRow, Verdict, ask_html, ask_signature, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, split_label, swipe, verdict, working};
+use super::{CatchCard, PaneRow, Verdict, ask_html, ask_signature, catch_next, catch_up_deck, choose, cut, fallback_id, pane_label, pane_number, remaining, restore, split_label, swipe, verdict, working};
 use comandos_web_view::escape::text as esc;
 use crate::components::web_support::*;
 use comandos_web_dom::port::*;
@@ -26,6 +28,7 @@ const STORE: &str = "comandos.viewMode";
 /// A transcript request older than this no longer blocks the next refresh.
 const STUCK_MS: f64 = 15000.;
 const BUBBLE: &str = r#"<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg>"#;
+const DECK: &str = r#"<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="13" height="13" rx="2"/><path d="M8 4.5h10a2 2 0 0 1 2 2V16"/></svg>"#;
 const TERM: &str = r#"<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 4 4-4 4M12 17h7"/></svg>"#;
 
 #[derive(Default)]
@@ -64,6 +67,11 @@ struct Chat {
     answering: Cell<bool>,
     /// The pane the drawn menu is on (the transcript's).
     ask_pane: RefCell<String>,
+    /// «Ponerse al día»: the splits to go through (empty: off), the one shown, and the
+    /// pending move to the next one (a `setTimeout` id; 0: none).
+    deck: RefCell<Vec<CatchCard>>,
+    at: Cell<usize>,
+    advance: Cell<i32>,
 }
 /// Shared by chat and terminal: the session header (‹ name ›) above, keys and composer below.
 const BARS: &str = r#"<header id="cv-head" class="cv-head"><button type="button" data-cv="prev" aria-label="Sesión anterior">‹</button><div class="cv-title"><b></b><span></span></div><button type="button" data-cv="next" aria-label="Sesión siguiente">›</button></header><div id="cv-dock"><div class="cv-panes" role="toolbar" aria-label="Panes de la sesión" hidden></div><div class="cv-keys" role="toolbar" aria-label="Teclas y herramientas de la terminal"><button type="button" class="hot" data-key="escape">Esc</button><button type="button" class="hot" data-key="ctrlc" title="Interrumpir (Ctrl+C)" aria-label="Enviar Ctrl+C">Ctrl+C</button><button type="button" data-action="mode">Seleccionar</button><button type="button" data-action="panes">Paneles</button><button type="button" data-key="backspace" title="Borrar un carácter (Backspace)" aria-label="Borrar un carácter en la terminal">⌫</button><button type="button" data-action="history">Historial</button><button type="button" data-action="copy">Copiar</button><button type="button" data-action="paste">Pegar</button><button type="button" data-action="keyboard" title="Escribir directo en la terminal">Teclado directo</button><button type="button" data-action="ctrl">Ctrl</button><button type="button" data-key="tab">Tab</button><button type="button" data-key="left" aria-label="Izquierda" title="Izquierda"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><button type="button" data-key="up" aria-label="Arriba" title="Arriba"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button type="button" data-key="down" aria-label="Abajo" title="Abajo"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><button type="button" data-key="right" aria-label="Derecha" title="Derecha"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button><button type="button" data-cv-key="1">1</button><button type="button" data-cv-key="2">2</button></div><form class="cv-compose"><textarea rows="1" aria-label="Mensaje para la sesión" placeholder="Escribe a la sesión…"></textarea><button type="submit" aria-label="Enviar (vacío: Enter)" title="Enviar; vacío envía Enter"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></form></div>"#;
@@ -386,7 +394,15 @@ impl Chat {
                 .map(|r| text(&get(&query(r, sel), "textContent")).trim().to_owned())
                 .unwrap_or_default()
         };
-        let model = field(".mdl");
+        let model = if self.catching() {
+            let at = format!("Al día {} de {}", self.at.get() + 1, self.deck.borrow().len());
+            match tab_detail(&session) {
+                Some(split) => format!("{at} · {split}"),
+                None => at,
+            }
+        } else {
+            field(".mdl")
+        };
         let name = Some(field(".lbl")).filter(|n| !n.is_empty()).unwrap_or(session);
         let _ = set(&query(&id("cv-head"), ".cv-title b"), "textContent", &name.into());
         let _ = set(&query(&id("cv-head"), ".cv-title span"), "textContent", &model.into());
@@ -604,7 +620,10 @@ impl Chat {
             let reply = request("POST", "/chat/answer", from_json(&body).unwrap_or(JsValue::NULL)).await;
             me.answering.set(false);
             match reply {
-                Ok(r) if number(&get(&r, "status")) < 300. => me.ask_card(&serde_json::Value::Null),
+                Ok(r) if number(&get(&r, "status")) < 300. => {
+                    me.ask_card(&serde_json::Value::Null);
+                    me.catch_later();
+                }
                 Ok(r) => {
                     let why = text(&get(&get(&r, "body"), "error"));
                     toast(if why.is_empty() { "No se pudo responder." } else { &why });
@@ -617,6 +636,111 @@ impl Chat {
             }
             me.tick(true);
         });
+    }
+    fn catching(&self) -> bool {
+        !self.deck.borrow().is_empty()
+    }
+    /// The deck key: builds the queue from the feed, or leaves it.
+    fn catch_toggle(self: &Rc<Self>) {
+        self.catch_cancel();
+        if self.catching() {
+            self.catch_stop();
+            toast("Saliste de Ponerse al día");
+            return;
+        }
+        let me = self.clone();
+        spawn_local(async move {
+            let reply = request("GET", "/session-feed", JsValue::UNDEFINED).await;
+            let deck = match reply {
+                Ok(r) if number(&get(&r, "status")) < 300. => catch_up_deck(&to_json(&get(&r, "body"))),
+                _ => {
+                    toast("Sin conexión con tu equipo: no pude armar la cola.");
+                    return;
+                }
+            };
+            if deck.is_empty() {
+                toast("Nada pendiente: ningún split te espera");
+                return;
+            }
+            let n = deck.len();
+            me.deck.replace(deck);
+            me.at.set(0);
+            me.catch_go();
+            toast(&format!("{n} splits · desliza o envía para pasar al siguiente"));
+        });
+    }
+    /// Opens the current card: its session, its split as this device's target, in chat.
+    fn catch_go(self: &Rc<Self>) {
+        let Some(card) = self.deck.borrow().get(self.at.get()).cloned() else { return };
+        if card.pane.starts_with('%') {
+            save(&card.session, &card.pane);
+        }
+        let open = call(&global("openTerms"), "has", &[card.session.as_str().into()]).is_ok_and(|v| truthy(&v));
+        let _ = if open {
+            invoke(&global("showView"), &[format!("term:{}", card.session).into(), true.into()])
+        } else {
+            invoke(&global("openTerm"), &[card.session.as_str().into(), card.label.as_str().into()])
+        };
+        self.catch_paint();
+        if self.on.get() {
+            self.tick(true);
+        } else {
+            self.show(true);
+        }
+        self.titled.replace(String::new());
+        self.head(card.session);
+    }
+    fn catch_step(self: &Rc<Self>, delta: i32) {
+        self.catch_cancel();
+        match catch_next(self.at.get(), self.deck.borrow().len(), delta) {
+            Some(at) => {
+                self.at.set(at);
+                self.catch_go();
+            }
+            None => {
+                self.catch_stop();
+                toast("Listo: ya te pusiste al día");
+            }
+        }
+    }
+    /// Sent or answered while catching up: on to the next split once the bubble had a
+    /// moment on screen.
+    fn catch_later(self: &Rc<Self>) {
+        if !self.catching() {
+            return;
+        }
+        self.catch_cancel();
+        let me = self.clone();
+        let id = invoke(&global("setTimeout"), &[function(move |_| {
+            me.advance.set(0);
+            me.catch_step(1);
+            Ok(JsValue::UNDEFINED)
+        }), 700.into()]);
+        self.advance.set(id.ok().and_then(|v| v.as_f64()).unwrap_or(0.) as i32);
+    }
+    fn catch_cancel(&self) {
+        let id = self.advance.replace(0);
+        if id != 0 {
+            let _ = invoke(&global("clearTimeout"), &[id.into()]);
+        }
+    }
+    fn catch_stop(&self) {
+        self.catch_cancel();
+        self.deck.borrow_mut().clear();
+        self.at.set(0);
+        self.catch_paint();
+        let session = text(&global("activeTerm"));
+        if !session.is_empty() {
+            self.head(session);
+        }
+    }
+    fn catch_paint(&self) {
+        let on = self.catching();
+        let key = id("tab-catchup");
+        attr(&key, "aria-pressed", if on { "true" } else { "false" });
+        let label = if on { "Salir de Ponerse al día" } else { "Ponerse al día" };
+        attr(&key, "title", label);
+        attr(&key, "aria-label", label);
     }
     fn typing(&self) {
         // A prompt waiting for an answer is not «working».
@@ -669,6 +793,7 @@ impl Chat {
             match outcome {
                 Ok(()) => {
                     let _ = set(&area, "value", &remaining(&value, &current).into());
+                    me.catch_later();
                 }
                 Err(message) => {
                     // Never lost: the failed text goes back first, anything typed since after it.
@@ -922,7 +1047,7 @@ pub fn install() -> Result<(), JsValue> {
     call(&area, "insertAdjacentHTML", &["afterend".into(), BARS.into()])?;
     let open = id("tab-open");
     if truthy(&open) {
-        call(&open, "insertAdjacentHTML", &["beforebegin".into(), format!(r#"<button type="button" id="tab-chat" class="tab-nav-btn" aria-pressed="false" aria-label="Ver como chat" title="Ver como chat">{BUBBLE}</button>"#).into()])?;
+        call(&open, "insertAdjacentHTML", &["beforebegin".into(), format!(r#"<button type="button" id="tab-catchup" class="tab-nav-btn" aria-pressed="false" aria-label="Ponerse al día" title="Ponerse al día">{DECK}</button><button type="button" id="tab-chat" class="tab-nav-btn" aria-pressed="false" aria-label="Ver como chat" title="Ver como chat">{BUBBLE}</button>"#).into()])?;
     }
     // Mermaid and PDF previews: the libraries load only when a message needs them.
     if let Ok(f) = js_sys::Function::new_no_args(comandos_web_view::CHAT_MEDIA_JS).dyn_into::<js_sys::Function>() {
@@ -981,7 +1106,15 @@ pub fn install() -> Result<(), JsValue> {
             toast("Abre una sesión primero");
             return Ok(JsValue::UNDEFINED);
         }
+        if me.on.get() && me.catching() {
+            me.catch_stop();
+        }
         me.show(!me.on.get());
+        Ok(JsValue::UNDEFINED)
+    }));
+    let me = chat.clone();
+    listen(&id("tab-catchup"), "click", function(move |_| {
+        me.catch_toggle();
         Ok(JsValue::UNDEFINED)
     }));
     let me = chat.clone();
@@ -1012,13 +1145,14 @@ pub fn install() -> Result<(), JsValue> {
             return Ok(JsValue::UNDEFINED);
         }
         match text(&get(&data, "cv")).as_str() {
-            "prev" => {
-                step(-1);
-                me.tick(true);
-            }
-            "next" => {
-                step(1);
-                me.tick(true);
+            "prev" | "next" => {
+                let delta = if text(&get(&data, "cv")) == "prev" { -1 } else { 1 };
+                if me.catching() {
+                    me.catch_step(delta);
+                } else {
+                    step(delta);
+                    me.tick(true);
+                }
             }
             "more" => me.toggle_more(),
             _ => {}
@@ -1107,7 +1241,9 @@ pub fn install() -> Result<(), JsValue> {
         let t = get(&get(&args.get(0), "changedTouches"), "0");
         let (dx, dy) = (number(&get(&t, "clientX")) - x, number(&get(&t, "clientY")) - y);
         let delta = swipe(dx, dy);
-        if delta != 0 {
+        if delta != 0 && me.catching() {
+            me.catch_step(delta);
+        } else if delta != 0 {
             step(delta);
         }
         Ok(JsValue::UNDEFINED)
@@ -1170,6 +1306,59 @@ pub fn split_label(rows: &[PaneRow], pane: &str) -> Option<String> {
         return None;
     }
     Some(if rows.len() > 1 { format!("{} · {label}", i + 1) } else { label })
+}
+/// One split to catch up on («Ponerse al día»), from `GET /session-feed`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatchCard {
+    pub session: String,
+    pub label: String,
+    /// tmux pane id; empty for a session the feed lists without panes.
+    pub pane: String,
+    pub waits: bool,
+    pub ts: f64,
+}
+/// The splits to go through, like the APK's `buildCatchUpDeck`: every split that is not
+/// working, those waiting for the person (a permission, a limit) first, then the ones
+/// that finished, newest first. Busy splits and plain terminals stay out.
+pub fn catch_up_deck(feed: &serde_json::Value) -> Vec<CatchCard> {
+    let s = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or("").to_owned();
+    let waits = |state: &str| matches!(state, "ask" | "limit");
+    let mut cards = Vec::new();
+    for entry in feed["sessions"].as_array().into_iter().flatten() {
+        let session = s(entry, "session");
+        if session.is_empty() {
+            continue;
+        }
+        let label = Some(s(entry, "label")).filter(|l| !l.is_empty()).unwrap_or_else(|| session.clone());
+        let panes = entry["paneList"].as_array().cloned().unwrap_or_default();
+        if panes.is_empty() {
+            let state = s(entry, "state");
+            if state != "work" {
+                cards.push(CatchCard { pane: s(entry, "pane"), waits: waits(&state), ts: entry["ts"].as_f64().unwrap_or(0.), session, label });
+            }
+            continue;
+        }
+        let mut panes: Vec<&serde_json::Value> = panes.iter().collect();
+        panes.sort_by_key(|p| pane_number(p["pane"].as_str().unwrap_or("")));
+        for p in panes {
+            let state = s(p, "state");
+            if state == "work" || s(p, "agent").is_empty() {
+                continue;
+            }
+            cards.push(CatchCard { session: session.clone(), label: label.clone(), pane: s(p, "pane"), waits: waits(&state), ts: p["ts"].as_f64().unwrap_or(0.) });
+        }
+    }
+    cards.sort_by(|a, b| b.waits.cmp(&a.waits).then(b.ts.total_cmp(&a.ts)));
+    cards
+}
+/// Where ‹ › leave the queue of `len` splits at `at`: before the first it stays put, past
+/// the last one the queue ends (`None`).
+pub fn catch_next(at: usize, len: usize, delta: i32) -> Option<usize> {
+    let next = at as i64 + i64::from(delta);
+    if next < 0 {
+        return Some(at);
+    }
+    (next < len as i64).then_some(next as usize)
 }
 /// One row of the menu an agent waits on (`ask.options` of `/chat/transcript`).
 #[derive(Debug, Clone, PartialEq)]
@@ -1375,6 +1564,29 @@ pub fn working(messages: &[(String, String)], age: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_catch_up_deck_goes_split_by_split_waiting_first_busy_and_terminals_out() {
+        let p = |id: &str, state: &str, ts: f64, agent: &str| serde_json::json!({"pane": id, "state": state, "ts": ts, "agent": agent});
+        let feed = serde_json::json!({"now": 100, "sessions": [
+            {"session": "a", "label": "Alfa", "state": "idle", "paneList": [p("%3", "idle", 50., "claude"), p("%1", "work", 90., "claude"), p("%2", "ask", 10., "claude")]},
+            {"session": "b", "state": "idle", "paneList": [p("%7", "idle", 80., "claude"), p("%8", "idle", 99., "")]},
+            {"session": "c", "state": "work", "pane": "%9"},
+            {"session": "d", "state": "limit", "pane": "%4", "ts": 5},
+        ]});
+        let deck = catch_up_deck(&feed);
+        let got: Vec<String> = deck.iter().map(|c| format!("{}{}", c.session, c.pane)).collect();
+        assert_eq!(got, ["a%2", "d%4", "b%7", "a%3"]);
+        assert_eq!(deck[0].label, "Alfa");
+        assert_eq!(deck[2].label, "b", "no label: the session's name");
+        assert!(catch_up_deck(&serde_json::Value::Null).is_empty());
+    }
+    #[test]
+    fn the_catch_up_queue_walks_forward_and_back_and_ends_after_the_last_split() {
+        assert_eq!(catch_next(0, 2, -1), Some(0), "the first split stays put going back");
+        assert_eq!(catch_next(0, 2, 1), Some(1));
+        assert_eq!(catch_next(1, 2, -1), Some(0));
+        assert_eq!(catch_next(1, 2, 1), None, "past the last split the queue ends");
+    }
     #[test]
     fn the_tab_names_the_split_this_device_writes_to() {
         let rows = vec![row("%2", "claude", "claude-opus-4-8", true), row("%9", "claude", "claude-fable-5-2", false)];

@@ -5,6 +5,7 @@ pub fn image(name: &str, pixels: i32, color: &str) -> gtk::Image {
         "plus" => include_str!("../../../../dash/icons/plus.svg"),
         "terminal" => include_str!("../../../../dash/icons/terminal.svg"),
         "chat" => include_str!("../../../../dash/icons/chat.svg"),
+        "deck" => include_str!("../../../../dash/icons/deck.svg"),
         "arrow-up-down" => include_str!("../../../../dash/icons/arrow-up-down.svg"),
         "rows" => include_str!("../../../../dash/icons/rows.svg"),
         "chevron-left" => include_str!("../../../../dash/icons/chevron-left.svg"),

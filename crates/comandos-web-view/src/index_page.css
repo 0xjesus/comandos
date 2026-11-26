@@ -1279,6 +1279,7 @@ html body.app #term-area{grid-row:3}
 #chat-view[hidden]{display:none}
 body.chat-on .termpane{visibility:hidden}
 #tab-chat[aria-pressed=true]{color:var(--brand)}
+#tab-catchup[aria-pressed=true]{color:var(--brand)}
 #cv-head{align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);background:var(--panel)}
 #cv-head button{flex:none;width:40px;height:40px;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--text);font:22px/1 var(--sans);cursor:pointer}
 #cv-head .cv-title{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column;gap:1px}
@@ -1443,9 +1444,9 @@ body.chat-on .termpane{visibility:hidden}
 @media (max-width:747px){
   body.app #app-navigation{flex-wrap:wrap;height:auto;align-items:center}
   body.app #app-navigation{gap:6px;padding:4px 8px 0}
-body.app #app-navigation > :is(#tab-panel,#tab-term,#tab-new,#tab-chat,#tab-open){width:42px;height:42px;margin:2px 0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text)}
-body.app #app-navigation > #tab-chat{margin-left:auto}
-body.chat-on #app-navigation > #tab-chat{background:var(--brand);border-color:var(--brand);color:#fff}
+body.app #app-navigation > :is(#tab-panel,#tab-term,#tab-new,#tab-catchup,#tab-chat,#tab-open){width:42px;height:42px;margin:2px 0;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text)}
+body.app #app-navigation > #tab-catchup{margin-left:auto}
+body.chat-on #app-navigation > #tab-chat,body.app #app-navigation > #tab-catchup[aria-pressed=true]{background:var(--brand);border-color:var(--brand);color:#fff}
 body.app #app-navigation #tabbar{order:9;flex:1 0 100%;display:flex;height:auto;max-height:none;overflow-x:auto;overflow-y:hidden;gap:8px;padding:8px 10px 10px;scroll-padding-inline:10px;border-top:1px solid var(--line);scroll-snap-type:x proximity;touch-action:pan-x}
   body.app #app-navigation .tab-step{display:none}
   body.app #tabbar .apptab{height:44px;min-height:44px;border:1px solid var(--line);border-radius:999px;scroll-snap-align:center;padding:0 18px;font-size:14px}

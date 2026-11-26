@@ -5,6 +5,7 @@
     allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)
 )]
 pub mod agent_stop;
+pub mod catch_up;
 pub mod clipboard_bridge;
 pub mod config;
 pub mod dash_client;
