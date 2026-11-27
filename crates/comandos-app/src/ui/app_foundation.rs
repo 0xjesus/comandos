@@ -41,6 +41,7 @@ impl App {
                         "tab-cycle-next" => "chevron-right",
                         "tabs-layout-rows" => "rows",
                         "left-panel-toggle" => "panel-left",
+                        "catch-up" => "deck",
                         "noise-toggle" if self.focus.noise_hidden.get() => "eye-off",
                         "noise-toggle" => "eye",
                         other => other,
