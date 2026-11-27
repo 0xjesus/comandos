@@ -135,13 +135,14 @@ pub const ROUTES: &[Entry] = &[
 ];
 
 /// `AGENT_LAUNCH` (5935), literal.
-pub const AGENT_LAUNCH: [(&str, &str); 8] = [
+pub const AGENT_LAUNCH: [(&str, &str); 9] = [
     ("claude", "claude --continue 2>/dev/null || claude"),
     ("codex", "codex resume --last 2>/dev/null || codex"),
     ("grok", "grok --continue 2>/dev/null || grok"),
     ("opencode", "opencode --continue 2>/dev/null || opencode"),
     ("gemini", "gemini"),
     ("agy", "agy --continue 2>/dev/null || agy"),
+    ("omp", "omp --continue 2>/dev/null || omp"),
     ("aider", "aider"),
     ("acp", "cc-acp"),
 ];
@@ -155,12 +156,13 @@ pub const AGENT_LAUNCH: [(&str, &str); 8] = [
 /// colgada de la misma conversación: dos procesos escriben el mismo historial
 /// y cada cliente ve una «misma» sesión distinta. Con un agente vivo en la
 /// carpeta se lanza este.
-pub const AGENT_FRESH: [(&str, &str); 5] = [
+pub const AGENT_FRESH: [(&str, &str); 6] = [
     ("claude", "claude"),
     ("codex", "codex"),
     ("grok", "grok"),
     ("opencode", "opencode"),
     ("agy", "agy"),
+    ("omp", "omp"),
 ];
 
 /// Lo que `tmux_new_session` antepone al lanzador del agente.

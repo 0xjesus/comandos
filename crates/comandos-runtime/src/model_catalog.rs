@@ -10,8 +10,18 @@ pub const MAX_CACHE_BYTES: usize = 4 * 1024 * 1024;
 pub struct Paths {
     pub codex: PathBuf,
     pub grok: PathBuf,
+    /// `~/.cache/comandos/models/omp.json`: `omp models --json` ya
+    /// normalizado por `cc-model-sync` (formato [`CLI_CACHES`]).
+    pub omp: PathBuf,
+    /// `~/.cache/comandos/models/opencode.json`: `opencode models` con nombre
+    /// y fecha, lo más nuevo primero.
+    pub opencode: PathBuf,
     pub cwd: PathBuf,
 }
+/// Catálogos que escribe `cc-model-sync` en un formato ya normalizado:
+/// `{"fetched_at": "...", "models": [{"id", "name", "efforts", "defaultEffort",
+/// "contextWindow"?, "tag"?}]}`.
+pub const CLI_CACHES: [&str; 2] = ["omp", "opencode"];
 pub fn catalog_paths(
     home: &Path,
     cwd: &Path,
@@ -24,15 +34,23 @@ pub fn catalog_paths(
             .unwrap_or_else(|| home.join(format!(".{provider}")))
             .join("models_cache.json")
     };
+    let cache = |cli: &str| home.join(".cache/comandos/models").join(format!("{cli}.json"));
     Paths {
         codex: path("codex", codex_home),
         grok: path("grok", grok_home),
+        omp: cache("omp"),
+        opencode: cache("opencode"),
         cwd: cwd.into(),
     }
 }
 impl Paths {
-    fn entries(&self) -> [(&'static str, &Path); 2] {
-        [("codex", &self.codex), ("grok", &self.grok)]
+    fn entries(&self) -> [(&'static str, &Path); 4] {
+        [
+            ("codex", &self.codex),
+            ("grok", &self.grok),
+            ("omp", &self.omp),
+            ("opencode", &self.opencode),
+        ]
     }
     fn supplied(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
@@ -136,6 +154,10 @@ pub fn catalog_models(paths: &Paths) -> Value {
     let mut result = serde_json::Map::new();
     for (provider, path) in paths.entries() {
         let data = read(&paths.supplied(path));
+        if CLI_CACHES.contains(&provider) {
+            result.insert(provider.into(), Value::Array(cli_cache_models(provider, &data)));
+            continue;
+        }
         let rows = &data["models"];
         let rows: Vec<&Value> = if provider == "codex" {
             rows.as_array()
@@ -215,6 +237,51 @@ pub fn catalog_models(paths: &Paths) -> Value {
     }
     Value::Object(result)
 }
+/// Un id de modelo de un catálogo ya normalizado: texto visible, sin blancos.
+fn cli_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 200
+        && id.bytes().all(|b| b.is_ascii_graphic())
+}
+/// Las filas de un catálogo de [`CLI_CACHES`], en su orden (lo más nuevo
+/// primero), sin repetir ids.
+fn cli_cache_models(provider: &str, data: &Value) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for row in data["models"].as_array().into_iter().flatten() {
+        let Some(id) = row["id"].as_str().filter(|id| cli_model_id(id)) else {
+            continue;
+        };
+        if out.iter().any(|m| m["id"] == id) {
+            continue;
+        }
+        let mut efforts: Vec<&str> = Vec::new();
+        for e in row["efforts"].as_array().into_iter().flatten() {
+            if let Some(e) = e.as_str().filter(|e| effort(e))
+                && !efforts.contains(&e)
+            {
+                efforts.push(e);
+            }
+        }
+        let default = row["defaultEffort"]
+            .as_str()
+            .filter(|d| efforts.contains(d))
+            .unwrap_or("");
+        let name = row["name"]
+            .as_str()
+            .filter(|n| !n.trim().is_empty())
+            .map(|s| s.chars().take(160).collect::<String>())
+            .unwrap_or_else(|| id.into());
+        let mut model = json!({"id":id,"name":name,"efforts":efforts,"defaultEffort":default,"catalogSource":{"provider":provider,"kind":"cli-cache","fetchedAt":data["fetched_at"].as_str().map(|s|s.chars().take(64).collect::<String>())}});
+        if let Some(n) = row["contextWindow"].as_u64().filter(|n| *n > 0) {
+            model["contextWindow"] = n.into();
+        }
+        if let Some(tag) = row["tag"].as_str().filter(|t| !t.is_empty() && t.chars().count() <= 40) {
+            model["tag"] = tag.into();
+        }
+        out.push(model);
+    }
+    out
+}
 fn normalized(id: &str) -> String {
     // Python dot does not cross LF and `$` can match before its final LF.
     let trailing = id.ends_with('\n');
@@ -280,7 +347,7 @@ pub fn hydrate_registry(registry: &Value, paths: &Paths) -> std::result::Result<
                     if existing.remove("soon").is_some_and(|v| truthy(&v)) {
                         existing.remove("tag");
                     }
-                    for field in ["efforts", "defaultEffort", "contextWindow", "catalogSource"] {
+                    for field in ["efforts", "defaultEffort", "contextWindow", "catalogSource", "tag"] {
                         if let Some(value) = observed.get(field) {
                             existing.insert(field.into(), value.clone());
                         }

@@ -91,12 +91,19 @@ fn chips(el: JsValue, items: Vec<Value>, cur: String, cb: JsValue) {
                 } else {
                     String::new()
                 },
-                if truth(at(x, "icon")) {
+                if truth(at(x, "icon")) && s(at(x, "model")).is_empty() && truthy(&get(&global("ICON"), &s(at(x, "icon")))) {
+                    format!("<span class=\"pmark\">{}</span>", icon(&s(at(x, "icon")), 13.0))
+                } else if truth(at(x, "icon")) {
                     provider_mark(&s(at(x, "icon")), &s(at(x, "model")), 13.0)
                 } else {
                     String::new()
                 },
                 md_esc(&s(at(x, "label")))
+                    + &if truth(at(x, "tag")) && s(at(x, "tag")).chars().count() <= 12 {
+                        format!("<small class=\"ns-tag\">{}</small>", md_esc(&s(at(x, "tag"))))
+                    } else {
+                        String::new()
+                    }
             )
         })
         .collect();
@@ -174,6 +181,100 @@ fn callback(f: impl Fn(String) + 'static) -> JsValue {
         Ok(JsValue::UNDEFINED)
     })
 }
+/// Cuántos modelos se ven sin buscar.
+const MODELS_SHOWN: usize = 8;
+/// Los modelos del motor: los primeros [`MODELS_SHOWN`] (más el elegido) y,
+/// si hay más, «+N más» y un buscador por id o nombre.
+fn model_chips() {
+    let list = model_list();
+    let many = list.len() > MODELS_SHOWN;
+    let find = id("ns-model-find");
+    classes(&find, "hidden", !many);
+    let filter = ns_s("modelFilter").trim().to_lowercase();
+    if many {
+        attr(
+            &find,
+            "placeholder",
+            &tf(&format!("Buscar entre {} modelos", list.len()), &format!("Search {} models", list.len())),
+        );
+    }
+    let current = ns_s("model");
+    let text = |m: &JsValue| {
+        format!(
+            "{} {}",
+            get(m, "id").as_string().unwrap_or_default(),
+            get(m, "name").as_string().unwrap_or_default()
+        )
+        .to_lowercase()
+    };
+    let shown: Vec<&JsValue> = if !filter.is_empty() {
+        list.iter()
+            .filter(|m| filter.split_whitespace().all(|t| text(m).contains(t)))
+            .take(60)
+            .collect()
+    } else if many {
+        let mut first: Vec<&JsValue> = list.iter().take(MODELS_SHOWN).collect();
+        if let Some(cur) = list
+            .iter()
+            .skip(MODELS_SHOWN)
+            .find(|m| get(m, "id").as_string().as_deref() == Some(&current))
+        {
+            first.push(cur);
+        }
+        first
+    } else {
+        list.iter().collect()
+    };
+    let mut items: Vec<Value> = shown
+        .iter()
+        .map(|m| {
+            let id = get(m, "id").as_string().unwrap_or_default();
+            json!({"id":id,"label":get(m,"name").as_string().unwrap_or(id.clone()),"model":id,"icon":ns_s("motor"),"tag":get(m,"tag").as_string().unwrap_or_default(),"title":match get(m,"tag").as_string().filter(|t| !t.is_empty()) { Some(t) => format!("{id} · {t}"), None => id.clone() }})
+        })
+        .collect();
+    if many && filter.is_empty() {
+        items.push(json!({"id":"__more","label":format!("+{} {}", list.len() - shown.len(), tf("más", "more"))}));
+    }
+    chips(
+        id("ns-model"),
+        items,
+        current,
+        callback(|id| {
+            if id == "__more" {
+                let _ = call(&id_el("ns-model-find"), "focus", &[]);
+                render();
+                return;
+            }
+            put("model", id.into());
+            select_defaults();
+            render();
+        }),
+    );
+    if let Some(more) = all(&id("ns-model"), "button[data-id=\"__more\"]").first() {
+        classes(more, "ns-more-models", true);
+    }
+    let chosen = list
+        .iter()
+        .find(|m| get(m, "id").as_string().as_deref() == Some(&ns_s("model")));
+    txt(
+        &id("ns-model-note"),
+        chosen
+            .and_then(|m| {
+                let tag = get(m, "tag").as_string().filter(|t| !t.is_empty())?;
+                Some(format!("{} · {tag}", get(m, "name").as_string().unwrap_or_default()))
+            })
+            .unwrap_or_default(),
+    );
+    if !filter.is_empty() && shown.is_empty() {
+        html(
+            &id("ns-model"),
+            format!("<span class=\"ns-fs-empty\">{}</span>", tf("Ningún modelo coincide", "No model matches")),
+        );
+    }
+}
+fn id_el(name: &str) -> JsValue {
+    id(name)
+}
 fn render() {
     let shell = ns_s("harness") == "shell";
     let source = get(&global("PROVIDERS"), "matrixHarnesses");
@@ -189,6 +290,8 @@ fn render() {
         choices,
         ns_s("harness"),
         callback(|h| {
+            put("modelFilter", "".into());
+            let _ = set(&id_el("ns-model-find"), "value", &"".into());
             put("harness", h.clone().into());
             put("motor", if h == "shell" { "".into() } else { h.into() });
             put("harnessAccount", "main".into());
@@ -213,7 +316,7 @@ fn render() {
                 render();
             }),
         );
-        chips(id("ns-model"),model_list().iter().map(|m|{let id=get(m,"id").as_string().unwrap_or_default();json!({"id":id,"label":get(m,"name").as_string().unwrap_or(id.clone()),"model":id,"icon":ns_s("motor")})}).collect(),ns_s("model"),callback(|id|{put("model",id.into());select_defaults();render();}));
+        model_chips();
         chips(id("ns-effort"),js_rows(&get(&model(),"efforts")).iter().map(|e|json!({"id":e.as_string().unwrap_or_default(),"label":e.as_string().unwrap_or_default()})).collect(),ns_s("effort"),callback(|id|put("effort",id.into())));
     }
     let caps = get(&harness(&ns_s("harness")), "capabilities");
@@ -323,6 +426,7 @@ fn render() {
     } else {
         String::new()
     };
+    go_label();
     let disabled = !profile_error.is_empty() || (!shell && !truthy(&route_id));
     let go = id("ns-go");
     let _ = set(&go, "disabled", &disabled.into());
@@ -368,7 +472,374 @@ fn render() {
         },
     );
 }
+const FOLDER_SVG: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"><path d=\"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg>";
+const REPO_SVG: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"6\" cy=\"6\" r=\"2.2\"/><circle cx=\"6\" cy=\"18\" r=\"2.2\"/><circle cx=\"18\" cy=\"8\" r=\"2.2\"/><path d=\"M6 8.2v7.6M18 10.2c0 4-6 3-10.4 6.4\"/></svg>";
+const CHECK_SVG: &str = "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m5 12 4 4L19 6\"/></svg>";
+/// Una ruta escrita (no una búsqueda): empieza con `/` o `~`.
+fn typed_path(q: &str) -> bool {
+    q.starts_with('/') || q.starts_with('~')
+}
+fn last_segment(path: &str) -> String {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+/// `name` con lo buscado resaltado (sin distinguir mayúsculas).
+fn marked(name: &str, q: &str) -> String {
+    let lower = name.to_lowercase();
+    if lower.len() == name.len() {
+        let mut terms: Vec<&str> = q.split_whitespace().filter(|t| !t.contains('/')).collect();
+        terms.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        for term in terms {
+            let term = term.to_lowercase();
+            if let Some(at) = lower.find(&term) {
+                let end = at + term.len();
+                return format!(
+                    "{}<mark>{}</mark>{}",
+                    md_esc(&name[..at]),
+                    md_esc(&name[at..end]),
+                    md_esc(&name[end..])
+                );
+            }
+        }
+    }
+    md_esc(name)
+}
+fn folder_row(path: &str, name: &str, repo: bool, recent: bool, q: &str) -> String {
+    format!(
+        "<button type=\"button\" data-flat class=\"ns-row{}\" role=\"option\" data-p=\"{}\"><span class=\"ns-ico\">{}</span><span class=\"ns-txt\"><span class=\"ns-name\">{}</span><span class=\"ns-path\">{}</span></span>{}</button>",
+        if repo { " repo" } else { "" },
+        attr_esc(path),
+        if repo { REPO_SVG } else { FOLDER_SVG },
+        marked(name, q),
+        md_esc(&short_home(path)),
+        if recent {
+            format!("<span class=\"ns-badge\">{}</span>", tf("reciente", "recent"))
+        } else {
+            String::new()
+        }
+    )
+}
+/// Carpetas de las sesiones vivas, la más activa primero.
+fn recent_dirs() -> Vec<String> {
+    let mut items: Vec<(f64, String)> = js_rows(&get(&state(), "list"))
+        .into_iter()
+        .filter_map(|it| {
+            let cwd = get(&it, "cwd").as_string().filter(|s| !s.is_empty())?;
+            Some((number(&get(&it, "ts")), cwd))
+        })
+        .collect();
+    items.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut out: Vec<String> = Vec::new();
+    for (_, cwd) in items {
+        if !out.contains(&cwd) {
+            out.push(cwd);
+        }
+    }
+    out
+}
+fn spinner(on: bool) {
+    classes(&id("ns-spin"), "hidden", !on);
+}
+/// Pinta la lista de carpetas por grupos y deja activa la primera fila.
+fn show_rows(groups: Vec<(String, Vec<String>)>, empty: String) {
+    let body: String = groups
+        .into_iter()
+        .filter(|(_, rows)| !rows.is_empty())
+        .map(|(title, rows)| {
+            let head = if title.is_empty() {
+                String::new()
+            } else {
+                format!("<div class=\"ns-group\">{}</div>", md_esc(&title))
+            };
+            head + &rows.concat()
+        })
+        .collect();
+    html(
+        &id("ns-dirlist"),
+        if body.is_empty() && !empty.is_empty() {
+            format!("<div class=\"ns-fs-empty\">{}</div>", md_esc(&empty))
+        } else {
+            body
+        },
+    );
+    bind_rows();
+}
+fn bind_rows() {
+    let rows = all(&id("ns-dirlist"), ".ns-row");
+    if let Some(first) = rows.first() {
+        classes(first, "active", true);
+    }
+    for b in rows {
+        let button = b.clone();
+        listen(
+            &b,
+            "click",
+            event(move |_| {
+                choose_dir(data(&button, "p"));
+                Ok(())
+            }),
+        );
+    }
+}
+/// Sin texto: las carpetas recientes; si no hay, `~/codebase`.
+fn show_recent() {
+    let dirs = recent_dirs();
+    html(&id("ns-crumbs"), String::new());
+    html(&id("ns-fs-state"), String::new());
+    if dirs.is_empty() {
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = browse("~/codebase".into()).await;
+        });
+        return;
+    }
+    let rows = dirs
+        .iter()
+        .take(10)
+        .map(|d| folder_row(d, &last_segment(d), false, true, ""))
+        .collect();
+    show_rows(vec![(tf("Recientes", "Recent"), rows)], String::new());
+}
+/// Busca en todo el HOME (`/fs/find`); las recientes que coinciden van primero.
+async fn find(q: String) -> Result<JsValue, JsValue> {
+    let seq = number(&global("nsFsSeq")) + 1.0;
+    global_set("nsFsSeq", &seq.into())?;
+    spinner(true);
+    let encoded = call_global("encodeURIComponent", &[utf16_value(&q)]);
+    let reply = api(&format!("/fs/find?q={}&limit=40", string(&encoded)), None).await;
+    if number(&global("nsFsSeq")) != seq {
+        return Ok(JsValue::UNDEFINED);
+    }
+    spinner(false);
+    let Ok(d) = reply else {
+        // Servidor sin `/fs/find`: navegar como antes.
+        return browse(format!("~/{q}")).await;
+    };
+    html(&id("ns-crumbs"), String::new());
+    html(&id("ns-fs-state"), String::new());
+    let terms: Vec<String> = q.to_lowercase().split_whitespace().map(str::to_owned).collect();
+    let recent: Vec<String> = recent_dirs()
+        .into_iter()
+        .filter(|d| {
+            let lower = d.to_lowercase();
+            terms.iter().all(|t| lower.contains(t.as_str()))
+        })
+        .take(5)
+        .collect();
+    let mut rows: Vec<String> = recent
+        .iter()
+        .map(|d| folder_row(d, &last_segment(d), false, true, &q))
+        .collect();
+    for r in js_rows(&get(&d, "results")) {
+        let path = get(&r, "path").as_string().unwrap_or_default();
+        if path.is_empty() || recent.contains(&path) {
+            continue;
+        }
+        rows.push(folder_row(
+            &path,
+            &get(&r, "name").as_string().unwrap_or_default(),
+            truthy(&get(&r, "repo")),
+            false,
+            &q,
+        ));
+    }
+    show_rows(
+        vec![(String::new(), rows)],
+        tf(
+            &format!("Nada coincide con «{q}». Escribe una ruta (~/…) para crear una carpeta."),
+            &format!("Nothing matches “{q}”. Type a path (~/…) to create a folder."),
+        ),
+    );
+    Ok(JsValue::UNDEFINED)
+}
+/// Lo escrito en el buscador decide: nada → recientes, ruta → navegar,
+/// texto → buscar en todo el HOME.
+fn search_now() {
+    let q = get(&id("ns-cwd"), "value")
+        .as_string()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    classes(&id("ns-clear"), "hidden", q.is_empty());
+    if q.is_empty() {
+        let _ = global_set("nsFsSeq", &(number(&global("nsFsSeq")) + 1.0).into());
+        spinner(false);
+        show_recent();
+    } else if typed_path(&q) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = browse(q).await;
+        });
+    } else {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = find(q).await;
+        });
+    }
+}
+/// La carpeta elegida: queda como píldora y la lista muestra sus subcarpetas.
+fn choose_dir(path: String) {
+    if path.is_empty() {
+        return;
+    }
+    put("fsPicked", utf16_value(&path));
+    let _ = set(&id("ns-cwd"), "value", &utf16_value(&path));
+    html(
+        &id("ns-picked"),
+        format!(
+            "<span class=\"ns-pk-ico\">{CHECK_SVG}</span><span class=\"ns-pk-txt\"><b>{}</b><small>{}</small></span><button type=\"button\" id=\"ns-change\">{}</button>",
+            md_esc(&last_segment(&path)),
+            md_esc(&short_home(&path)),
+            tf("Cambiar", "Change")
+        ),
+    );
+    classes(&id("ns-picked"), "hidden", false);
+    classes(&id("ns-search"), "hidden", true);
+    classes(&id("ns-hint"), "hidden", true);
+    listen(
+        &id("ns-change"),
+        "click",
+        event(|_| {
+            unchoose_dir(true);
+            Ok(())
+        }),
+    );
+    go_label();
+    let go = id("ns-go");
+    if !truthy(&get(&go, "disabled")) {
+        let _ = call(&go, "focus", &[]);
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = browse(path).await;
+    });
+}
+/// Vuelve al buscador (vacío y con foco si `focus`).
+fn unchoose_dir(focus: bool) {
+    put("fsPicked", "".into());
+    classes(&id("ns-picked"), "hidden", true);
+    classes(&id("ns-search"), "hidden", false);
+    classes(&id("ns-hint"), "hidden", false);
+    let _ = set(&id("ns-cwd"), "value", &"".into());
+    go_label();
+    if focus {
+        let _ = call(&id("ns-cwd"), "focus", &[]);
+    }
+    search_now();
+}
+/// «Crear en ComandOS» con una carpeta elegida; «Crear sesión» sin ella.
+fn go_label() {
+    let picked = ns_s("fsPicked");
+    let shell = ns_s("harness") == "shell";
+    txt(
+        &id("ns-go"),
+        if picked.is_empty() {
+            if shell { tf("Abrir terminal", "Open terminal") } else { tf("Crear sesión", "Create session") }
+        } else if shell {
+            tf(&format!("Terminal en {}", last_segment(&picked)), &format!("Terminal in {}", last_segment(&picked)))
+        } else {
+            tf(&format!("Crear en {}", last_segment(&picked)), &format!("Create in {}", last_segment(&picked)))
+        },
+    );
+}
+/// La carpeta para crear: la elegida, una ruta escrita o la fila activa.
+fn chosen_cwd() -> String {
+    let picked = ns_s("fsPicked");
+    if !picked.is_empty() {
+        return picked;
+    }
+    let typed = get(&id("ns-cwd"), "value").as_string().unwrap_or_default().trim().to_string();
+    if typed_path(&typed) {
+        return typed;
+    }
+    let active = query(&id("ns-dirlist"), ".ns-row.active");
+    if truthy(&active) { data(&active, "p") } else { String::new() }
+}
+/// ↑/↓ mueven la fila activa; Enter elige (o crea si ya hay carpeta).
+fn folder_keys(e: &JsValue) -> Result<(), JsValue> {
+    let key = get(e, "key").as_string().unwrap_or_default();
+    let rows = all(&id("ns-dirlist"), ".ns-row");
+    let at = rows.iter().position(|r| has_class(r, "active"));
+    match key.as_str() {
+        "ArrowDown" | "ArrowUp" if !rows.is_empty() => {
+            call(e, "preventDefault", &[])?;
+            let next = match (at, key.as_str()) {
+                (None, _) => 0,
+                (Some(i), "ArrowDown") => (i + 1).min(rows.len() - 1),
+                (Some(i), _) => i.saturating_sub(1),
+            };
+            for r in &rows {
+                classes(r, "active", false);
+            }
+            classes(&rows[next], "active", true);
+            let opts = from_json(&json!({"block":"nearest"}))?;
+            let _ = call(&rows[next], "scrollIntoView", &[opts]);
+        }
+        "Enter" => {
+            call(e, "preventDefault", &[])?;
+            let typed = get(&id("ns-cwd"), "value").as_string().unwrap_or_default();
+            if let Some(i) = at {
+                choose_dir(data(&rows[i], "p"));
+            } else if typed_path(typed.trim()) {
+                wasm_bindgen_futures::spawn_local(async {
+                    let _ = go().await;
+                });
+            }
+        }
+        "Escape" => {
+            call(e, "preventDefault", &[])?;
+            close_modal();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+fn close_modal() {
+    put("intoPane", JsValue::NULL);
+    classes(&id("newsess"), "hidden", true);
+}
+/// En la app de escritorio el modal no se abre dentro de la barra lateral: pasa
+/// a su propia ventana encima de todo (`?panel=chains&open=newsess`) con lo que
+/// haga falta (`intoPane`, carpeta, borrador) en `cc-center-panel`.
+fn hand_to_window(extra: Value) -> bool {
+    if !truthy(&call_global("inApp", &[])) || truthy(&global("ONLY_PANEL")) {
+        return false;
+    }
+    let mut request = json!({"panel": "newsess", "at": now()});
+    let draft = js_sys::JSON::stringify(&ns())
+        .ok()
+        .and_then(|s| s.as_string())
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .unwrap_or(Value::Null);
+    if let (Some(m), Some(d)) = (request.as_object_mut(), draft.as_object()) {
+        let keep: serde_json::Map<String, Value> = d
+            .iter()
+            .filter(|(k, _)| {
+                ["profileId", "harness", "motor", "model", "effort", "harnessAccount", "motorAccount"]
+                    .contains(&k.as_str())
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        m.insert("ns".into(), Value::Object(keep));
+        if let Some(extra) = extra.as_object() {
+            m.extend(extra.clone());
+        }
+    }
+    let saved = call(
+        &global("localStorage"),
+        "setItem",
+        &["cc-center-panel".into(), utf16_value(&request.to_string())],
+    );
+    if saved.is_err() {
+        return false;
+    }
+    let handler = get(&get(&get(&global("window"), "webkit"), "messageHandlers"), "centro");
+    call(&handler, "postMessage", &[utf16_value(&json!({"headerAction":"newSession"}).to_string())]).is_ok()
+}
 async fn open() -> Result<JsValue, JsValue> {
+    if hand_to_window(json!({})) {
+        return Ok(JsValue::UNDEFINED);
+    }
     let body = get(&doc(), "body");
     if has_class(&body, "app") && !has_class(&body, "split") && !has_class(&body, "inapp") {
         let active = get(&helpersTerminal(), "activeView");
@@ -377,28 +848,20 @@ async fn open() -> Result<JsValue, JsValue> {
         }
     }
     classes(&id("newsess"), "hidden", false);
+    // El índice de carpetas del servidor se prepara mientras se elige.
+    wasm_bindgen_futures::spawn_local(async {
+        let _ = api("/fs/find?q=&limit=1", None).await;
+    });
     // Cada apertura relee las cuentas: una cuenta agregada con el tablero abierto
     // no aparecía hasta recargar. Si falla, se queda la lista anterior.
     if let Ok(p) = api("/providers", None).await {
         let _ = global_set("PROVIDERS", &p);
     }
-    let mut dirs: Vec<_> = js_rows(&get(&state(), "list"))
-        .into_iter()
-        .filter_map(|it| get(&it, "cwd").as_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    dirs.sort();
-    dirs.dedup();
-    html(
-        &id("ns-dirs"),
-        dirs.iter()
-            .map(|d| format!("<option value=\"{}\">", attr_esc(d)))
-            .collect(),
-    );
-    let selected = pick(get(&state(), "list"));
-    let cwd = get(&selected, "cwd");
-    if truthy(&cwd) && !truthy(&get(&id("ns-cwd"), "value")) {
-        let _ = set(&id("ns-cwd"), "value", &cwd);
+    // La ventana propia del escritorio arranca sin `/state`: se pide una vez.
+    if js_rows(&get(&state(), "list")).is_empty()
+        && let Ok(list) = api("/state?live=1", None).await
+    {
+        let _ = set(&state(), "list", &list);
     }
     if let Ok(options) = api("/optimization/plans", None).await {
         let active = get(&options, "active");
@@ -417,22 +880,30 @@ async fn open() -> Result<JsValue, JsValue> {
             }
         }
     }
+    put("modelFilter", "".into());
+    let _ = set(&id("ns-model-find"), "value", &"".into());
     select_defaults();
     render();
-    let _ = call(&id("ns-cwd"), "focus", &[]);
-    let path = get(&id("ns-cwd"), "value").as_string().unwrap_or_default();
-    let path = if path.trim().is_empty() {
-        "~/codebase".into()
+    let given = ns_s("openCwd");
+    put("openCwd", "".into());
+    let selected = pick(get(&state(), "list"));
+    let cwd = if !given.is_empty() {
+        given
     } else {
-        path.trim().into()
+        get(&selected, "cwd").as_string().unwrap_or_default()
     };
-    wasm_bindgen_futures::spawn_local(async move {
-        let _ = browse(path).await;
-    });
+    if cwd.is_empty() {
+        unchoose_dir(true);
+    } else {
+        choose_dir(cwd);
+    }
     Ok(JsValue::UNDEFINED)
 }
 fn short_home(path: &str) -> String {
     let regex = global("FS_HOME_RE");
+    if !truthy(&regex) {
+        return path.into();
+    }
     call(
         &get(&get(&global("String"), "prototype"), "replace"),
         "call",
@@ -445,14 +916,21 @@ fn short_home(path: &str) -> String {
 async fn browse(path: String) -> Result<JsValue, JsValue> {
     let seq = number(&global("nsFsSeq")) + 1.0;
     global_set("nsFsSeq", &seq.into())?;
+    spinner(true);
     let encoded = call_global(
         "encodeURIComponent",
         &[utf16_value(if path.is_empty() { "~" } else { &path })],
     );
-    let Ok(d) = api(&format!("/fs/dirs?path={}", string(&encoded)), None).await else {
+    let reply = api(&format!("/fs/dirs?path={}", string(&encoded)), None).await;
+    if number(&global("nsFsSeq")) != seq {
+        return Ok(JsValue::UNDEFINED);
+    }
+    spinner(false);
+    let Ok(d) = reply else {
         return Ok(JsValue::UNDEFINED);
     };
-    if number(&global("nsFsSeq")) != seq || truthy(&get(&d, "error")) {
+    if truthy(&get(&d, "error")) {
+        show_rows(vec![], get(&d, "error").as_string().unwrap_or_default());
         return Ok(JsValue::UNDEFINED);
     }
     if let Some(home) = get(&d, "home").as_string().filter(|s| !s.is_empty()) {
@@ -481,7 +959,7 @@ async fn browse(path: String) -> Result<JsValue, JsValue> {
             acc.push('/');
             acc += p;
             format!(
-                "<button type=\"button\" class=\"ns-crumb\" data-p=\"{}\">{}</button>",
+                "<button type=\"button\" data-flat class=\"ns-crumb\" data-p=\"{}\">{}</button>",
                 attr_esc(&acc),
                 md_esc(p)
             )
@@ -491,37 +969,36 @@ async fn browse(path: String) -> Result<JsValue, JsValue> {
         &id("ns-crumbs"),
         crumbs.join("<span class=\"ns-crumb-sep\">/</span>"),
     );
-    let dirs = js_rows(&get(&d, "dirs"));
-    html(
-        &id("ns-dirlist"),
-        if dirs.is_empty() {
-            format!(
-                "<span class=\"ns-fs-empty\">{}</span>",
-                tf("sin subcarpetas", "no subfolders")
+    let missing = get(&d, "missing").as_string().unwrap_or_default();
+    let frag = missing.split('/').next().unwrap_or("").to_string();
+    let rows: Vec<String> = js_rows(&get(&d, "dirs"))
+        .iter()
+        .map(|x| {
+            folder_row(
+                &get(x, "path").as_string().unwrap_or_default(),
+                &get(x, "name").as_string().unwrap_or_default(),
+                false,
+                false,
+                &frag,
             )
-        } else {
-            dirs.iter()
-                .map(|x| {
-                    format!(
-                        "<button type=\"button\" class=\"ns-dir\" data-p=\"{}\">{} {}</button>",
-                        attr_esc(&get(x, "path").as_string().unwrap_or_default()),
-                        icon("layers", 11.0),
-                        md_esc(&get(x, "name").as_string().unwrap_or_default())
-                    )
-                })
-                .collect()
-        },
+        })
+        .collect();
+    show_rows(
+        vec![(
+            if ns_s("fsPicked").is_empty() { String::new() } else { tf("Subcarpetas", "Subfolders") },
+            rows,
+        )],
+        if ns_s("fsPicked").is_empty() { tf("sin subcarpetas", "no subfolders") } else { String::new() },
     );
+    if !ns_s("fsPicked").is_empty() {
+        // Con carpeta elegida ninguna fila queda activa: Enter es «Crear».
+        for r in all(&id("ns-dirlist"), ".ns-row.active") {
+            classes(&r, "active", false);
+        }
+    }
     let path = get(&d, "path").as_string().unwrap_or_default();
     if truthy(&get(&d, "exists")) {
-        html(
-            &id("ns-fs-state"),
-            format!(
-                "<span class=\"ns-ok\">{} {}</span>",
-                icon("check", 11.0),
-                tf("carpeta existente", "folder exists")
-            ),
-        );
+        html(&id("ns-fs-state"), String::new());
     } else {
         html(
             &id("ns-fs-state"),
@@ -555,8 +1032,7 @@ async fn browse(path: String) -> Result<JsValue, JsValue> {
                                 ),
                                 false,
                             );
-                            let _ = set(&id("ns-cwd"), "value", &utf16_value(&path));
-                            let _ = browse(path).await;
+                            choose_dir(path);
                         }
                         Err(e) => toast(err(e), true),
                     }
@@ -565,17 +1041,13 @@ async fn browse(path: String) -> Result<JsValue, JsValue> {
             }),
         );
     }
-    for b in all(&doc(), "#ns-crumbs .ns-crumb, #ns-dirlist .ns-dir") {
+    for b in all(&id("ns-crumbs"), ".ns-crumb") {
         let button = b.clone();
         listen(
             &b,
             "click",
             event(move |_| {
-                let path = data(&button, "p");
-                let _ = set(&id("ns-cwd"), "value", &utf16_value(&path));
-                wasm_bindgen_futures::spawn_local(async move {
-                    let _ = browse(path).await;
-                });
+                choose_dir(data(&button, "p"));
                 Ok(())
             }),
         );
@@ -583,13 +1055,10 @@ async fn browse(path: String) -> Result<JsValue, JsValue> {
     Ok(JsValue::UNDEFINED)
 }
 async fn go() -> Result<JsValue, JsValue> {
-    let cwd = get(&id("ns-cwd"), "value")
-        .as_string()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+    let cwd = chosen_cwd();
     if cwd.is_empty() {
-        toast(tf("Falta la carpeta", "Missing folder"), true);
+        toast(tf("Elige una carpeta primero", "Pick a folder first"), true);
+        let _ = call(&id("ns-cwd"), "focus", &[]);
         return Ok(JsValue::UNDEFINED);
     }
     let result=async{let into=global("NS");let into=get(&into,"intoPane");let danger=has_class(&id("ns-danger"),"on");if truthy(&into)&&ns_s("harness")!="shell"{let session=get(&into,"session").as_string().unwrap_or_default();let pane=get(&into,"pane").as_string().unwrap_or_default();let r=api("/session/configure",Some(json!({"session":session,"pane":pane,"toHarness":ns_s("harness"),"motor":ns_s("motor"),"model":ns_s("model"),"effort":ns_s("effort"),"account":ns_s("harnessAccount"),"harnessAccount":ns_s("harnessAccount"),"motorAccount":ns_s("motorAccount"),"danger":danger}))).await?;let key=get(&r,"operationKey").as_string().filter(|s|!s.is_empty()).unwrap_or(format!("{session}|{pane}"));let pending=json!({"motor":if ns_s("motor").is_empty(){ns_s("harness")}else{ns_s("motor")},"model":ns_s("model"),"effort":ns_s("effort"),"since":now(),"queued":truthy(&get(&r,"queued")),"stageTxt":tf("arrancando CLI en esta terminal…","starting CLI in this terminal…")});call(&global("MOTOR_PENDING"),"set",&[utf16_value(&key),from_utf16_json(&pending)?])?;put("intoPane",JsValue::NULL);classes(&id("newsess"),"hidden",true);toast(tf(&format!("Arrancando {} en esta terminal",ns_s("harness")),&format!("Starting {} in this terminal",ns_s("harness"))),false);call_global("tick",&[]);return Ok(JsValue::UNDEFINED)}let mut payload=if ns_s("harness")=="shell"{json!({"cwd":cwd,"agent":"shell"})}else{json!({"cwd":cwd,"routeId":ns_s("routeId"),"model":ns_s("model"),"effort":ns_s("effort"),"harnessAccount":ns_s("harnessAccount"),"motorAccount":ns_s("motorAccount")})};if let Some(m)=payload.as_object_mut(){if truthy(&get(&ns(),"profileId")){m.insert("profileId".into(),to_utf16_json(&get(&ns(),"profileId")));}m.insert("danger".into(),json!(danger));}let r=api("/session-new",Some(payload)).await?;put("intoPane",JsValue::NULL);classes(&id("newsess"),"hidden",true);if truthy(&call_global("inApp",&[])){call_global("openInApp",&[get(&r,"session"),"claude".into(),get(&r,"label")]);}else if truthy(&global("WEBTERM")){call_global("openTerm",&[get(&r,"session"),get(&r,"label")]);}else{let _=api("/focus",Some(json!({"session":to_utf16_json(&get(&r,"session"))}))).await;}toast(format!("{} {}{}",get(&r,"label").as_string().unwrap_or_default(),tf("creada","created"),if truthy(&get(&r,"worktree")){" · ⎇ worktree"}else{""}),false);call_global("tick",&[]);Ok(JsValue::UNDEFINED)}.await;
@@ -630,29 +1099,22 @@ async fn open_for(session: String, pane: String, cwd: String) -> Result<JsValue,
         );
         return Ok(JsValue::UNDEFINED);
     };
-    put(
-        "intoPane",
-        from_json(
-            &json!({"session":session,"pane":get(&it,"pane").as_string().unwrap_or_default()}),
-        )?,
-    );
+    let into = json!({"session":session,"pane":get(&it,"pane").as_string().unwrap_or_default()});
+    let path = if !cwd.is_empty() {
+        cwd
+    } else {
+        get(&it, "cwd").as_string().unwrap_or_default()
+    };
     call_global(
         "ulog",
         &["click".into(), "open-ai-here".into(), utf16_value(&session)],
     );
-    open().await?;
-    let input = id("ns-cwd");
-    if !input.is_null() {
-        let path = if !cwd.is_empty() {
-            cwd
-        } else {
-            get(&it, "cwd")
-                .as_string()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| get(&input, "value").as_string().unwrap_or_default())
-        };
-        set(&input, "value", &utf16_value(&path))?;
+    if hand_to_window(json!({"intoPane": into, "openCwd": path})) {
+        return Ok(JsValue::UNDEFINED);
     }
+    put("intoPane", from_json(&into)?);
+    put("openCwd", utf16_value(&path));
+    open().await?;
     toast(
         tf(
             "Elige CLI y motor: arranca en ESTA terminal (como el +).",
@@ -768,40 +1230,64 @@ pub fn attach() -> Result<(), JsValue> {
         "input",
         event(|_| {
             cancel(global("nsFsTimer"));
+            // Mientras se escribe la lista se queda; la respuesta llega a los 120 ms.
             let timer = later(
                 event(|_| {
-                    let path = get(&id("ns-cwd"), "value")
-                        .as_string()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = browse(if path.is_empty() { "~".into() } else { path }).await;
-                    });
+                    search_now();
                     Ok(())
                 }),
-                220.0,
+                120.0,
             );
             global_set("nsFsTimer", &timer)?;
             Ok(())
         }),
     );
+    listen(&id("ns-cwd"), "keydown", event(|e| folder_keys(&e)));
     listen(
-        &id("ns-cancel"),
+        &id("ns-clear"),
         "click",
         event(|_| {
-            put("intoPane", JsValue::NULL);
-            classes(&id("newsess"), "hidden", true);
+            unchoose_dir(true);
             Ok(())
         }),
     );
+    for name in ["ns-cancel", "ns-close"] {
+        listen(
+            &id(name),
+            "click",
+            event(|_| {
+                close_modal();
+                Ok(())
+            }),
+        );
+    }
     listen(
         &id("newsess"),
         "click",
         event(|e| {
             if get(&get(&e, "target"), "id").as_string().as_deref() == Some("newsess") {
-                classes(&id("newsess"), "hidden", true)
+                close_modal();
             }
+            Ok(())
+        }),
+    );
+    listen(
+        &id("newsess"),
+        "keydown",
+        event(|e| {
+            let target = get(&get(&e, "target"), "id").as_string().unwrap_or_default();
+            if get(&e, "key").as_string().as_deref() == Some("Escape") && target != "ns-cwd" {
+                close_modal();
+            }
+            Ok(())
+        }),
+    );
+    listen(
+        &id("ns-model-find"),
+        "input",
+        event(|_| {
+            put("modelFilter", get(&id("ns-model-find"), "value"));
+            render();
             Ok(())
         }),
     );

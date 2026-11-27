@@ -169,11 +169,40 @@ impl App {
             "ComandOS",
         )
     }
+    /// «Nueva sesión» en la ventana del centro (`?panel=chains&open=newsess`):
+    /// el tablero toma el contexto que dejó la barra lateral en
+    /// `cc-center-panel` (un pane para «IA aquí», la carpeta, el borrador).
+    pub(in crate::ui) fn open_new_session_window(self: &Rc<Self>) -> Result<(), CommandError> {
+        let base = self
+            .cfg
+            .dash_url()
+            .ok_or_else(|| CommandError::Refused("dashboard unavailable".into()))?
+            .to_string();
+        self.open_window_page_as(
+            &format!(
+                "{}/?panel=chains&open=newsess&v={}&session=&pane=",
+                base.trim_end_matches('/'),
+                env!("CARGO_PKG_VERSION")
+            ),
+            ui::modals::CENTER,
+            "Nueva sesión",
+            Some(ModalKind::NewSession),
+        )
+    }
     fn open_window_page(
         self: &Rc<Self>,
         uri: &str,
         name: &'static str,
         title_text: &str,
+    ) -> Result<(), CommandError> {
+        self.open_window_page_as(uri, name, title_text, None)
+    }
+    fn open_window_page_as(
+        self: &Rc<Self>,
+        uri: &str,
+        name: &'static str,
+        title_text: &str,
+        kind: Option<ModalKind>,
     ) -> Result<(), CommandError> {
         if uri.len() > 8192 || !(uri.starts_with("http://") || uri.starts_with("https://")) {
             return Err(CommandError::Invalid("invalid web URL".into()));
@@ -186,11 +215,11 @@ impl App {
         window.set_decorated(false);
         window.style_context().add_class("mosaic-zoom");
         let (w, h) = self.window.size();
-        let kind = if center {
+        let kind = kind.unwrap_or(if center {
             ModalKind::Center
         } else {
             ModalKind::Url
-        };
+        });
         let size = ui::modals::modal_size(kind, w, h);
         window.set_default_size(size.0, size.1);
         window.set_position(gtk::WindowPosition::CenterOnParent);

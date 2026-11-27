@@ -133,6 +133,7 @@ fn launch(agent: &str, config: &str) -> String {
         "grok" => "grok --continue 2>/dev/null || grok",
         "opencode" => "opencode --continue 2>/dev/null || opencode",
         "agy" => "agy --continue 2>/dev/null || agy",
+        "omp" => "omp --continue 2>/dev/null || omp",
         "gemini" => "gemini",
         custom => custom,
     }

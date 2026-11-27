@@ -67,6 +67,7 @@ const GET_ORDER: &[Key] = &[
     Key::Path("/news/edition"),
     Key::Prefix("/models/latest"),
     Key::Prefix("/fs/dirs"),
+    Key::Prefix("/fs/find"),
     Key::Prefix("/usage/provider-compare"),
     Key::Prefix("/usage/experiments"),
     Key::Prefix("/usage/analytics"),

@@ -58,6 +58,7 @@ pub enum SettingsRoute {
     Conf,
     ConfSet,
     FsDirs,
+    FsFind,
     FsMkdir,
     OpenPath,
     OpenUrl,
@@ -76,6 +77,11 @@ pub const ROUTES: &[Entry] = &[
         verb: Verb::Get,
         key: Key::Prefix("/fs/dirs"),
         route: NativeRoute::Settings(SettingsRoute::FsDirs),
+    },
+    Entry {
+        verb: Verb::Get,
+        key: Key::Prefix("/fs/find"),
+        route: NativeRoute::Settings(SettingsRoute::FsFind),
     },
     Entry {
         verb: Verb::Get,
@@ -160,6 +166,7 @@ pub async fn answer(native: &Arc<Native>, route: SettingsRoute, request: &Reques
         SettingsRoute::Conf => conf(opts).await,
         SettingsRoute::ConfSet => conf_set(opts, data(request)?).await,
         SettingsRoute::FsDirs => fs_dirs_route(opts, request).await,
+        SettingsRoute::FsFind => fs_find_route(opts, request).await,
         SettingsRoute::FsMkdir => fs_mkdir_route(opts, data(request)?).await,
         SettingsRoute::OpenPath => open_path(native, data(request)?).await,
         SettingsRoute::OpenUrl => open_url_route(native, data(request)?).await,
@@ -550,6 +557,21 @@ async fn fs_dirs_route(opts: &NativeOptions, request: &Request) -> Answer {
     let raw = take_chars(query.first("path").unwrap_or("~"), 512);
     let home = home_str(opts)?;
     let value = blocking(move || fs_dirs(&raw, &home)).await??;
+    read_reply(&value)
+}
+
+/// GET `/fs/find?q=`: carpetas de todo el HOME que coinciden con lo escrito
+/// (`fs_find`), para el buscador de «Nueva sesión».
+async fn fs_find_route(opts: &NativeOptions, request: &Request) -> Answer {
+    let query = Query::parse(&request.target)?;
+    let q = take_chars(query.first("q").unwrap_or(""), 200);
+    let limit = query
+        .first("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(super::fs_find::LIMIT)
+        .clamp(1, 100);
+    let home = fs_home(&home_str(opts)?)?;
+    let value = blocking(move || super::fs_find::answer(&home, &q, limit)).await?;
     read_reply(&value)
 }
 

@@ -47,7 +47,9 @@ fn supplied_home_overrides_and_signature_order_do_not_discover_environment() {
         m::catalog_signature(&paths),
         json!([
             ["codex", "codex-fixture/models_cache.json", null],
-            ["grok", f.0.join(".grok/models_cache.json"), null]
+            ["grok", f.0.join(".grok/models_cache.json"), null],
+            ["omp", f.0.join(".cache/comandos/models/omp.json"), null],
+            ["opencode", f.0.join(".cache/comandos/models/opencode.json"), null]
         ])
     );
 }
@@ -169,7 +171,7 @@ fn display_and_fetch_strings_truncate_by_unicode_character_and_huge_context_is_r
 fn malformed_missing_nonobject_deep_and_oversized_caches_fall_back() {
     let f = Fixture::new();
     let paths = f.paths();
-    assert_eq!(m::catalog_models(&paths), json!({"codex":[],"grok":[]}));
+    assert_eq!(m::catalog_models(&paths), json!({"codex":[],"grok":[],"omp":[],"opencode":[]}));
     fs::create_dir(f.0.join(".codex")).unwrap();
     for bad in [
         vec![0xff],
@@ -267,4 +269,35 @@ fn frozen_python_oracle_hydration_rows_match_without_adding_missing_sections() {
             row["output"]
         );
     }
+}
+#[test]
+fn normalized_cli_caches_feed_omp_and_opencode_newest_first() {
+    let f = Fixture::new();
+    let dir = f.0.join(".cache/comandos/models");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("omp.json"),
+        serde_json::to_vec(&json!({"fetched_at":"2026-11-26T00:00:00Z","models":[
+            {"id":"refuseless/glm-5.3-abliterated","name":"GLM 5.3","efforts":["low","high","bogus effort"],"defaultEffort":"high","contextWindow":1048576},
+            {"id":"refuseless/glm-5.3-abliterated","name":"dup"},
+            {"id":"has space"},
+            {"id":"refuseless/kimi-k3.1-pro","tag":"nuevo"}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let models = m::catalog_models(&f.paths());
+    let omp = models["omp"].as_array().unwrap();
+    assert_eq!(omp.len(), 2, "duplicates and ids with blanks are dropped");
+    assert_eq!(omp[0]["id"], "refuseless/glm-5.3-abliterated");
+    assert_eq!(omp[0]["efforts"], json!(["low", "high"]));
+    assert_eq!(omp[0]["defaultEffort"], "high");
+    assert_eq!(omp[0]["contextWindow"], 1048576);
+    assert_eq!(omp[1]["name"], "refuseless/kimi-k3.1-pro", "a missing name falls back to the id");
+    assert_eq!(omp[1]["tag"], "nuevo");
+    assert_eq!(models["opencode"], json!([]), "a missing cache adds nothing");
+    let registry = json!({"motors":{"omp":{"models":[{"id":"refuseless/kimi-k3.1-pro","name":"Kimi"}]}}});
+    let hydrated = m::hydrate_registry(&registry, &f.paths()).unwrap();
+    let ids: Vec<_> = hydrated["motors"]["omp"]["models"].as_array().unwrap().iter().map(|m| m["id"].clone()).collect();
+    assert_eq!(ids, [json!("refuseless/kimi-k3.1-pro"), json!("refuseless/glm-5.3-abliterated")]);
 }

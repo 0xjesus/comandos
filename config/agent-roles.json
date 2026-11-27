@@ -6,6 +6,7 @@
     "opencode": "",
     "grok": "--always-approve",
     "agy": "--dangerously-skip-permissions",
-    "acp": "--danger"
+    "acp": "--danger",
+    "omp": "--approval-mode=yolo"
   }
 }

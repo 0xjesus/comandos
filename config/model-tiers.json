@@ -53,6 +53,11 @@
   "_doc_providers": "Proveedor por patron (regex sobre agente o modelo) para el logo del badge — EDITABLE; desconocido = monograma del agente.",
   "providers": [
     {
+      "match": "^omp\\b|oh-my-pi",
+      "icon": "omp",
+      "label": "Oh My Pi"
+    },
+    {
       "match": "grok|xai",
       "icon": "xai",
       "label": "xAI / Grok"

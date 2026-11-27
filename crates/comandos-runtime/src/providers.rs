@@ -1140,7 +1140,7 @@ pub fn parse_conf(text: &str) -> Result<Vec<(String, String)>, Unsure> {
     Ok(out)
 }
 
-pub const DEFAULT_AGENTS: &str = "claude codex grok acp opencode gemini agy aider";
+pub const DEFAULT_AGENTS: &str = "claude codex grok acp opencode gemini agy omp aider";
 
 /// `agent_set` (`bin/cc-dash`): `AGENTS` (o el valor por defecto) partido por
 /// blancos, más los harnesses del registro salvo `shell`.

@@ -138,6 +138,23 @@
         "splits": true
       }
     },
+    "omp": {
+      "label": "Oh My Pi",
+      "icon": "omp",
+      "binary": "omp",
+      "processNames": [
+        "omp"
+      ],
+      "launchDriver": "omp",
+      "capabilities": {
+        "models": true,
+        "effort": true,
+        "accounts": false,
+        "liveAccountSwitch": false,
+        "resume": true,
+        "splits": true
+      }
+    },
     "gemini": {
       "label": "Gemini CLI",
       "icon": "gemini",
@@ -213,7 +230,8 @@
     "grok",
     "acp",
     "opencode",
-    "agy"
+    "agy",
+    "omp"
   ],
   "motors": {
     "claude": {
@@ -603,6 +621,26 @@
           "defaultEffort": "medium"
         }
       ]
+    },
+    "omp": {
+      "label": "Oh My Pi",
+      "icon": "omp",
+      "modelMatch": "^[a-z0-9][a-z0-9._-]*/[^\\s]+$",
+      "models": [
+        {
+          "id": "refuseless/glm-5.3-abliterated",
+          "name": "GLM 5.3 Abliterated (Refuseless)",
+          "tag": "tu modelo por defecto",
+          "efforts": [
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "defaultEffort": "high"
+        }
+      ]
     }
   },
   "routes": [
@@ -872,6 +910,20 @@
       ],
       "accountScopes": [],
       "driver": "agy",
+      "experimental": false
+    },
+    {
+      "id": "omp:omp",
+      "harness": "omp",
+      "motor": "omp",
+      "transport": "native",
+      "authRequirements": [],
+      "actionScopes": [
+        "new_session",
+        "session_model"
+      ],
+      "accountScopes": [],
+      "driver": "omp",
       "experimental": false
     }
   ],

@@ -2,8 +2,9 @@
 
 `model_watch` solo avisa ("hay modelos nuevos"). Este módulo aplica:
 
-1. Actualiza los CLIs: `claude update` y `@openai/codex@latest` con el mismo
-   gestor con el que está instalado (bun o npm).
+1. Actualiza los CLIs: `claude update`, `@openai/codex@latest` con el mismo
+   gestor con el que está instalado (bun o npm), `opencode upgrade` y
+   `omp update` (Oh My Pi).
 2. Descubre modelos con `model_watch.discover_models()` (binario de Claude,
    catálogo `models_cache.json` de Codex).
 3. Por familia (Claude: fable/opus/sonnet/haiku) o variante (Codex: sol, luna,
@@ -17,6 +18,10 @@
    Los alias (`opus`, `fable`) no se tocan: ya siguen solos al más nuevo.
 5. Escribe `extra-models.json` del gateway (`cc-model-proxy`), que lo relee en
    caliente: los modelos nuevos se listan y enrutan sin reiniciarlo.
+6. Escribe los catálogos de Oh My Pi (`omp models --json`) y OpenCode
+   (`opencode models` con nombre y fecha de su caché, lo más nuevo primero) en
+   `~/.cache/comandos/models/{omp,opencode}.json`; el tablero los suma a
+   «Nueva sesión» (`comandos_runtime::model_catalog::CLI_CACHES`).
 
 Todo cambio de archivo es atómico (`.tmp` + `os.replace`) y solo ocurre si el
 contenido cambia. `dry_run=True` no escribe ni actualiza nada.
@@ -293,6 +298,20 @@ def codex_update_command(root):
     return None
 
 
+def _stdout(cmd, timeout=120):
+    """La salida estándar sola (sin stderr) o `None` si el comando falla."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+# Actualizadores propios de cada CLI: (nombre, subcomando).
+SELF_UPDATERS = (("opencode", ["upgrade"]), ("omp", ["update"]))
+
+
 def update_clis(run=_run):
     out = {}
     claude = _which("claude")
@@ -309,7 +328,114 @@ def update_clis(run=_run):
         after = _version(codex)
         out["codex"] = {"before": before, "after": after, "ok": code == 0 and after is not None,
                         "detail": text.strip().splitlines()[-1:] if text else []}
+    for name, args in SELF_UPDATERS:
+        exe = _which(name)
+        if not exe:
+            continue
+        before = _version(exe)
+        code, text = run([exe, *args])
+        after = _version(exe)
+        out[name] = {"before": before, "after": after, "ok": code == 0 and after is not None,
+                     "detail": text.strip().splitlines()[-1:] if text else []}
     return out
+
+
+# ------------------------------------------------------ catálogos de modelos
+
+NEW_DAYS = 45
+THINKING_ORDER = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def cache_dir(home):
+    return Path(home) / ".cache" / "comandos" / "models"
+
+
+def omp_default_model(home):
+    """`modelRoles.default` de `~/.omp/agent/config.yml` (sin parser YAML)."""
+    try:
+        text = (Path(home) / ".omp/agent/config.yml").read_text()
+    except OSError:
+        return ""
+    m = re.search(r"^modelRoles:\s*\n(?:[ \t]+.*\n)*?[ \t]+default:\s*(\S+)", text, re.M)
+    return m.group(1).strip("'\"") if m else ""
+
+
+def omp_catalog(raw, default=""):
+    """`omp models --json` → filas normalizadas; el modelo por defecto primero."""
+    try:
+        rows = json.loads(raw).get("models") or []
+    except (ValueError, AttributeError):
+        return None
+    models = []
+    for r in rows:
+        if not isinstance(r, dict) or r.get("kind", "chat") != "chat":
+            continue
+        mid = r.get("selector") or (f"{r.get('provider')}/{r.get('id')}" if r.get("id") else "")
+        if not mid:
+            continue
+        efforts = [t for t in THINKING_ORDER if t in (r.get("thinking") or [])]
+        default_effort = "high" if "high" in efforts else (efforts[len(efforts) // 2] if efforts else "")
+        row = {"id": mid, "name": r.get("name") or mid, "efforts": efforts,
+               "defaultEffort": default_effort}
+        if isinstance(r.get("contextWindow"), int):
+            row["contextWindow"] = r["contextWindow"]
+        if mid == default:
+            row["tag"] = "tu modelo por defecto"
+        models.append(row)
+    models.sort(key=lambda m: m["id"] != default)
+    return models
+
+
+def opencode_catalog(ids_text, meta, today):
+    """`opencode models` (ids) con nombre y fecha de `~/.cache/opencode/models.json`."""
+    models = []
+    for line in (ids_text or "").splitlines():
+        mid = line.strip()
+        if not mid or " " in mid or "/" not in mid:
+            continue
+        provider, rest = mid.split("/", 1)
+        info = ((meta.get(provider) or {}).get("models") or {}).get(rest) or {}
+        released = str(info.get("release_date") or "")
+        row = {"id": mid, "name": info.get("name") or rest, "efforts": [], "defaultEffort": ""}
+        ctx = (info.get("limit") or {}).get("context")
+        if isinstance(ctx, int) and ctx > 0:
+            row["contextWindow"] = ctx
+        try:
+            age = (today - time.mktime(time.strptime(released[:10], "%Y-%m-%d"))) / 86400
+        except ValueError:
+            age = None
+        if age is not None and age <= NEW_DAYS:
+            row["tag"] = "nuevo"
+        models.append((released, row))
+    models.sort(key=lambda p: p[0], reverse=True)
+    return [row for _, row in models]
+
+
+def write_catalogs(home, dry_run=False, now=None):
+    """Los catálogos de Oh My Pi y OpenCode; un CLI ausente o que falla no toca su archivo."""
+    home = Path(home)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    out = {}
+    omp = _which("omp")
+    raw = _stdout([omp, "models", "--json"]) if omp else None
+    models = omp_catalog(raw, omp_default_model(home)) if raw else None
+    if models:
+        out["omp"] = models
+    opencode = _which("opencode")
+    ids = _stdout([opencode, "models"]) if opencode else None
+    if ids:
+        try:
+            meta = json.loads((home / ".cache/opencode/models.json").read_text())
+        except (OSError, ValueError):
+            meta = {}
+        models = opencode_catalog(ids, meta if isinstance(meta, dict) else {}, now or time.time())
+        if models:
+            out["opencode"] = models
+    for cli, models in out.items():
+        write_if_changed(cache_dir(home) / f"{cli}.json",
+                         json.dumps({"fetched_at": stamp, "models": models}, ensure_ascii=False) + "\n",
+                         dry_run)
+    return {cli: len(models) for cli, models in out.items()}
 
 
 # --------------------------------------------------------------------- todo
@@ -322,7 +448,7 @@ def claude_settings_paths(home):
 
 
 def sync(*, dry_run=False, update=True, home=None, registry_path=None,
-         discover=None, env=None, now=None):
+         discover=None, env=None, now=None, catalogs=None):
     home = Path(home or os.path.expanduser("~"))
     registry_path = Path(registry_path or REGISTRY_PATH)
     report = {"checkedAt": int(now if now is not None else time.time()),
@@ -364,6 +490,9 @@ def sync(*, dry_run=False, update=True, home=None, registry_path=None,
     proxy_path = proxy_config_dir(env) / PROXY_FILE
     changed = write_if_changed(proxy_path, json.dumps(extras, indent=1) + "\n", dry_run)
     report["proxy"] = {"file": str(proxy_path), "changed": changed, "models": extras}
+    # Las pruebas inyectan `discover`: sin catálogos reales salvo que los pidan.
+    if catalogs if catalogs is not None else discover is None:
+        report["catalogs"] = write_catalogs(home, dry_run, now)
     return report
 
 
@@ -383,6 +512,8 @@ def summary(report):
     if proxy.get("changed"):
         n = sum(len(v) for v in (proxy.get("models") or {}).values())
         lines.append(f"gateway: {n} modelos en {proxy['file']}")
+    for cli, n in (report.get("catalogs") or {}).items():
+        lines.append(f"catálogo {cli}: {n} modelos")
     if not (report.get("added") or report.get("defaults") or proxy.get("changed")):
         lines.append("modelos: sin novedades")
     if report.get("dryRun"):

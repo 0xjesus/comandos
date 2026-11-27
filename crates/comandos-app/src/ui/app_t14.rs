@@ -14,7 +14,11 @@ impl App {
                     )
                 })?;
                 app.active_notebook().show();
-                app.dashboard_script("try{nsOpen()}catch(e){}");
+                // Su propia ventana encima de toda la app, no dentro de la barra
+                // lateral; si no se puede, el modal de siempre en el tablero.
+                if app.open_new_session_window().is_err() {
+                    app.dashboard_script("try{nsOpen()}catch(e){}");
+                }
                 Ok(())
             }),
         );

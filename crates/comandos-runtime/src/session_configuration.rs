@@ -604,7 +604,7 @@ pub fn observe_pane(
             let metadata = caches.grok.read(pid, &grok_home)?;
             pane_observe::project_metadata(&metadata, &conversation_id, "lastActiveAt")
         }
-        "opencode" | "agy" => match snap.get("nativeMetadata").filter(|v| truthy(v)) {
+        "opencode" | "agy" | "omp" => match snap.get("nativeMetadata").filter(|v| truthy(v)) {
             None => Map::new(),
             Some(Value::Object(metadata)) => {
                 pane_observe::project_metadata(metadata, &conversation_id, "updatedAt")
@@ -702,7 +702,7 @@ pub fn harness_pane_busy(env: &Env, sess: &str, pane: &str, harness: &str) -> Re
     if matches!(harness, "" | "shell") {
         return Ok(false);
     }
-    if matches!(harness, "opencode" | "agy") {
+    if matches!(harness, "opencode" | "agy" | "omp") {
         let info = agent_info_for_pane(env, pane)?;
         let pid = info.map_or(0, |i| i.pid);
         let metadata =
@@ -875,7 +875,7 @@ pub fn snapshot_transcript(env: &Env, origin: &Map<String, Value>) -> Result<Str
 /// Resolve the exact live agent transcript without constructing a migration environment.
 pub fn snapshot_transcript_at(home: &Path, origin: &Map<String, Value>) -> Result<String, Fail> {
     let agent = get(origin, "agent");
-    if is(agent, "opencode") || is(agent, "agy") {
+    if is(agent, "opencode") || is(agent, "agy") || is(agent, "omp") {
         let path = as_text(get(origin, "transcriptPath"))?;
         if path.is_empty() || !fs::metadata(&path).is_ok_and(|m| m.is_file()) {
             return Err(py("no se encontró el historial exacto del proceso"));
@@ -1586,7 +1586,7 @@ impl SessionConfiguration {
             Some(info) => info.agent.clone(),
             None => as_text(get(&self.data, "harness"))?,
         };
-        if !["claude", "codex", "grok", "opencode", "agy"].contains(&harness.as_str()) {
+        if !["claude", "codex", "grok", "opencode", "agy", "omp"].contains(&harness.as_str()) {
             return Err(py("elige un CLI compatible para este panel"));
         }
         if info.is_some()
@@ -1873,7 +1873,7 @@ impl SessionConfiguration {
             Value::String(t)
                 if matches!(
                     t.as_str(),
-                    "claude" | "codex" | "grok" | "acp" | "opencode" | "agy"
+                    "claude" | "codex" | "grok" | "acp" | "opencode" | "agy" | "omp"
                 ) =>
             {
                 t.clone()
@@ -1934,7 +1934,7 @@ impl SessionConfiguration {
                 )));
             }
         }
-        if matches!(to_text.as_str(), "opencode" | "agy")
+        if matches!(to_text.as_str(), "opencode" | "agy" | "omp")
             || (to_text == "acp" && !acp_resume(&registry, &motor)?)
         {
             return Err(py(format!(

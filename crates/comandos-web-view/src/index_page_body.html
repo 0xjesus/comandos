@@ -69,52 +69,74 @@
 <div id="side-top">
 <div id="session-overview" hidden></div>
 
-<div id="newsess" class="hidden" role="dialog" aria-modal="true" aria-label="Nueva sesión">
+<div id="newsess" class="hidden" role="dialog" aria-modal="true" aria-labelledby="ns-title">
   <div class="ns-card">
-    <div class="ns-title">Nueva sesión</div>
-    <label class="ns-label">Carpeta del proyecto</label>
-    <input id="ns-cwd" list="ns-dirs" autocomplete="off" spellcheck="false"
-      placeholder="~/codebase/...">
-    <datalist id="ns-dirs"></datalist>
-    <div id="ns-fs">
-      <div id="ns-crumbs"></div>
-      <div id="ns-dirlist"></div>
-      <div id="ns-fs-state"></div>
+    <header class="ns-head">
+      <div class="ns-title" id="ns-title">Nueva sesión</div>
+      <button type="button" data-flat id="ns-close" class="ns-x" aria-label="Cerrar" title="Cerrar (Esc)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </header>
+    <div class="ns-body">
+      <section class="ns-sec ns-sec-folder">
+        <label class="ns-label" for="ns-cwd">Carpeta</label>
+        <div id="ns-picked" class="hidden"></div>
+        <div class="ns-search" id="ns-search">
+          <svg class="ns-search-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="ns-cwd" autocomplete="off" spellcheck="false" autocapitalize="off" enterkeyhint="go"
+            role="combobox" aria-expanded="true" aria-controls="ns-dirlist" aria-autocomplete="list"
+            placeholder="Busca un proyecto o escribe una ruta (~/…)">
+          <span id="ns-spin" class="ns-spin hidden" aria-hidden="true"></span>
+          <button type="button" data-flat id="ns-clear" class="ns-clear hidden" aria-label="Borrar búsqueda">×</button>
+        </div>
+        <div id="ns-fs">
+          <div id="ns-crumbs"></div>
+          <div id="ns-dirlist" role="listbox" aria-label="Carpetas"></div>
+          <div id="ns-fs-state"></div>
+        </div>
+        <div class="ns-hint" id="ns-hint">↑↓ para moverte · Enter elige · Enter otra vez crea</div>
+      </section>
+      <section class="ns-sec">
+        <label class="ns-label">Agente</label>
+        <div class="ns-chips" id="ns-harness"></div>
+      </section>
+      <section class="ns-sec" id="ns-motor-wrap">
+        <label class="ns-label">Motor</label>
+        <div class="ns-chips" id="ns-motor"></div>
+      </section>
+      <section class="ns-sec" id="ns-model-wrap">
+        <div class="ns-label-row"><label class="ns-label">Modelo</label>
+          <input id="ns-model-find" class="ns-model-find hidden" autocomplete="off" spellcheck="false" placeholder="Buscar modelo"></div>
+        <div class="ns-chips" id="ns-model"></div>
+        <div class="ns-note" id="ns-model-note"></div>
+      </section>
+      <section class="ns-sec" id="ns-effort-wrap">
+        <label class="ns-label">Pensamiento</label>
+        <div class="ns-chips" id="ns-effort"></div>
+      </section>
+      <section class="ns-sec hidden" id="ns-acct-wrap">
+        <label class="ns-label">Cuenta del harness</label>
+        <div class="ns-chips" id="ns-acct"></div>
+      </section>
+      <section class="ns-sec hidden" id="ns-motor-acct-wrap">
+        <label class="ns-label">Cuenta del motor</label>
+        <div class="ns-chips" id="ns-motor-acct"></div>
+        <div class="ns-note" id="ns-motor-acct-note"></div>
+      </section>
+      <details class="ns-more" id="ns-more"><summary>Más opciones</summary>
+        <label class="ns-danger"><button type="button" class="sw" id="ns-danger" role="switch" aria-checked="false"
+          title="Apagado: el agente pide permiso antes de acciones riesgosas. Enciéndelo solo si confías en la tarea."></button>
+          <span>sin aprobaciones (dangerously)</span></label>
+        <div class="ns-profile"><span id="ns-profile-note" class="sc-note">Sin perfil</span><button type="button" id="ns-profile-open" class="sc-btn">Elegir perfil</button><button type="button" id="ns-profile-clear" class="sc-btn">Quitar perfil</button></div>
+        <details id="ns-unavailable"><summary></summary><div class="ns-matrix" id="ns-matrix"></div></details>
+      </details>
     </div>
-    <label class="ns-label">Harness</label>
-    <div class="ns-chips" id="ns-harness"></div>
-    <div id="ns-motor-wrap">
-      <label class="ns-label">Motor</label>
-      <div class="ns-chips" id="ns-motor"></div>
-    </div>
-    <div id="ns-model-wrap">
-      <label class="ns-label">Modelo</label>
-      <div class="ns-chips" id="ns-model"></div>
-    </div>
-    <div id="ns-effort-wrap">
-      <label class="ns-label">Pensamiento</label>
-      <div class="ns-chips" id="ns-effort"></div>
-    </div>
-    <div id="ns-acct-wrap" class="hidden">
-      <label class="ns-label">Cuenta del harness</label>
-      <div class="ns-chips" id="ns-acct"></div>
-    </div>
-    <div id="ns-motor-acct-wrap" class="hidden">
-      <label class="ns-label">Cuenta del motor</label>
-      <div class="ns-chips" id="ns-motor-acct"></div>
-      <div class="ns-note" id="ns-motor-acct-note"></div>
-    </div>
-    <details id="ns-unavailable"><summary></summary><div class="ns-matrix" id="ns-matrix"></div></details>
-    <label class="ns-danger"><button type="button" class="sw" id="ns-danger" role="switch" aria-checked="false"
-      title="Apagado: el agente pide permiso antes de acciones riesgosas. Enciéndelo solo si confías en la tarea."></button>
-      <span>sin aprobaciones (dangerously)</span></label>
-    <div class="ns-note" id="ns-note"></div>
-    <div class="ns-actions">
-      <button type="button" id="ns-cancel">Cancelar</button>
-      <span id="ns-profile-note" class="sc-note">Sin perfil</span><button type="button" id="ns-profile-open" class="sc-btn">Elegir perfil</button><button type="button" id="ns-profile-clear" class="sc-btn">Quitar perfil</button>
-      <button type="button" id="ns-term" title="Abrir una terminal simple en esta carpeta, sin agente">Solo terminal</button>
-      <button type="button" id="ns-go" class="primary">Crear</button>
-    </div>
+    <footer class="ns-actions">
+      <div class="ns-note" id="ns-note"></div>
+      <div class="ns-buttons">
+        <button type="button" id="ns-cancel">Cancelar</button>
+        <button type="button" id="ns-term" title="Abrir una terminal simple en esta carpeta, sin agente">Solo terminal</button>
+        <button type="button" id="ns-go" class="primary">Crear sesión</button>
+      </div>
+    </footer>
   </div>
 </div>
 

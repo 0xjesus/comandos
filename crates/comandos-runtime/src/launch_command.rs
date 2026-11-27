@@ -230,7 +230,7 @@ pub fn acp_launch_command(
     Ok(command)
 }
 
-/// Rama OpenCode/AGY de `_harness_launch_cmd`. Sus comandos no anteponen
+/// Rama OpenCode/AGY/Oh My Pi de `_harness_launch_cmd`. Sus comandos no anteponen
 /// entorno de cuenta; resuelven el binario igual que el resto del runtime.
 pub fn native_harness_command(
     ctx: &Ctx,
@@ -238,7 +238,7 @@ pub fn native_harness_command(
     model: &str,
     effort: &str,
 ) -> Result<String, Unsure> {
-    if !matches!(harness, "opencode" | "agy") {
+    if !matches!(harness, "opencode" | "agy" | "omp") {
         return Err(Unsure);
     }
     let (model, effort) = native_launch_model(&ctx.registry, harness, model, effort)?;
@@ -246,8 +246,13 @@ pub fn native_harness_command(
     if !model.is_empty() {
         command += &format!(" --model {}", shlex_quote(&model));
     }
-    if harness == "agy" && !effort.is_empty() {
-        command += &format!(" --effort {}", shlex_quote(&effort));
+    if !effort.is_empty() {
+        match harness {
+            "agy" => command += &format!(" --effort {}", shlex_quote(&effort)),
+            // Oh My Pi llama «thinking» al esfuerzo.
+            "omp" => command += &format!(" --thinking {}", shlex_quote(&effort)),
+            _ => {}
+        }
     }
     Ok(command)
 }
@@ -332,6 +337,8 @@ pub fn configuration_command(
     if !effort.is_empty() {
         if harness == "codex" {
             argv.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
+        } else if harness == "omp" {
+            argv.extend(["--thinking".into(), effort.into()]);
         } else {
             argv.extend(["--effort".into(), effort.into()]);
         }

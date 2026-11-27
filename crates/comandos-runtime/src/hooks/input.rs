@@ -189,6 +189,7 @@ pub fn agent_name(agent: &[u8]) -> Vec<u8> {
         b"opencode" => b"OpenCode".to_vec(),
         b"gemini" => b"Gemini".to_vec(),
         b"agy" => b"Antigravity".to_vec(),
+        b"omp" => b"Oh My Pi".to_vec(),
         other => other.to_vec(),
     }
 }

@@ -699,7 +699,7 @@ fn gather_evidence(
             let metadata = cache.grok.read(pid, &grok_home).map_err(unsure)?;
             observe::project_metadata(&metadata, &conversation_id, "lastActiveAt")
         }
-        "opencode" | "agy" => match snap.get("nativeMetadata").filter(|v| truthy(v)) {
+        "opencode" | "agy" | "omp" => match snap.get("nativeMetadata").filter(|v| truthy(v)) {
             None => Map::new(),
             Some(Value::Object(metadata)) => {
                 observe::project_metadata(metadata, &conversation_id, "updatedAt")

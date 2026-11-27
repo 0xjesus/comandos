@@ -244,7 +244,7 @@ mod web {
             Ok(open_session(a.get(0), a.get(1)).unwrap_or_else(|e| Promise::reject(&e).into()))
         })?;
         let panels = from_json(
-            &json!({"settings":"#settings","remote":"#remote","servers":"#servers","sovereignty":"#sovereignty"}),
+            &json!({"settings":"#settings","remote":"#remote","servers":"#servers","sovereignty":"#sovereignty","newsess":"#newsess"}),
         )?;
         let request = if query_arg("panel")?.as_string().as_deref() == Some("chains") {
             (|| -> Result<JsValue, JsValue> {
@@ -268,6 +268,9 @@ mod web {
                     && truthy(&get(&panels, &string(&get(&parsed, "panel"))))
                 {
                     Ok(parsed)
+                } else if query_arg("open")?.as_string().as_deref() == Some("newsess") {
+                    // «Nueva sesión» desde el botón nativo: sin contexto guardado.
+                    from_json(&json!({"panel":"newsess"}))
                 } else {
                     Ok(JsValue::NULL)
                 }

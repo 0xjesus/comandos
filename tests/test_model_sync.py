@@ -1,4 +1,5 @@
 import json
+import time
 import sys
 from pathlib import Path
 
@@ -173,3 +174,38 @@ def test_sync_end_to_end(tmp_path):
     assert not again["proxy"]["changed"]
     assert not model_sync.changed(again)
     assert model_sync.summary(again) == ["modelos: sin novedades"]
+
+
+def test_omp_catalog_puts_the_default_first_and_keeps_known_thinking_levels():
+    raw = json.dumps({"models": [
+        {"provider": "refuseless", "kind": "chat", "id": "kimi", "selector": "refuseless/kimi",
+         "name": "Kimi", "thinking": ["low", "high", "max"], "contextWindow": 1000},
+        {"provider": "refuseless", "kind": "chat", "id": "glm", "selector": "refuseless/glm",
+         "name": "GLM", "thinking": ["minimal", "low", "medium", "high", "xhigh"]},
+        {"provider": "x", "kind": "image", "id": "pic", "selector": "x/pic"},
+    ]})
+    rows = model_sync.omp_catalog(raw, "refuseless/glm")
+    assert [r["id"] for r in rows] == ["refuseless/glm", "refuseless/kimi"]
+    assert rows[0]["tag"] == "tu modelo por defecto"
+    assert rows[1]["efforts"] == ["low", "high", "max"] and rows[1]["defaultEffort"] == "high"
+    assert rows[1]["contextWindow"] == 1000
+    assert model_sync.omp_catalog("not json") is None
+
+
+def test_opencode_catalog_is_newest_first_with_names_and_a_new_tag():
+    meta = {"groq": {"models": {"old": {"name": "Old", "release_date": "2025-01-01"},
+                                "fresh": {"name": "Fresh", "release_date": "2026-11-20",
+                                          "limit": {"context": 128000}}}}}
+    today = time.mktime(time.strptime("2026-11-26", "%Y-%m-%d"))
+    rows = model_sync.opencode_catalog("groq/old\ngroq/fresh\nbad line\nopencode/x\n", meta, today)
+    assert [r["id"] for r in rows] == ["groq/fresh", "groq/old", "opencode/x"]
+    assert rows[0]["name"] == "Fresh" and rows[0]["tag"] == "nuevo" and rows[0]["contextWindow"] == 128000
+    assert "tag" not in rows[1] and rows[2]["name"] == "x"
+
+
+def test_omp_default_model_reads_model_roles(tmp_path):
+    cfg = tmp_path / ".omp/agent"
+    cfg.mkdir(parents=True)
+    (cfg / "config.yml").write_text("theme: dark\nmodelRoles:\n  smol: a/b\n  default: refuseless/glm-5.3\ntools:\n")
+    assert model_sync.omp_default_model(tmp_path) == "refuseless/glm-5.3"
+    assert model_sync.omp_default_model(tmp_path / "none") == ""

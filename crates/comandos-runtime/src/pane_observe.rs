@@ -210,7 +210,7 @@ pub fn observe(
     let has_conversation = truthy(&conversation_id);
     let conversation = match agent {
         "codex" | "claude" if has_conversation => evidence.conversation.clone(),
-        "grok" | "opencode" | "agy" => evidence.conversation.clone(),
+        "grok" | "opencode" | "agy" | "omp" => evidence.conversation.clone(),
         "acp" => {
             // Los argumentos son peticiones: solo el protocolo del mismo proceso confirma.
             launch_model.clear();
@@ -281,7 +281,7 @@ pub fn observe(
     }
     let motor = match result.get("motor").filter(|v| truthy(v)) {
         Some(motor) => motor.clone(),
-        None if matches!(agent, "opencode" | "agy" | "gemini") => text(agent),
+        None if matches!(agent, "opencode" | "agy" | "omp" | "gemini") => text(agent),
         None => {
             let model = str_or_empty(result.get("model"))?;
             let engine = engine_for_model(registry, &model)?;
@@ -318,7 +318,7 @@ pub fn observe(
         }),
     );
     let mut limitations = Vec::new();
-    if matches!(agent, "opencode" | "agy" | "gemini") && visible.is_empty() {
+    if matches!(agent, "opencode" | "agy" | "omp" | "gemini") && visible.is_empty() {
         limitations.push(text("native-runtime-state-unavailable"));
     }
     if !result.get("effort").is_some_and(truthy) {

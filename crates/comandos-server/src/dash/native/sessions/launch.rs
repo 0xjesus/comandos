@@ -824,7 +824,7 @@ fn agent_command(
             )
             .map_err(decline)?
         }
-        "opencode" | "agy" => {
+        "opencode" | "agy" | "omp" => {
             let ctx = launch_command::Ctx {
                 registry: registry.clone(),
                 home: opts.home.clone(),

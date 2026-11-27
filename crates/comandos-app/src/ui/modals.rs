@@ -5,6 +5,8 @@ pub enum ModalKind {
     Center,
     Help,
     Snippets,
+    /// «Nueva sesión»: más angosta que los paneles del centro.
+    NewSession,
 }
 /// Name of the window that shows a dashboard panel in the middle of the app.
 pub const CENTER: &str = "chains";
@@ -13,6 +15,10 @@ pub fn modal_size(kind: ModalKind, width: i32, height: i32) -> (i32, i32) {
         ModalKind::Center => (
             (width - 120).clamp(640, 1240),
             (height - 90).clamp(420, 820),
+        ),
+        ModalKind::NewSession => (
+            (width - 120).clamp(560, 760),
+            (height - 80).clamp(480, 900),
         ),
         _ => ((width - 120).max(640), (height - 90).max(420)),
     }

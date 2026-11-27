@@ -196,6 +196,7 @@ fn logo(m: &str) -> Option<(&'static str, &'static str)> {
         "opencode" => ("OC", "#f0abfc"),
         "gemini" => ("G", "#4285f4"),
         "agy" => ("AG", "#93c5fd"),
+        "omp" => ("π", "#c4b5fd"),
         "acp" => ("AC", "#67e8f9"),
         _ => return None,
     })

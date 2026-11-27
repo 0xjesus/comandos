@@ -14,6 +14,7 @@ pub mod census;
 pub mod events;
 pub mod feed;
 pub mod files;
+pub mod fs_find;
 pub mod input;
 pub mod lanes;
 pub mod light;

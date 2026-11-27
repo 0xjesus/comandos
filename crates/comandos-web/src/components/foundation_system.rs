@@ -303,7 +303,12 @@ mod web {
         .map(|_| ())
     }
     fn shown(el: &JsValue) -> bool {
-        on(el, "open")
+        // «Nueva sesión» se muestra quitando `.hidden`, los demás con `.open`.
+        if get(el, "id").as_string().as_deref() == Some("newsess") {
+            !on(el, "hidden")
+        } else {
+            on(el, "open")
+        }
     }
     fn observe(el: JsValue, f: JsValue) -> Result<(), JsValue> {
         let args = Array::new();
@@ -330,6 +335,29 @@ mod web {
             return Ok(());
         }
         match panel.as_str() {
+            "newsess" => {
+                // Fuera de la barra lateral: directo en <body>, que es lo único visible.
+                call(&get(&doc(), "body"), "appendChild", &[el.clone()])?;
+                let ns = global("NS");
+                let draft = get(&request, "ns");
+                if truthy(&draft) {
+                    call(&global("Object"), "assign", &[ns.clone(), draft])?;
+                }
+                set(&ns, "intoPane", &or(get(&request, "intoPane"), JsValue::NULL))?;
+                set(&ns, "openCwd", &or(get(&request, "openCwd"), "".into()))?;
+                invoke(&global("nsOpen"), &[])?;
+                // Si no llegó a mostrarse (un error), la ventana no queda vacía.
+                let watched = el.clone();
+                later(
+                    function(move |_| {
+                        if !shown(&watched) {
+                            let _ = native_message(from_json(&serde_json::json!({"chainModal":"close"}))?);
+                        }
+                        Ok(JsValue::UNDEFINED)
+                    }),
+                    4000.0,
+                );
+            }
             "servers" => {
                 invoke(&global("toggleSshManager"), &[])?;
             }

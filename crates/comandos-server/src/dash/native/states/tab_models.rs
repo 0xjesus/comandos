@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 const DETECTING: &str = "detectando…";
 /// Arneses con detalle por pane.
-const DETAIL_HARNESSES: [&str; 7] = [
-    "claude", "codex", "grok", "opencode", "gemini", "acp", "agy",
+const DETAIL_HARNESSES: [&str; 8] = [
+    "claude", "codex", "grok", "opencode", "gemini", "acp", "agy", "omp",
 ];
 
 /// `$` de Python sin `re.M`: al final o antes de un `\n` final.

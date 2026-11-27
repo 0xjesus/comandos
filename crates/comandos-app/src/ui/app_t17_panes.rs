@@ -876,6 +876,7 @@ fn svg_image(name: &str, size: i32, color: &str) -> gtk::Widget {
         "anthropic" => include_str!("../../../../dash/icons/anthropic.svg"),
         "openai" => include_str!("../../../../dash/icons/openai.svg"),
         "grok" => include_str!("../../../../dash/icons/grok.svg"),
+        "omp" => include_str!("../../../../dash/icons/omp.svg"),
         _ => return gtk::Label::new(Some("⬤")).upcast(),
     };
     if let Ok(loader) = gdk_pixbuf::PixbufLoader::with_type("svg") {
@@ -942,7 +943,7 @@ fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
     };
     let known = matches!(
         motor,
-        "claude" | "codex" | "grok" | "opencode" | "gemini" | "acp" | "agy"
+        "claude" | "codex" | "grok" | "opencode" | "gemini" | "acp" | "agy" | "omp"
     );
     let card = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     for class in [
@@ -971,6 +972,7 @@ fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
             "grok" => Some("grok"),
             "acp" | "opencode" => Some("layers"),
             "agy" => Some("gemini"),
+            "omp" => Some("omp"),
             _ => None,
         }
     {
@@ -983,6 +985,7 @@ fn pane_card(p: &Value, title: &str, fg: &str) -> gtk::Box {
         "opencode" => ("OC".into(), "#f0abfc"),
         "gemini" => ("G".into(), "#4285f4"),
         "agy" => ("AG".into(), "#93c5fd"),
+        "omp" => ("π".into(), "#c4b5fd"),
         "acp" => ("AC".into(), "#67e8f9"),
         _ => (
             motor.chars().take(2).collect::<String>().to_uppercase(),
@@ -1111,7 +1114,7 @@ fn account_default_model(home: &std::path::Path, account: &str) -> String {
         .unwrap_or_default()
 }
 /// CLIs whose panes get the header chip.
-const CHIP_HARNESSES: &[&str] = &["claude", "codex", "grok", "opencode", "agy"];
+const CHIP_HARNESSES: &[&str] = &["claude", "codex", "grok", "opencode", "agy", "omp"];
 /// How long a chip summary stays fresh before the header asks the dashboard again. Each
 /// answer costs the dashboard seconds of work, so the list asks again when opened instead.
 const CHIP_FRESH_SECONDS: f64 = 600.0;

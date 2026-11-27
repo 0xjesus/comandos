@@ -6041,7 +6041,7 @@ def session_name(project):
 
 # Agentes soportados (binarios a detectar); ampliable en cc-notify.conf: AGENTS="..."
 # acp = pane cliente ComandOS (cc-acp); sin él /harness/switch a ACP nunca confirma.
-DEFAULT_AGENTS = "claude codex grok acp opencode gemini agy aider"
+DEFAULT_AGENTS = "claude codex grok acp opencode gemini agy omp aider"
 # Turnos no interactivos (codex exec, jobs de agentes) terminan el proceso antes
 # del siguiente poll del dashboard. Conserva "done" brevemente para que el UI
 # muestre el cierre real antes de degradarlo a "dead".

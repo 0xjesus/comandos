@@ -597,7 +597,13 @@ impl PaneInspector {
                 continue;
             };
             // El CLI real antes que sus subprocesos o subagentes.
-            let exe = pathlib_name(first);
+            let mut exe = pathlib_name(first);
+            // Oh My Pi corre como `bun …/omp` (o `node …/omp`): el CLI es el script.
+            if matches!(exe, "bun" | "node" | "nodejs")
+                && args.get(1).is_some_and(|a| pathlib_name(a) == "omp")
+            {
+                exe = "omp";
+            }
             if exe == "claude" {
                 if self.claude.contains_key(&pid) {
                     return Ok(self.known(&self.claude, pid, "claude"));
@@ -608,7 +614,7 @@ impl PaneInspector {
             if GROK_EXES.contains(&exe) {
                 return Ok(self.known(&self.grok, pid, "grok"));
             }
-            if exe == "opencode" || exe == "agy" {
+            if exe == "opencode" || exe == "agy" || exe == "omp" {
                 return self.inspect_native(pid, exe, &args, &dir);
             }
             if exe == "codex" {
@@ -686,10 +692,10 @@ impl PaneInspector {
             ("flags", Value::from(self.flags(pid))),
             ("processPid", Value::from(pid)),
         ]);
-        let flag_names: &[&str] = if exe == "opencode" {
-            &["--session", "-s"]
-        } else {
-            &["--conversation"]
+        let flag_names: &[&str] = match exe {
+            "opencode" => &["--session", "-s"],
+            "omp" => &["--resume", "-r"],
+            _ => &["--conversation"],
         };
         let mut explicit = args
             .windows(2)
