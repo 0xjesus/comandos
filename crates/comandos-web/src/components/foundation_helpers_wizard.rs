@@ -368,6 +368,7 @@ fn render() {
             }),
         );
         model_chips();
+        classes(&id("ns-effort-wrap"), "hidden", js_rows(&get(&model(), "efforts")).is_empty());
         chips(id("ns-effort"),js_rows(&get(&model(),"efforts")).iter().map(|e|json!({"id":e.as_string().unwrap_or_default(),"label":e.as_string().unwrap_or_default()})).collect(),ns_s("effort"),callback(|id|put("effort",id.into())));
     }
     let caps = get(&harness(&ns_s("harness")), "capabilities");
