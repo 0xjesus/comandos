@@ -25,6 +25,7 @@ abstract final class ProviderMarks {
     ProviderRule('gemini|agy|google', 'gemini'),
     ProviderRule('glm|zhipu|zai', 'glm'),
     ProviderRule('opencode', 'opencode'),
+    ProviderRule('omp|oh-my-pi|refuseless', 'omp'),
   ];
 
   static List<(RegExp, String)> _rules = _compile(defaults);
@@ -66,18 +67,36 @@ abstract final class ProviderMarks {
     'pg:673.31 383.25 673.31 803.15 773.31 803.15 773.31 240.44',
   ], fill: true, box: 1000);
 
+  /// A one-colour OpenCode mark (the frame of its logo).
+  static const WebIconData opencode = WebIconData(<String>['r:6.5 4.5 11 15 1', 'r:10 11 4 5'], stroke: 2.2);
+
+  /// Chips of the wizard: the line glyph of an agent the provider rules leave
+  /// as letters (ComandOS ACP, OpenCode, Shell).
+  static WebIconData? chipGlyph(String icon) => switch (icon) {
+        'opencode' => opencode,
+        'layers' => WebIcons.layers,
+        'terminal' => WebIcons.terminal,
+        _ => null,
+      };
+
   static WebIconData? glyph(String icon) => switch (icon) {
         'xai' || 'grok' => xai,
         _ => WebIcons.byName[icon],
       };
 
+  /// Agents with a glyph of their own even when the server's rules (from
+  /// `/model-tiers`) predate them.
+  static const Map<String, String> _own = <String, String>{'omp': 'omp', 'oh-my-pi': 'omp'};
+
   /// The glyph for [agent]/[model], or null when a mono badge is due.
   static WebIconData? resolve(String agent, String model) {
     final String probe = '$agent $model';
+    final String? own = _own[agent];
     for (final (RegExp re, String icon) in _rules) {
-      if (re.hasMatch(probe)) return glyph(icon);
+      // A provider without a glyph (GLM) keeps the agent's own mark.
+      if (re.hasMatch(probe)) return glyph(icon) ?? (own == null ? null : glyph(own));
     }
-    return null;
+    return own == null ? null : glyph(own);
   }
 
   /// `short_model(input)` first two UTF-16 units, upper-cased.
@@ -91,16 +110,27 @@ abstract final class ProviderMarks {
 
 /// `.pmark`: the provider glyph at [size], or `.pmono` letters.
 class ProviderMark extends StatelessWidget {
-  const ProviderMark({super.key, required this.agent, this.model = '', this.size = 13, this.color});
+  const ProviderMark({
+    super.key,
+    required this.agent,
+    this.model = '',
+    this.size = 13,
+    this.color,
+    this.chip = false,
+  });
 
   final String agent;
   final String model;
   final double size;
   final Color? color;
 
+  /// In a wizard chip: [ProviderMarks.chipGlyph] before the letters.
+  final bool chip;
+
   @override
   Widget build(BuildContext context) {
-    final WebIconData? g = ProviderMarks.resolve(agent, model);
+    final WebIconData? g =
+        ProviderMarks.resolve(agent, model) ?? (chip ? ProviderMarks.chipGlyph(agent) : null);
     if (g != null) return WebIcon(g, size: size, color: color);
     final String m = ProviderMarks.mono(agent, model);
     if (m.isEmpty) return const SizedBox.shrink();

@@ -15,10 +15,14 @@ class WizardChip {
     this.model = '',
     this.disabled = false,
     this.title = '',
+    this.tag = '',
   });
 
   final String id;
   final String label;
+
+  /// The model's catalog note («nuevo»), shown as a small badge.
+  final String tag;
 
   /// Agent/icon id for the provider mark (empty: no mark).
   final String icon;
@@ -36,10 +40,11 @@ class WizardChip {
       other.icon == icon &&
       other.model == model &&
       other.disabled == disabled &&
-      other.title == title;
+      other.title == title &&
+      other.tag == tag;
 
   @override
-  int get hashCode => Object.hash(id, label, icon, model, disabled, title);
+  int get hashCode => Object.hash(id, label, icon, model, disabled, title, tag);
 
   @override
   String toString() => 'WizardChip($id${disabled ? ', disabled' : ''})';
@@ -222,10 +227,45 @@ class WizardModel {
       ];
 
   /// MODELO chips.
-  List<WizardChip> get modelChips => <WizardChip>[
-        for (final MotorModel m in modelList)
-          WizardChip(id: m.id, label: m.name ?? m.id, model: m.id, icon: sel.motor),
-      ];
+  List<WizardChip> get modelChips => <WizardChip>[for (final MotorModel m in modelList) _modelChip(m)];
+
+  WizardChip _modelChip(MotorModel m) =>
+      WizardChip(id: m.id, label: m.name ?? m.id, model: m.id, icon: sel.motor, tag: m.tag, title: m.tag);
+
+  /// Chips shown before «Buscar modelo»: a motor with a long catalog (OpenCode
+  /// lists hundreds, newest first) shows its first [modelChipLimit].
+  static const int modelChipLimit = 8;
+
+  /// True when the motor's list is long enough for «Buscar modelo (N)».
+  bool get hasModelSearch => modelList.length > modelChipLimit;
+
+  /// The first [modelChipLimit] models, plus the chosen one when it is
+  /// further down the list (the selection is always visible).
+  List<WizardChip> get visibleModelChips {
+    final List<WizardChip> all = modelChips;
+    if (all.length <= modelChipLimit) return all;
+    final List<WizardChip> out = all.sublist(0, modelChipLimit);
+    if (!out.any((WizardChip c) => c.id == sel.model)) {
+      for (final WizardChip c in all) {
+        if (c.id == sel.model) out.add(c);
+      }
+    }
+    return out;
+  }
+
+  /// «Buscar modelo»: every model whose id or name contains each word of
+  /// [query] (case-insensitive), in catalog order.
+  List<WizardChip> filterModels(String query) {
+    final List<String> words = query.toLowerCase().split(RegExp(r'\s+')).where((String w) => w.isNotEmpty).toList();
+    return <WizardChip>[
+      for (final MotorModel m in modelList)
+        if (() {
+          final String hay = '${m.id} ${m.name ?? ''}'.toLowerCase();
+          return words.every(hay.contains);
+        }())
+          _modelChip(m),
+    ];
+  }
 
   /// PENSAMIENTO chips.
   List<WizardChip> get effortChips => <WizardChip>[
@@ -451,19 +491,101 @@ abstract final class WizardPaths {
     return out;
   }
 
-  /// The recent-folders list (`#ns-dirs`): unique non-empty cwds, sorted.
-  static List<String> recentDirs(Iterable<String> cwds) {
-    final List<String> out = <String>{
-      for (final String c in cwds)
-        if (c.isNotEmpty) c,
-    }.toList()
-      ..sort();
+  /// «Recientes»: the folders of the live sessions (`/state?live=1` rows),
+  /// once each, the most recently active (`ts`) first.
+  static List<String> recentFolders(Iterable<Map<String, Object?>> rows) {
+    final Map<String, double> last = <String, double>{};
+    for (final Map<String, Object?> r in rows) {
+      final Object? c = r['cwd'];
+      if (c is! String || c.isEmpty) continue;
+      final Object? t = r['ts'];
+      final double ts = t is num ? t.toDouble() : 0;
+      final double? seen = last[c];
+      if (seen == null || ts > seen) last[c] = ts;
+    }
+    final List<String> order = last.keys.toList();
+    final Map<String, int> first = <String, int>{for (int i = 0; i < order.length; i++) order[i]: i};
+    order.sort((String a, String b) {
+      final int byTs = last[b]!.compareTo(last[a]!);
+      return byTs != 0 ? byTs : first[a]!.compareTo(first[b]!);
+    });
+    return order;
+  }
+
+  /// The last segment of [path] («~/codebase/x» → «x»; «/» stays).
+  static String folderName(String path) {
+    final String p = path.endsWith('/') && path.length > 1 ? path.substring(0, path.length - 1) : path;
+    final int i = p.lastIndexOf('/');
+    return i < 0 || i == p.length - 1 ? p : p.substring(i + 1);
+  }
+
+  /// Text that browses a path instead of searching: starts with `/` or `~`.
+  static bool isPathQuery(String q) {
+    final String t = q.trimLeft();
+    return t.startsWith('/') || t.startsWith('~');
+  }
+
+  /// How well [q] matches the folder [name] (lower is better), or null:
+  /// exact 0, prefix 1, word start 2, substring 3, letters in order 4.
+  static int? matchScore(String q, String name) {
+    final String qq = q.trim().toLowerCase();
+    if (qq.isEmpty) return 0;
+    final String n = name.toLowerCase();
+    if (n == qq) return 0;
+    if (n.startsWith(qq)) return 1;
+    final int i = n.indexOf(qq);
+    if (i > 0) return _wordChar(n.codeUnitAt(i - 1)) ? 3 : 2;
+    return _subsequence(qq, n) == null ? null : 4;
+  }
+
+  static bool _wordChar(int c) =>
+      (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c > 0x7F;
+
+  /// Indexes of [q]'s letters found in order in [n], or null.
+  static List<int>? _subsequence(String q, String n) {
+    final List<int> at = <int>[];
+    int j = 0;
+    for (int i = 0; i < n.length && j < q.length; i++) {
+      if (n.codeUnitAt(i) == q.codeUnitAt(j)) {
+        at.add(i);
+        j++;
+      }
+    }
+    return j == q.length ? at : null;
+  }
+
+  /// [name] cut into `(text, matched)` runs for the highlight: the substring
+  /// [q] when present, else its letters in order. Only the text after the last
+  /// `/` of [q] counts («codebase/coma» highlights «coma»).
+  static List<(String, bool)> highlight(String name, String q) {
+    String qq = q.trim().toLowerCase();
+    final int slash = qq.lastIndexOf('/');
+    if (slash >= 0) qq = qq.substring(slash + 1);
+    if (qq.isEmpty || name.isEmpty) return <(String, bool)>[(name, false)];
+    final String n = name.toLowerCase();
+    final Set<int> marked = <int>{};
+    final int i = n.indexOf(qq);
+    if (i >= 0) {
+      for (int k = i; k < i + qq.length; k++) {
+        marked.add(k);
+      }
+    } else {
+      marked.addAll(_subsequence(qq, n) ?? const <int>[]);
+    }
+    if (marked.isEmpty || n.length != name.length) return <(String, bool)>[(name, false)];
+    final List<(String, bool)> out = <(String, bool)>[];
+    int start = 0;
+    for (int k = 1; k <= name.length; k++) {
+      if (k == name.length || marked.contains(k) != marked.contains(start)) {
+        out.add((name.substring(start, k), marked.contains(start)));
+        start = k;
+      }
+    }
     return out;
   }
 
   /// The toast text for an error of `POST /session-new` (`go()`): a missing
   /// folder points at the «Crear carpeta» button.
-  static String createErrorText(String message) => message.contains('no existe')
-      ? 'Esa carpeta no existe — usa el botón Crear carpeta de abajo.'
-      : message;
+  static String createErrorText(String message) =>
+      message.contains('no existe') ? 'Esa carpeta no existe — usa el botón Crear carpeta.' : message;
 }

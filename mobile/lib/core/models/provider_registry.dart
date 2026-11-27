@@ -68,6 +68,7 @@ class MotorModel {
     this.name,
     this.efforts = const <String>[],
     this.defaultEffort = '',
+    this.tag = '',
   });
 
   factory MotorModel.fromJson(Map<String, Object?> m) {
@@ -77,6 +78,7 @@ class MotorModel {
       name: readStringOrNull(m, 'name'),
       efforts: <String>[if (e is List) for (final Object? x in e) if (x is String) x],
       defaultEffort: readString(m, 'defaultEffort'),
+      tag: readString(m, 'tag'),
     );
   }
 
@@ -84,6 +86,9 @@ class MotorModel {
   final String? name;
   final List<String> efforts;
   final String defaultEffort;
+
+  /// Short note of the catalog («nuevo», «rápido y barato»); empty when none.
+  final String tag;
 }
 
 /// The provider that runs inference (`motors.<id>`).

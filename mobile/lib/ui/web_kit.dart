@@ -515,6 +515,22 @@ abstract final class WebIcons {
     'p:M12 3.2v4.2M19.6 7.6l-3.7 2.1M19.6 16.4l-3.7-2.1M12 20.8v-4.2M4.4 16.4l3.7-2.1M4.4 7.6l3.7 2.1',
   ], stroke: 1.7);
 
+  /// Lucide `folder`.
+  static const WebIconData folder = WebIconData(<String>[
+    'p:M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
+  ], stroke: 1.9);
+
+  /// Lucide `git-branch` (a folder that is a git repo).
+  static const WebIconData gitBranch =
+      WebIconData(<String>['l:6 3 6 15', 'c:18 6 3', 'c:6 18 3', 'p:M18 9a9 9 0 0 1-9 9'], stroke: 1.9);
+
+  /// Oh My Pi (`dash/icons/omp.svg`): a π.
+  static const WebIconData omp = WebIconData(<String>[
+    'p:M4.5 8c1-1.6 2.4-2.5 4.2-2.5H19.5',
+    'p:M9.5 5.5v13',
+    'p:M15.5 5.5v9.5a3 3 0 0 0 3 3',
+  ]);
+
   /// Names as in `foundation_icons.json`, for data-driven call sites.
   static const Map<String, WebIconData> byName = <String, WebIconData>{
     'chevron-left': chevronLeft,
@@ -561,6 +577,9 @@ abstract final class WebIcons {
     'cycle': cycle,
     'key': key,
     'arrow-up-down': arrowUpDown,
+    'folder': folder,
+    'git-branch': gitBranch,
+    'omp': omp,
   };
 }
 

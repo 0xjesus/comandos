@@ -92,6 +92,8 @@ String paneLabel(PaneRow row) {
       agent = 'Claude';
     case 'codex':
       agent = 'Codex';
+    case 'omp':
+      agent = 'Oh My Pi';
     default:
       agent = row.agent[0].toUpperCase() + row.agent.substring(1);
   }

@@ -20,24 +20,30 @@ const TextStyle nsNoteStyle = TextStyle(fontFamily: Orbita.mono, fontSize: 10, c
 /// «sutil» lip for an `.on` key: `color-mix(--done 55%, --line)`.
 final Color _onLip = webMix(Orbita.done, .55, Orbita.line);
 
-/// `.ns-label`: mono 10/700, faint, letter-spacing .1em, upper-case.
+/// `.ns-label`: mono 10.5/700, dim, letter-spacing .1em, upper-case.
 class NsLabel extends StatelessWidget {
-  const NsLabel(this.text, {super.key});
+  const NsLabel(this.text, {super.key, this.trailing});
 
   final String text;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Text(
-          text.toUpperCase(),
-          style: const TextStyle(
-            fontFamily: Orbita.mono,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1,
-            color: Orbita.faint,
-          ),
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: <Widget>[
+            Text(
+              text.toUpperCase(),
+              style: const TextStyle(
+                fontFamily: Orbita.mono,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2,
+                color: Orbita.dim,
+              ),
+            ),
+            if (trailing != null) ...<Widget>[const SizedBox(width: 8), Expanded(child: trailing!)],
+          ],
         ),
       );
 }
@@ -52,7 +58,7 @@ class NsWrap extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[NsLabel(label), const SizedBox(height: 4), child],
+        children: <Widget>[NsLabel(label), child],
       );
 }
 
@@ -127,14 +133,19 @@ class _KeyState extends State<_Key> {
   }
 }
 
-/// `.ns-chips button`: mono 11/700 pill, 7×14 padding; `.on` = brand ink on a
-/// 12 % brand tint with the green lip; disabled = 42 % opacity, no lip.
+/// `.ns-chips button`: mono 12/700 pill, at least 44 px high (coarse pointer);
+/// `.on` = brand ink on a 12 % brand tint with the green lip; disabled = 42 %
+/// opacity, no lip. A short [WizardChip.tag] («nuevo») shows as a badge.
 class NsChip extends StatelessWidget {
   const NsChip({super.key, required this.item, required this.on, required this.onTap});
 
   final WizardChip item;
   final bool on;
   final VoidCallback onTap;
+
+  /// Longer tags («el más reciente · código y día a día») only go in the
+  /// tooltip and the model list.
+  static bool shortTag(String tag) => tag.isNotEmpty && tag.length <= 12;
 
   @override
   Widget build(BuildContext context) {
@@ -144,8 +155,10 @@ class NsChip extends StatelessWidget {
       child: _Key(
         onTap: item.disabled ? null : onTap,
         radius: 99,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        minHeight: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         face: on ? webMix(Orbita.brand, .12, Orbita.panel) : Orbita.panel,
+        border: on ? webMix(Orbita.brand, .55, Orbita.line) : Orbita.line,
         lip: on ? _onLip : Orbita.line2,
         disabledOpacity: .42,
         tooltip: item.title,
@@ -154,24 +167,34 @@ class NsChip extends StatelessWidget {
           children: <Widget>[
             if (item.icon.isNotEmpty) ...<Widget>[
               SizedBox(
-                height: 13,
-                child: Center(widthFactor: 1, child: ProviderMark(agent: item.icon, model: item.model, color: ink)),
+                height: 30,
+                child: Center(
+                  widthFactor: 1,
+                  child: ProviderMark(agent: item.icon, model: item.model, size: 15, color: ink, chip: true),
+                ),
               ),
-              const SizedBox(width: 5),
+              const SizedBox(width: 7),
             ],
             Flexible(
-              child: Text(
-                item.label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontFamily: Orbita.mono,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  height: 1.36,
-                  color: ink,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  item.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: Orbita.mono,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.36,
+                    color: on ? Orbita.text : Orbita.dim,
+                  ),
                 ),
               ),
             ),
+            if (shortTag(item.tag)) ...<Widget>[
+              const SizedBox(width: 6),
+              _Tag(item.tag),
+            ],
           ],
         ),
       ),
@@ -179,7 +202,29 @@ class NsChip extends StatelessWidget {
   }
 }
 
-/// `.ns-chips`: wrapping row, gap 6.
+class _Tag extends StatelessWidget {
+  const _Tag(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+        decoration: BoxDecoration(
+          color: webMix(Orbita.done, .14, Orbita.panel),
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(color: webMix(Orbita.done, .35, Orbita.line)),
+        ),
+        child: Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontFamily: Orbita.mono, fontSize: 10, fontWeight: FontWeight.w600, color: Orbita.done),
+        ),
+      );
+}
+
+/// `.ns-chips`: wrapping row, gap 8; a chip never grows wider than the row.
 class NsChips extends StatelessWidget {
   const NsChips({super.key, required this.items, required this.current, required this.onPick});
 
@@ -188,105 +233,95 @@ class NsChips extends StatelessWidget {
   final ValueChanged<String> onPick;
 
   @override
-  Widget build(BuildContext context) => Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: <Widget>[
-          for (final WizardChip c in items)
-            NsChip(key: ValueKey<String>(c.id), item: c, on: c.id == current, onTap: () => onPick(c.id)),
-        ],
-      );
-}
-
-/// `.ns-crumb`: mono 11 faint (the last one: text, 600), 1×3 padding.
-class NsCrumb extends StatelessWidget {
-  const NsCrumb({super.key, required this.label, required this.last, required this.onTap});
-
-  final String label;
-  final bool last;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => _Key(
-        onTap: onTap,
-        radius: 5,
-        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: Orbita.mono,
-            fontSize: 11,
-            fontWeight: last ? FontWeight.w600 : FontWeight.w400,
-            color: last ? Orbita.text : Orbita.faint,
-          ),
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints box) => Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            for (final WizardChip c in items)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: box.maxWidth.isFinite ? box.maxWidth : double.infinity),
+                child: NsChip(key: ValueKey<String>(c.id), item: c, on: c.id == current, onTap: () => onPick(c.id)),
+              ),
+          ],
         ),
       );
 }
 
-/// `.ns-dir`: a child folder, layers icon + name, 11 px on `--panel`.
-class NsDir extends StatelessWidget {
-  const NsDir({super.key, required this.name, required this.onTap});
+/// One model of «Buscar modelo»: name, id dimmed, its tag, a check when chosen.
+class NsModelRow extends StatelessWidget {
+  const NsModelRow({super.key, required this.item, required this.on, required this.onTap});
 
-  final String name;
+  final WizardChip item;
+  final bool on;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => _Key(
-        onTap: onTap,
-        radius: 7,
-        face: Orbita.panel,
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const WebIcon(WebIcons.layers, size: 11, color: Orbita.text),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Orbita.text)),
+  Widget build(BuildContext context) => Semantics(
+        selected: on,
+        button: true,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 50),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: on
+                  ? BoxDecoration(
+                      color: webMix(Orbita.brand, .10, Orbita.panel),
+                      borderRadius: BorderRadius.circular(10),
+                    )
+                  : null,
+              child: Row(
+                children: <Widget>[
+                  SizedBox(
+                    width: 20,
+                    child: Center(
+                      child: ProviderMark(agent: item.icon, model: item.model, size: 15, color: Orbita.dim, chip: true),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          item.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: Orbita.sans,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: on ? Orbita.brand : Orbita.text,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text.rich(
+                          TextSpan(
+                            children: <InlineSpan>[
+                              TextSpan(text: item.id),
+                              if (item.tag.isNotEmpty)
+                                TextSpan(text: '  ·  ${item.tag}', style: const TextStyle(color: Orbita.done)),
+                            ],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontFamily: Orbita.mono, fontSize: 11, color: Orbita.faint),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (on) ...<Widget>[
+                    const SizedBox(width: 8),
+                    const WebIcon(WebIcons.check, size: 16, color: Orbita.brand),
+                  ],
+                ],
+              ),
             ),
-          ],
-        ),
-      );
-}
-
-/// `.ns-ok`: «✓ carpeta existente».
-class FsOk extends StatelessWidget {
-  const FsOk({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Align(
-        alignment: Alignment.centerLeft,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            WebIcon(WebIcons.check, size: 11, color: Orbita.done),
-            SizedBox(width: 4),
-            Text('carpeta existente', style: TextStyle(fontSize: 11, color: Orbita.done)),
-          ],
-        ),
-      );
-}
-
-/// `button.test` («Crear carpeta»): mono 11 dim on `--panel`, radius 6.
-class NsTestButton extends StatelessWidget {
-  const NsTestButton({super.key, required this.child, required this.onTap, this.tooltip});
-
-  final Widget child;
-  final VoidCallback? onTap;
-  final String? tooltip;
-
-  @override
-  Widget build(BuildContext context) => _Key(
-        onTap: onTap,
-        radius: 6,
-        face: Orbita.panel,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        tooltip: tooltip,
-        child: IconTheme.merge(
-          data: const IconThemeData(color: Orbita.dim),
-          child: DefaultTextStyle.merge(
-            style: const TextStyle(fontFamily: Orbita.mono, fontSize: 11, color: Orbita.dim),
-            child: child,
           ),
         ),
       );
@@ -328,41 +363,53 @@ class NsSwitch extends StatelessWidget {
       );
 }
 
-/// `.ns-actions button`: mono 13/700, 9×18, radius 10; `.primary` = brand face
-/// with #0A0D13 ink. At least 44 px high (coarse pointer).
+/// `.ns-actions button`: 14/700, radius 12, 48 px high; `.primary` = brand
+/// face with dark ink. The label is one line, cut with an ellipsis.
 class NsActionButton extends StatelessWidget {
-  const NsActionButton({super.key, required this.label, required this.onTap, this.primary = false, this.tooltip});
+  const NsActionButton({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.primary = false,
+    this.tooltip,
+    this.icon,
+  });
 
   final String label;
   final VoidCallback? onTap;
   final bool primary;
   final String? tooltip;
+  final WebIconData? icon;
 
   @override
-  Widget build(BuildContext context) => _Key(
-        onTap: onTap,
-        radius: 10,
-        minHeight: 44,
-        face: primary ? Orbita.brand : Orbita.panel,
-        border: primary ? Orbita.brand : Orbita.line,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-        tooltip: tooltip,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
+  Widget build(BuildContext context) {
+    final Color ink = primary ? Orbita.onBrand : Orbita.text;
+    return _Key(
+      onTap: onTap,
+      radius: 12,
+      minHeight: 48,
+      face: primary ? Orbita.brand : Orbita.panel2,
+      border: primary ? Orbita.brand : Orbita.line2,
+      lip: primary ? webMix(Orbita.brand, .55, Orbita.bg) : Orbita.line2,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      tooltip: tooltip,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          if (icon != null) ...<Widget>[WebIcon(icon!, size: 16, color: ink), const SizedBox(width: 8)],
+          Flexible(
+            child: Text(
               label,
-              style: TextStyle(
-                fontFamily: Orbita.mono,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: primary ? const Color(0xFF0A0D13) : Orbita.text,
-              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontFamily: Orbita.sans, fontSize: 14, fontWeight: FontWeight.w700, color: ink),
             ),
-          ],
-        ),
-      );
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// `<details id="ns-unavailable">`: «▶ 12 combinaciones listas · 4 bloqueadas
@@ -394,11 +441,19 @@ class BlockedRoutes extends StatelessWidget {
                 key: const ValueKey<String>('ns-unavailable'),
                 behavior: HitTestBehavior.opaque,
                 onTap: onToggle,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    '${open ? '▼' : '▶'} $summary',
-                    style: const TextStyle(fontFamily: Orbita.mono, fontSize: 10, color: Orbita.faint, height: 1.4),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 44),
+                  child: Row(
+                    children: <Widget>[
+                      WebIcon(open ? WebIcons.chevronDown : WebIcons.chevronRight, size: 12, color: Orbita.faint),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          summary,
+                          style: const TextStyle(fontFamily: Orbita.mono, fontSize: 11, color: Orbita.faint, height: 1.4),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -465,45 +520,6 @@ class _DashedBox extends CustomPainter {
 
   @override
   bool shouldRepaint(_DashedBox old) => old.color != color || old.radius != radius;
-}
-
-/// The `<datalist id="ns-dirs">` drop-down: the folders of the live sessions.
-class RecentDirsList extends StatelessWidget {
-  const RecentDirsList({super.key, required this.dirs, required this.onPick});
-
-  final List<String> dirs;
-  final ValueChanged<String> onPick;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        key: const ValueKey<String>('ns-dirs'),
-        constraints: const BoxConstraints(maxHeight: 220),
-        decoration: BoxDecoration(
-          color: Orbita.panel2,
-          border: Border.all(color: Orbita.line2),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          shrinkWrap: true,
-          itemCount: dirs.length,
-          itemBuilder: (BuildContext context, int i) => GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => onPick(dirs[i]),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 40),
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                dirs[i],
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: Orbita.mono, fontSize: 13, color: Orbita.text),
-              ),
-            ),
-          ),
-        ),
-      );
 }
 
 /// `.toast` (`.err`: amber edge): mono 13 on `--panel2`, 3 px left edge.

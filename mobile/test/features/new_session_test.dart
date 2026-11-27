@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:comandos_mobile/core/api/api_client.dart';
+import 'package:comandos_mobile/core/api/api_errors.dart';
 import 'package:comandos_mobile/core/config/credential_store.dart';
 import 'package:comandos_mobile/core/config/paired_server.dart';
 import 'package:comandos_mobile/core/connection.dart';
 import 'package:comandos_mobile/core/locator.dart';
 import 'package:comandos_mobile/core/models/provider_registry.dart';
+import 'package:comandos_mobile/features/new_session/folder_search.dart';
 import 'package:comandos_mobile/features/new_session/new_session.dart';
 import 'package:comandos_mobile/features/new_session/provider_mark.dart';
 import 'package:comandos_mobile/features/new_session/wizard_model.dart';
+import 'package:comandos_mobile/features/new_session/wizard_widgets.dart';
 import 'package:comandos_mobile/ui/theme.dart';
+import 'package:comandos_mobile/ui/web_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -341,23 +346,275 @@ void main() {
     });
   });
 
+  group('Models: long catalogs', () {
+    test('more than 8 models: first 8 chips, the chosen one stays visible, search by id and name', () {
+      final WizardModel m = freshModel()
+        ..pickHarness('acp')
+        ..pickMotor('opencode');
+      expect(m.modelList.length, 10);
+      expect(m.hasModelSearch, isTrue);
+      expect(m.visibleModelChips.length, WizardModel.modelChipLimit);
+      m.pickModel('groq/qwen/qwen3.8-27b'); // the 10th
+      expect(m.visibleModelChips.length, 9);
+      expect(m.visibleModelChips.last.id, 'groq/qwen/qwen3.8-27b');
+      expect(m.filterModels('GROQ qwen').map((WizardChip c) => c.id).toList(),
+          <String>['groq/qwen/qwen3.6-27b', 'groq/qwen/qwen3.8-27b']);
+      expect(m.filterModels('Llama 3.3').map((WizardChip c) => c.id).toList(), <String>['groq/llama-3.3-70b-versatile']);
+      expect(m.filterModels('').length, 10);
+      expect(m.filterModels('nada-asi'), isEmpty);
+      final WizardModel codex = freshModel();
+      expect(codex.hasModelSearch, isFalse);
+      expect(codex.visibleModelChips.length, 7);
+    });
+
+    test('a model tag reaches its chip', () {
+      final ProviderRegistry reg = ProviderRegistry.tryParse(<String, Object?>{
+        'matrixHarnesses': <Object?>['omp'],
+        'harnesses': <String, Object?>{
+          'omp': <String, Object?>{'label': 'Oh My Pi', 'icon': 'omp'},
+        },
+        'motors': <String, Object?>{
+          'omp': <String, Object?>{
+            'label': 'Oh My Pi',
+            'icon': 'omp',
+            'models': <Object?>[
+              <String, Object?>{'id': 'refuseless/glm-5.3', 'name': 'GLM 5.3', 'tag': 'nuevo'},
+              <String, Object?>{'id': 'b', 'name': 'B'},
+            ],
+          },
+        },
+        'matrix': <Object?>[
+          <String, Object?>{'id': 'omp:omp', 'harness': 'omp', 'motor': 'omp', 'selectable': true, 'driver': 'omp'},
+        ],
+      })!;
+      final WizardModel m = WizardModel(reg, WizardSelection.defaults())..pickHarness('omp');
+      expect(m.harnessChips.first.label, 'Oh My Pi');
+      expect(m.harnessChips.first.icon, 'omp');
+      expect(m.modelChips.first.tag, 'nuevo');
+      expect(m.modelChips.last.tag, '');
+      expect(m.sel.routeId, 'omp:omp');
+    });
+
+    test('Oh My Pi has its π everywhere', () {
+      ProviderMarks.reset();
+      expect(ProviderMarks.resolve('omp', ''), WebIcons.omp);
+      expect(ProviderMarks.resolve('omp', 'refuseless/glm-5.3'), WebIcons.omp);
+      // Rules from an older server that does not know omp yet.
+      ProviderMarks.setRules(<String, Object?>{
+        'providers': <Object?>[
+          <String, Object?>{'match': 'claude', 'icon': 'anthropic'},
+        ],
+      });
+      expect(ProviderMarks.resolve('omp', ''), WebIcons.omp);
+      expect(ProviderMarks.resolve('omp', 'claude-opus-5-5'), WebIcons.anthropic);
+      ProviderMarks.reset();
+      expect(WebIcons.byName['omp'], WebIcons.omp);
+    });
+  });
+
   group('WizardPaths', () {
-    test('crumbs, short home, recent folders, create error text', () {
+    test('crumbs, short home, folder name, create error text', () {
       expect(WizardPaths.crumbs('/srv/dev/code'), <(String, String)>[
         ('srv', '/srv'), ('dev', '/srv/dev'), ('code', '/srv/dev/code'),
       ]);
       expect(WizardPaths.shortHome('/srv/dev/nonexist/xyz', '/srv/dev'), '~/nonexist/xyz');
       expect(WizardPaths.shortHome('/opt/x', '/srv/dev'), '/opt/x');
-      expect(WizardPaths.recentDirs(<String>['/b', '', '/a', '/b']), <String>['/a', '/b']);
+      expect(WizardPaths.folderName('/srv/dev/code/'), 'code');
+      expect(WizardPaths.folderName('~/codebase/ComandOS'), 'ComandOS');
+      expect(WizardPaths.folderName('/'), '/');
       expect(WizardPaths.createErrorText('Esa carpeta no existe todavía.'),
-          'Esa carpeta no existe — usa el botón Crear carpeta de abajo.');
+          'Esa carpeta no existe — usa el botón Crear carpeta.');
       expect(WizardPaths.createErrorText('carpeta invalida'), 'carpeta invalida');
+    });
+
+    test('recent folders: once each, most recently active first', () {
+      expect(
+        WizardPaths.recentFolders(<Map<String, Object?>>[
+          <String, Object?>{'cwd': '/a', 'ts': 10},
+          <String, Object?>{'cwd': '/b', 'ts': 30},
+          <String, Object?>{'cwd': ''},
+          <String, Object?>{'cwd': '/a', 'ts': 50},
+          <String, Object?>{'cwd': '/c'},
+        ]),
+        <String>['/a', '/b', '/c'],
+      );
+    });
+
+    test('path text vs search text; match score and highlight', () {
+      expect(WizardPaths.isPathQuery('~/code'), isTrue);
+      expect(WizardPaths.isPathQuery('/srv'), isTrue);
+      expect(WizardPaths.isPathQuery('comandos'), isFalse);
+      expect(WizardPaths.matchScore('comandos', 'ComandOS'), 0);
+      expect(WizardPaths.matchScore('coma', 'ComandOS'), 1);
+      expect(WizardPaths.matchScore('web', 'comandos-web'), 2);
+      expect(WizardPaths.matchScore('and', 'ComandOS'), 3);
+      expect(WizardPaths.matchScore('cmdos', 'ComandOS'), 4);
+      expect(WizardPaths.matchScore('zz', 'ComandOS'), isNull);
+      expect(WizardPaths.highlight('ComandOS', 'mand'), <(String, bool)>[('Co', false), ('mand', true), ('OS', false)]);
+      expect(WizardPaths.highlight('ComandOS', 'cos'),
+          <(String, bool)>[('Co', true), ('mandO', false), ('S', true)]);
+      expect(WizardPaths.highlight('ComandOS', 'codebase/coma'), <(String, bool)>[('Coma', true), ('ndOS', false)]);
+      expect(WizardPaths.highlight('ComandOS', ''), <(String, bool)>[('ComandOS', false)]);
+      expect(WizardPaths.highlight('ComandOS', 'xyz'), <(String, bool)>[('ComandOS', false)]);
+    });
+  });
+
+  group('FolderSearch', () {
+    late Map<String, List<(Map<String, String>, Completer<Object?>)>> calls;
+    late FolderSearch f;
+
+    Future<Object?> get(String path, Map<String, String> q) {
+      final Completer<Object?> c = Completer<Object?>();
+      (calls[path] ??= <(Map<String, String>, Completer<Object?>)>[]).add((q, c));
+      return c.future;
+    }
+
+    Future<void> settle() async {
+      for (int i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    Map<String, Object?> found(String q, List<String> names) => <String, Object?>{
+          'q': q,
+          'home': '/srv/dev',
+          'results': <Object?>[
+            for (final String n in names)
+              <String, Object?>{'path': '/srv/dev/code/$n', 'short': '~/code/$n', 'name': n, 'repo': n == 'portal'},
+          ],
+        };
+
+    setUp(() {
+      calls = <String, List<(Map<String, String>, Completer<Object?>)>>{};
+      f = FolderSearch(get: get, debounce: Duration.zero, recent: <String>['/srv/dev/code/acme/console']);
+    });
+
+    tearDown(() => f.dispose());
+
+    test('views follow the text: recent, search, path, picked', () async {
+      expect(f.view, FolderView.recent);
+      expect(f.recentEntries.single.name, 'console');
+      f.setQuery('port');
+      expect(f.view, FolderView.search);
+      f.setQuery('~/code');
+      expect(f.view, FolderView.path);
+      await settle();
+      expect(calls['/fs/find'], isNull, reason: 'debounced: only the last text is asked for');
+      expect(calls['/fs/dirs']!.single.$1, <String, String>{'path': '~/code'});
+      f.setQuery('');
+      expect(f.view, FolderView.recent);
+      f.pick('/srv/dev/code/portal');
+      expect(f.view, FolderView.picked);
+      expect(f.pickedName, 'portal');
+      expect(calls['/fs/dirs']!.last.$1, <String, String>{'path': '/srv/dev/code/portal'});
+      f.change();
+      expect(f.view, FolderView.recent);
+      expect(f.editing, isTrue);
+      expect(f.picked, '/srv/dev/code/portal', reason: '«Cambiar» keeps the folder until another is chosen');
+    });
+
+    test('only the newest reply paints; older rows stay while the next one loads', () async {
+      f.setQuery('po');
+      await settle();
+      f.setQuery('portal');
+      await settle();
+      final List<(Map<String, String>, Completer<Object?>)> finds = calls['/fs/find']!;
+      expect(finds.map(((Map<String, String>, Completer<Object?>) c) => c.$1['q']).toList(), <String>['po', 'portal']);
+      expect(finds.first.$1['limit'], '40');
+      finds[1].$2.complete(found('portal', <String>['portal']));
+      await settle();
+      expect(f.results.map((FolderEntry e) => e.name).toList(), <String>['portal']);
+      expect(f.results.single.repo, isTrue);
+      expect(f.loading, isFalse);
+      finds[0].$2.complete(found('po', <String>['portal', 'poster', 'pocket']));
+      await settle();
+      expect(f.results.map((FolderEntry e) => e.name).toList(), <String>['portal'], reason: 'stale reply ignored');
+      f.setQuery('con');
+      await settle();
+      expect(f.loading, isTrue);
+      expect(f.results.single.name, 'portal', reason: 'kept visible while loading');
+      calls['/fs/find']!.last.$2.complete(found('con', <String>['console', 'conf']));
+      await settle();
+      // The live session's console first; another «console» folder after it.
+      expect(f.results.map((FolderEntry e) => (e.short, e.recent)).toList(),
+          <(String, bool)>[('~/code/acme/console', true), ('~/code/console', false), ('~/code/conf', false)]);
+    });
+
+    test('a pick beats a search still on its way', () async {
+      f.setQuery('po');
+      await settle();
+      f.pick('/srv/dev/code/acme/console');
+      calls['/fs/find']!.single.$2.complete(found('po', <String>['portal']));
+      await settle();
+      expect(f.results, isEmpty);
+      expect(f.view, FolderView.picked);
+    });
+
+    test('recent folders that match go first, with the badge, even when not found remotely', () async {
+      f.setQuery('cons');
+      await settle();
+      calls['/fs/find']!.single.$2.complete(found('cons', <String>['constants']));
+      await settle();
+      expect(f.results.map((FolderEntry e) => (e.short, e.recent)).toList(),
+          <(String, bool)>[('~/code/acme/console', true), ('~/code/constants', false)]);
+    });
+
+    test('an older server without /fs/find: searches ~/codebase and ~ instead', () async {
+      f.setQuery('acm');
+      await settle();
+      calls['/fs/find']!.single.$2.completeError(const NotFoundException());
+      await settle();
+      expect(f.findUnavailable, isTrue);
+      final List<(Map<String, String>, Completer<Object?>)> dirs = calls['/fs/dirs']!;
+      expect(dirs.first.$1['path'], '~/codebase');
+      dirs.first.$2.complete(<String, Object?>{
+        'path': '/srv/dev/codebase', 'base': '/srv/dev/codebase', 'exists': true, 'home': '/srv/dev',
+        'dirs': <Object?>[
+          <String, Object?>{'name': 'acme', 'path': '/srv/dev/codebase/acme'},
+          <String, Object?>{'name': 'other', 'path': '/srv/dev/codebase/other'},
+        ],
+      });
+      await settle();
+      calls['/fs/dirs']![1].$2.complete(<String, Object?>{
+        'path': '/srv/dev', 'base': '/srv/dev', 'exists': true, 'home': '/srv/dev',
+        'dirs': <Object?>[
+          <String, Object?>{'name': 'codebase', 'path': '/srv/dev/codebase'},
+          <String, Object?>{'name': 'Academia', 'path': '/srv/dev/Academia'},
+        ],
+      });
+      await settle();
+      expect(f.results.map((FolderEntry e) => e.short).toList(), <String>['~/codebase/acme', '~/Academia'],
+          reason: 'a recent folder only goes first when its name matches');
+      // Next queries go straight to the fallback list (no second /fs/find).
+      f.setQuery('other');
+      await settle();
+      expect(calls['/fs/find']!.length, 1);
+      expect(f.results.map((FolderEntry e) => e.name).toList(), <String>['other']);
+    });
+
+    test('a typed path that does not exist lists the subfolders that start like it', () async {
+      f.setQuery('~/codebase/Com');
+      await settle();
+      calls['/fs/dirs']!.single.$2.complete(<String, Object?>{
+        'path': '/srv/dev/codebase/Com', 'base': '/srv/dev/codebase', 'exists': false, 'missing': 'Com',
+        'home': '/srv/dev',
+        'dirs': <Object?>[
+          <String, Object?>{'name': 'ComandOS', 'path': '/srv/dev/codebase/ComandOS'},
+          <String, Object?>{'name': 'acme', 'path': '/srv/dev/codebase/acme'},
+        ],
+      });
+      await settle();
+      expect(f.pathDirs, <(String, String)>[('ComandOS', '/srv/dev/codebase/ComandOS')]);
+      expect(f.home, '/srv/dev');
     });
   });
 
   group('NewSession panel', () {
     late List<(String, Map<String, Object?>)> posts;
+    late List<Uri> gets;
     late http.Response Function(Map<String, Object?> body) onCreate;
+    late bool findAvailable;
+    late bool activeTab;
 
     Future<String?> Function() open(WidgetTester tester) {
       String? result;
@@ -386,15 +643,34 @@ void main() {
       };
     }
 
+    Finder byKey(String k) => find.byKey(ValueKey<String>(k));
+
+    Future<void> tapKey(WidgetTester tester, String k) async {
+      await tester.ensureVisible(byKey(k));
+      await tester.pumpAndSettle();
+      await tester.tap(byKey(k));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> typeFolder(WidgetTester tester, String text) async {
+      await tester.enterText(byKey('ns-cwd'), text);
+      await tester.pump(const Duration(milliseconds: 150));
+      await tester.pumpAndSettle();
+    }
+
     setUp(() {
       resetNewSessionMemory();
       sl.reset();
       posts = <(String, Map<String, Object?>)>[];
+      gets = <Uri>[];
+      findAvailable = true;
+      activeTab = true;
       onCreate = (_) => jsonResponse(<String, Object?>{'ok': true, 'session': 'term-r123', 'label': 'portal'});
       final MockClient client = MockClient((http.Request r) async {
         final Map<String, Object?> body =
             r.method == 'POST' ? (jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, Object?>) : <String, Object?>{};
         if (r.method == 'POST') posts.add((r.url.path, body));
+        if (r.method == 'GET') gets.add(r.url);
         switch (r.url.path) {
           case '/providers':
             return http.Response.bytes(utf8.encode(providersJson), 200,
@@ -404,16 +680,49 @@ void main() {
           case '/state':
             if (r.url.queryParameters['live'] != '1') return jsonResponse(<String, Object?>{'error': 'live'}, 400);
             return jsonResponse(<Object?>[
-              <String, Object?>{'session': 'term-r1', 'pane': '%3', 'cwd': '/srv/dev/code/acme/portal'},
-              <String, Object?>{'session': 'term-r2', 'pane': '%4', 'cwd': '/srv/dev/code/acme/console'},
+              <String, Object?>{'session': 'term-r1', 'pane': '%3', 'cwd': '/srv/dev/code/acme/portal', 'ts': 100},
+              <String, Object?>{'session': 'term-r2', 'pane': '%4', 'cwd': '/srv/dev/code/acme/console', 'ts': 200},
             ]);
           case '/active-tab':
-            return jsonResponse(<String, Object?>{'session': 'term-r1', 'pane': '%3'});
+            return activeTab
+                ? jsonResponse(<String, Object?>{'session': 'term-r1', 'pane': '%3'})
+                : jsonResponse(<String, Object?>{});
           case '/optimization/plans':
             return jsonResponse(<String, Object?>{'plans': <Object?>[], 'active': ''});
+          case '/fs/find':
+            if (!findAvailable) return jsonResponse(<String, Object?>{'error': 'Not found'}, 404);
+            final String q = r.url.queryParameters['q'] ?? '';
+            return jsonResponse(<String, Object?>{
+              'q': q,
+              'home': '/srv/dev',
+              'indexed': 3,
+              'ms': 1,
+              'results': <Object?>[
+                if ('console'.contains(q))
+                  <String, Object?>{
+                    'path': '/srv/dev/code/acme/console', 'short': '~/code/acme/console', 'name': 'console',
+                    'repo': true, 'score': 9,
+                  },
+                if ('constants'.contains(q))
+                  <String, Object?>{
+                    'path': '/srv/dev/code/constants', 'short': '~/code/constants', 'name': 'constants',
+                    'repo': false, 'score': 5,
+                  },
+              ],
+            });
           case '/fs/dirs':
             final String p = r.url.queryParameters['path'] ?? '';
-            return jsonResponse(p.contains('nonexist') ? missingDirs : portalDirs);
+            if (p.contains('nonexist')) return jsonResponse(missingDirs);
+            if (p == '~' || p == '~/codebase') {
+              return jsonResponse(<String, Object?>{
+                'path': '/srv/dev', 'base': '/srv/dev', 'exists': true, 'home': '/srv/dev',
+                'dirs': <Object?>[
+                  <String, Object?>{'name': 'code', 'path': '/srv/dev/code'},
+                  <String, Object?>{'name': 'contabilidad', 'path': '/srv/dev/contabilidad'},
+                ],
+              });
+            }
+            return jsonResponse(portalDirs);
           case '/fs/mkdir':
             return jsonResponse(<String, Object?>{'ok': true, 'path': body['path']});
           case '/session-new':
@@ -431,28 +740,38 @@ void main() {
 
     tearDown(sl.reset);
 
-    testWidgets('shows every section of the web modal with the active folder', (WidgetTester tester) async {
+    testWidgets('a full page: the current tab\'s folder chosen, agent, model, fixed footer', (WidgetTester tester) async {
       await open(tester)();
       expect(find.text('Nueva sesión'), findsOneWidget);
-      for (final String label in <String>['CARPETA DEL PROYECTO', 'HARNESS', 'MOTOR', 'MODELO', 'PENSAMIENTO', 'CUENTA DEL HARNESS']) {
+      for (final String label in <String>['CARPETA', 'AGENTE', 'MOTOR', 'MODELO', 'PENSAMIENTO', 'CUENTA DEL HARNESS']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
-      expect(find.text('/srv/dev/code/acme/portal'), findsOneWidget);
-      expect(find.text('portal'), findsOneWidget); // last crumb
+      // The pill and the subfolders of the chosen folder.
+      expect(byKey('ns-picked'), findsOneWidget);
+      expect(find.descendant(of: byKey('ns-picked'), matching: find.text('portal')), findsOneWidget);
+      expect(find.descendant(of: byKey('ns-picked'), matching: find.text('~/code/acme/portal')), findsOneWidget);
+      expect(find.text('Cambiar'), findsOneWidget);
+      expect(find.text('Subcarpetas de portal'), findsOneWidget);
       expect(find.text('apps'), findsOneWidget);
-      expect(find.text('carpeta existente'), findsOneWidget);
+      expect(find.text('docs'), findsOneWidget);
+      expect(byKey('ns-cwd'), findsNothing, reason: 'the field collapsed into the pill');
+      // Agent chips, model, footer.
       expect(find.text('Codex CLI'), findsOneWidget);
       expect(find.text('GPT-6.1 Sol'), findsOneWidget);
-      expect(find.text('▶ 12 combinaciones listas · 4 bloqueadas (login / gateway)'), findsOneWidget);
-      expect(find.text('sin aprobaciones (dangerously)'), findsOneWidget);
+      expect(find.text('Más opciones'), findsOneWidget);
+      expect(find.text('sin aprobaciones (dangerously)'), findsNothing, reason: 'inside «Más opciones»');
       expect(find.text('Codex CLI → Codex · gpt-6.1-sol · high'), findsOneWidget);
-      for (final String b in <String>['Cancelar', 'Sin perfil', 'Elegir perfil', 'Quitar perfil', 'Solo terminal', 'Crear']) {
-        expect(find.text(b), findsOneWidget, reason: b);
-      }
+      expect(find.text('Solo terminal'), findsOneWidget);
+      expect(find.text('Crear en portal'), findsOneWidget);
+      // The footer sits at the bottom of the screen, the header at the top.
+      expect(tester.getBottomLeft(byKey('ns-go')).dy, greaterThan(915 - 80));
+      expect(tester.getTopLeft(find.text('Nueva sesión')).dy, lessThan(40));
+      expect(tester.getSize(byKey('ns-go')).height, greaterThanOrEqualTo(44));
       expect(posts, isEmpty);
     });
 
-    testWidgets('Crear posts the web body and completes with the session name', (WidgetTester tester) async {
+    testWidgets('«Crear en …» posts the web body (danger from «Más opciones») and completes with the session',
+        (WidgetTester tester) async {
       String? result = '__open__';
       bool closed = false;
       tester.view.physicalSize = const Size(412, 915);
@@ -473,11 +792,15 @@ void main() {
       ));
       await tester.tap(find.text('abrir'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('sin aprobaciones (dangerously)'));
-      await tester.tap(find.text('sin aprobaciones (dangerously)'));
-      await tester.pump();
-      await tester.ensureVisible(find.text('Crear'));
-      await tester.tap(find.text('Crear'));
+      await tapKey(tester, 'ns-more');
+      expect(find.text('Elegir perfil'), findsOneWidget);
+      expect(find.text('Sin perfil'), findsOneWidget);
+      expect(find.text('12 combinaciones listas · 4 bloqueadas (login / gateway)'), findsOneWidget);
+      await tapKey(tester, 'ns-unavailable');
+      expect(find.text('Codex CLI → Claude'), findsOneWidget);
+      await tapKey(tester, 'ns-danger');
+      expect(find.text('sin aprobaciones'), findsOneWidget, reason: 'the flag shows on the section head');
+      await tester.tap(byKey('ns-go'));
       await tester.pumpAndSettle();
       expect(closed, isTrue);
       expect(result, 'term-r123');
@@ -493,46 +816,114 @@ void main() {
       });
     });
 
-    testWidgets('a missing folder shows the web toast and the «Crear carpeta» button', (WidgetTester tester) async {
+    testWidgets('search mode switching: recent → /fs/find → path → pick a subfolder', (WidgetTester tester) async {
+      await open(tester)();
+      await tapKey(tester, 'ns-change');
+      expect(byKey('ns-cwd'), findsOneWidget);
+      expect(find.text('Busca un proyecto o escribe una ruta'), findsOneWidget);
+      expect(find.text('Recientes'), findsOneWidget);
+      // Most recently active first.
+      final double console = tester.getTopLeft(find.text('console')).dy;
+      final double portal = tester.getTopLeft(find.text('portal')).dy;
+      expect(console, lessThan(portal));
+
+      await typeFolder(tester, 'cons');
+      final List<Uri> finds = gets.where((Uri u) => u.path == '/fs/find').toList();
+      expect(finds.length, 1, reason: 'debounced: one request for the whole word');
+      expect(finds.single.queryParameters, <String, String>{'q': 'cons', 'limit': '40'});
+      expect(find.text('Recientes'), findsNothing);
+      expect(find.text('~/code/acme/console'), findsOneWidget);
+      expect(find.text('~/code/constants'), findsOneWidget);
+      expect(find.text('reciente'), findsOneWidget, reason: 'console is a live session folder');
+      expect(tester.getTopLeft(find.text('~/code/acme/console')).dy,
+          lessThan(tester.getTopLeft(find.text('~/code/constants')).dy));
+
+      await typeFolder(tester, '~/code/acme/portal');
+      expect(gets.last.path, '/fs/dirs');
+      expect(gets.last.queryParameters['path'], '~/code/acme/portal');
+      expect(byKey('ns-crumbs'), findsOneWidget);
+      expect(find.text('Usar portal'), findsOneWidget);
+      expect(find.text('apps'), findsOneWidget);
+
+      await tester.tap(find.text('apps'));
+      await tester.pumpAndSettle();
+      expect(byKey('ns-picked'), findsOneWidget);
+      expect(find.text('Crear en apps'), findsOneWidget);
+      expect(gets.last.queryParameters['path'], '/srv/dev/code/acme/portal/apps');
+
+      // Clear on an empty field goes back to the chosen folder.
+      await tapKey(tester, 'ns-change');
+      await tapKey(tester, 'ns-cwd-clear');
+      expect(byKey('ns-picked'), findsOneWidget);
+      expect(find.text('Crear en apps'), findsOneWidget);
+    });
+
+    testWidgets('without /fs/find (older server) the search falls back to ~ and ~/codebase', (WidgetTester tester) async {
+      findAvailable = false;
+      await open(tester)();
+      await tapKey(tester, 'ns-change');
+      await typeFolder(tester, 'conta');
+      expect(find.textContaining('aún no tiene la búsqueda completa'), findsOneWidget);
+      expect(find.text('~/contabilidad'), findsOneWidget);
+      await tester.tap(find.text('~/contabilidad'));
+      await tester.pumpAndSettle();
+      expect(find.text('Crear en contabilidad'), findsOneWidget);
+    });
+
+    testWidgets('a missing folder: «no existe», Crear carpeta, and the create error toast', (WidgetTester tester) async {
       onCreate = (_) => jsonResponse(
             <String, Object?>{'error': 'Esa carpeta no existe todavía.', 'code': 'cwd_missing', 'cwd': '/x'},
             409,
           );
       await open(tester)();
-      await tester.enterText(find.byKey(const ValueKey<String>('ns-cwd')), '/srv/dev/nonexist/xyz');
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
+      await tapKey(tester, 'ns-change');
+      await typeFolder(tester, '/srv/dev/nonexist/xyz');
       expect(find.text('~/nonexist/xyz no existe'), findsOneWidget);
-      expect(find.text('Crear carpeta'), findsOneWidget);
-      await tester.ensureVisible(find.text('Crear'));
-      await tester.tap(find.text('Crear'));
+      // Enter chooses the typed path as it is.
+      await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
-      expect(find.text('Esa carpeta no existe — usa el botón Crear carpeta de abajo.'), findsOneWidget);
-      expect(find.text('Nueva sesión'), findsOneWidget, reason: 'the panel stays open');
+      expect(byKey('ns-picked'), findsOneWidget);
+      expect(find.text('~/nonexist/xyz no existe'), findsOneWidget);
+      await tester.tap(byKey('ns-go'));
+      await tester.pumpAndSettle();
+      expect(find.text('Esa carpeta no existe — usa el botón Crear carpeta.'), findsOneWidget);
+      expect(find.text('Nueva sesión'), findsOneWidget, reason: 'the page stays open');
       await tester.pump(const Duration(seconds: 5)); // the toast goes away
-      await tester.ensureVisible(find.text('Crear carpeta'));
-      await tester.tap(find.text('Crear carpeta'));
-      await tester.pumpAndSettle();
+      await tapKey(tester, 'ns-mkdir');
       expect(posts.last.$1, '/fs/mkdir');
       expect(posts.last.$2, <String, Object?>{'path': '/srv/dev/nonexist/xyz'});
       expect(find.text('Carpeta creada: ~/nonexist/xyz'), findsOneWidget);
       await tester.pump(const Duration(seconds: 5));
     });
 
+    testWidgets('no folder yet: «Crear sesión» disabled, recent folders shown', (WidgetTester tester) async {
+      activeTab = false;
+      await open(tester)();
+      expect(byKey('ns-picked'), findsNothing);
+      expect(find.text('Recientes'), findsOneWidget);
+      expect(find.text('Crear sesión'), findsOneWidget);
+      expect(find.text('Elige una carpeta para crear la sesión'), findsOneWidget);
+      await tester.tap(byKey('ns-go'));
+      await tester.tap(byKey('ns-term'));
+      await tester.pumpAndSettle();
+      expect(posts, isEmpty);
+      await tester.tap(find.text('console'));
+      await tester.pumpAndSettle();
+      expect(find.text('Crear en console'), findsOneWidget);
+    });
+
     testWidgets('a 400 shows the server text', (WidgetTester tester) async {
       onCreate = (_) => jsonResponse(<String, Object?>{'error': 'carpeta invalida'}, 400);
       await open(tester)();
-      await tester.ensureVisible(find.text('Crear'));
-      await tester.tap(find.text('Crear'));
+      await tester.tap(byKey('ns-go'));
       await tester.pumpAndSettle();
       expect(find.text('carpeta invalida'), findsOneWidget);
       await tester.pump(const Duration(seconds: 5));
       expect(find.text('carpeta invalida'), findsNothing);
     });
 
-    testWidgets('Solo terminal posts a plain shell; picking Shell hides the agent rows', (WidgetTester tester) async {
+    testWidgets('Solo terminal posts a plain shell', (WidgetTester tester) async {
       await open(tester)();
-      await tester.ensureVisible(find.text('Solo terminal'));
       await tester.tap(find.text('Solo terminal'));
       await tester.pumpAndSettle();
       expect(posts.single.$2, <String, Object?>{
@@ -540,7 +931,7 @@ void main() {
       });
     });
 
-    testWidgets('choosing Claude Code refilters motors, models and accounts', (WidgetTester tester) async {
+    testWidgets('choosing Claude Code refilters motors, models and accounts; Shell hides them', (WidgetTester tester) async {
       await open(tester)();
       await tester.tap(find.text('Claude Code'));
       await tester.pumpAndSettle();
@@ -553,7 +944,30 @@ void main() {
       expect(find.text('CUENTA DEL HARNESS'), findsNothing);
     });
 
-    testWidgets('Cancelar completes with null and creates nothing', (WidgetTester tester) async {
+    testWidgets('«Buscar modelo» filters a long catalog and picks from it', (WidgetTester tester) async {
+      await open(tester)();
+      await tester.tap(find.text('ComandOS ACP'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(of: byKey('ns-motor'), matching: byKey('opencode')));
+      await tester.pumpAndSettle();
+      expect(find.text('Buscar modelo (10)'), findsOneWidget);
+      expect(find.text('Qwen3.8 27B (Groq)'), findsNothing, reason: 'only the first 8 as chips');
+      await tapKey(tester, 'ns-model-search-open');
+      expect(find.byType(NsModelRow), findsNWidgets(10));
+      await tester.enterText(byKey('ns-model-q'), 'groq QWEN');
+      await tester.pumpAndSettle();
+      expect(find.byType(NsModelRow), findsNWidgets(2));
+      await tapKey(tester, 'ns-model-row:groq/qwen/qwen3.8-27b');
+      expect(byKey('ns-model-q'), findsNothing, reason: 'the search closes on a pick');
+      expect(find.text('Qwen3.8 27B (Groq)'), findsOneWidget, reason: 'the chosen model joins the chips');
+      expect(find.text('ComandOS ACP → OpenCode · groq/qwen/qwen3.8-27b'), findsOneWidget);
+      await tester.tap(byKey('ns-go'));
+      await tester.pumpAndSettle();
+      expect(posts.single.$2['routeId'], 'acp:opencode');
+      expect(posts.single.$2['model'], 'groq/qwen/qwen3.8-27b');
+    });
+
+    testWidgets('the close button completes with null and creates nothing', (WidgetTester tester) async {
       String? result = '__open__';
       bool closed = false;
       await tester.pumpWidget(MaterialApp(
@@ -571,12 +985,27 @@ void main() {
       ));
       await tester.tap(find.text('abrir'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Cancelar'));
-      await tester.tap(find.text('Cancelar'));
+      await tester.tap(byKey('ns-close'));
       await tester.pumpAndSettle();
       expect(closed, isTrue);
       expect(result, isNull);
       expect(posts, isEmpty);
+    });
+
+    testWidgets('a wide screen gets a centred card', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (BuildContext context) => Center(
+            child: TextButton(onPressed: () => showNewSession(context), child: const Text('abrir')),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('abrir'));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(byKey('ns-body')).width, lessThanOrEqualTo(640));
     });
   });
 }

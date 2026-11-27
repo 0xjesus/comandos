@@ -8,7 +8,7 @@ import '../../ui/web_kit.dart';
 /// True when [provider] has a painted logo (otherwise the card shows the
 /// first letter of the CLI name).
 bool hasUsageLogo(String provider) =>
-    const <String>{'claude', 'codex', 'grok', 'opencode', 'agy'}.contains(provider);
+    const <String>{'claude', 'codex', 'grok', 'opencode', 'agy', 'omp'}.contains(provider);
 
 /// The logo of [provider] at [size] (14 in the cards).
 class UsageLogo extends StatelessWidget {
@@ -38,6 +38,13 @@ const String _codexMark =
 
 const String _grok =
     'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815';
+
+/// Oh My Pi (`dash/icons/omp.svg`): a π stroked in `currentColor`.
+const List<String> _omp = <String>[
+  'M4.5 8c1-1.6 2.4-2.5 4.2-2.5H19.5',
+  'M9.5 5.5v13',
+  'M15.5 5.5v9.5a3 3 0 0 0 3 3',
+];
 
 const String _agyMask =
     'M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z';
@@ -84,6 +91,18 @@ class _LogoPainter extends CustomPainter {
           ..addRect(const Rect.fromLTRB(128, 96, 384, 416))
           ..addRect(const Rect.fromLTRB(192, 160, 320, 352));
         canvas.drawPath(frame, paint..color = const Color(0xFFFFFFFF));
+      case 'omp':
+        canvas.scale(size.width / 24);
+        final Paint stroke = Paint()
+          ..isAntiAlias = true
+          ..color = ink
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+        for (final String d in _omp) {
+          canvas.drawPath(_p(d), stroke);
+        }
       case 'agy':
         // The Antigravity arch filled with Google's blurred colour blobs.
         canvas.scale(size.width / 24);

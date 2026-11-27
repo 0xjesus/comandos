@@ -91,10 +91,11 @@ String feedInitials(String label) {
   return out.toUpperCase();
 }
 
-/// Small corner glyph of the agent: ✻ Claude, ◎ Codex.
+/// Small corner glyph of the agent: ✻ Claude, ◎ Codex, π Oh My Pi.
 String? feedGlyph(String agent) => switch (agent) {
       'claude' => '✻',
       'codex' => '◎',
+      'omp' => 'π',
       _ => null,
     };
 
