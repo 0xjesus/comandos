@@ -757,7 +757,18 @@ fn agent_command(
                 None => "claude",
             };
             let mut cmd = format!("{prefix}claude");
-            if motor != "claude" {
+            if let Some(engine) = launch_command::direct_engine(registry, motor) {
+                let settings = match launch_command::direct_settings(&opts.home, motor, &engine) {
+                    Ok(path) => path,
+                    Err(why) => return Ok(Launch::Kill(StatusCode::BAD_REQUEST, json!({"error": why}))),
+                };
+                let lock = motor_lock(motor, model);
+                let lock = if lock.is_empty() { lock } else { format!("{lock} ") };
+                cmd = format!(
+                    "{prefix}env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL {lock}claude --settings {}",
+                    shlex_quote(&settings.to_string_lossy())
+                );
+            } else if motor != "claude" {
                 let repo = opts.repo_root.as_ref().ok_or(Fault::Decline)?;
                 let port = proxy_port(repo).map_err(decline)?;
                 let lock = motor_lock(motor, model);
@@ -2000,7 +2011,7 @@ mod account_admin_tests {
         for (pid, value, cmd) in [
             ("11", "/h/a", "claude\0--resume\0"),
             ("12", "/h/a/sub", "node\0/usr/bin/codex\0"),
-            ("13", "/h/ab", "/home/u/.local/bin/claude\0"),
+            ("13", "/h/ab", "/opt/x/.local/bin/claude\0"),
             ("14", "/h/a", "python3\0-m\0http.server\0"),
         ] {
             fs::create_dir_all(root.join(pid)).unwrap();

@@ -63,7 +63,7 @@ class VoiceSettings {
     this.autoReadMode = ReadMode.ending,
     this.continuous = false,
     this.carVoice = kDefaultCarVoice,
-    this.silenceSeconds = 2.5,
+    this.silenceSeconds = 3.0,
     this.autoReadSessions = const <String>{},
     this.lastRead = const <String, String>{},
   });
@@ -168,7 +168,7 @@ class VoiceSettings {
       carVoice: json['carVoice'] is String && RegExp(r'^([a-z]{2,3}-[A-Za-z0-9]{2,4}-[A-Za-z0-9]+Neural)?$').hasMatch(json['carVoice'] as String)
           ? json['carVoice'] as String
           : kDefaultCarVoice,
-      silenceSeconds: dbl('silenceSeconds', 2.5).clamp(1.0, 6.0),
+      silenceSeconds: dbl('silenceSeconds', 3.0).clamp(1.0, 6.0),
       autoReadSessions: sessions is List ? <String>{for (final Object? s in sessions) if (s is String) s} : const <String>{},
       lastRead: last is Map
           ? <String, String>{

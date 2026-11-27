@@ -7,13 +7,15 @@ import io.flutter.embedding.engine.FlutterEngine
 /**
  * The only activity. Its Flutter engine comes from [EngineHolder] so the Dart
  * isolate can outlive the activity while "Avisos en segundo plano" is on
- * (the notice watcher runs in the main isolate; see ARCHITECTURE.md). With
- * the watcher off, the engine dies with the activity as usual.
+ * (the notice watcher runs in the main isolate; see ARCHITECTURE.md) or a
+ * Modo auto call is on. Otherwise the engine dies with the activity as usual.
  */
 class MainActivity : FlutterActivity() {
     override fun provideFlutterEngine(context: Context): FlutterEngine =
         EngineHolder.obtain(context)
 
     // No side effects here: the embedding also calls it while saving state.
-    override fun shouldDestroyEngineWithHost(): Boolean = !WatchService.isRunning
+    // A Modo auto call (CarService) keeps the engine too: the call lives in
+    // Dart and must survive the activity with the screen off.
+    override fun shouldDestroyEngineWithHost(): Boolean = !WatchService.isRunning && !CarService.running
 }

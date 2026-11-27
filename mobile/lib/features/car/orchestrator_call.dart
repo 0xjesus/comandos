@@ -13,10 +13,15 @@ import 'wake_phrase.dart';
 
 /// The orchestrator session as the call sees it.
 class OrchSnapshot {
-  const OrchSnapshot({required this.messages, this.ask, required this.loaded});
+  const OrchSnapshot({required this.messages, this.ask, required this.loaded, this.busy = false});
   final List<ChatMessage> messages;
   final AskPrompt? ask;
   final bool loaded;
+
+  /// The desktop sees the orchestrator working (`/session-feed` state
+  /// `work`): an answer is not finished while this is true, even if its
+  /// text stopped changing (a tool running, thinking between steps).
+  final bool busy;
 }
 
 /// What the call needs from the server: open (or find) the orchestrator
@@ -68,7 +73,7 @@ class OrchestratorCall extends ChangeNotifier {
         _link = link,
         _wake = wake,
         _settle = settle ?? const Duration(milliseconds: 3200),
-        _patience = patience ?? const Duration(minutes: 4),
+        _patience = patience ?? const Duration(minutes: 20),
         _quiet = quiet ?? const Duration(seconds: 10),
         _clock = clock ?? DateTime.now;
 
@@ -247,6 +252,7 @@ class OrchestratorCall extends ChangeNotifier {
       if (fresh != null &&
           fresh.isNotEmpty &&
           fresh.last.role == ChatRole.assistant &&
+          !now.busy &&
           DateTime.now().difference(stableSince) >= _settle) {
         return fresh.where((ChatMessage m) => m.role == ChatRole.assistant).map((ChatMessage m) => m.text).join('\n\n');
       }
@@ -303,7 +309,8 @@ class OrchestratorCall extends ChangeNotifier {
     while (gen == _gen && !_ended && DateTime.now().isBefore(until)) {
       _link.poke();
       await _changed(const Duration(milliseconds: 800));
-      final List<ChatMessage> ms = _link.now.messages;
+      final OrchSnapshot now = _link.now;
+      final List<ChatMessage> ms = now.messages;
       int from = ms.length;
       for (int i = ms.length - 1; i >= 0; i--) {
         if (ms[i].hash == base) {
@@ -316,7 +323,10 @@ class OrchestratorCall extends ChangeNotifier {
         seen = fresh.length;
         stableSince = DateTime.now();
       }
-      if (fresh.isNotEmpty && fresh.last.role == ChatRole.assistant && DateTime.now().difference(stableSince) >= _settle) {
+      if (fresh.isNotEmpty &&
+          fresh.last.role == ChatRole.assistant &&
+          !now.busy &&
+          DateTime.now().difference(stableSince) >= _settle) {
         return fresh.where((ChatMessage m) => m.role == ChatRole.assistant).map((ChatMessage m) => m.text).join('\n\n');
       }
     }
@@ -400,6 +410,8 @@ class OrchestratorCall extends ChangeNotifier {
     if (gen != _gen || _ended) return;
     switch (r) {
       case WakeResult.heard:
+        // The listener still has the microphone: the turn starts now.
+        _ports.takeAfterWake(w.heard);
         await _listen();
       case WakeResult.stopped:
         _set(OrchPhase.idle, 'En espera');

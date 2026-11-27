@@ -65,6 +65,8 @@ dependencies {
     // «OK ComandOS» in Modo auto: offline speech recognition (WakeWord.kt).
     implementation("com.alphacephei:vosk-android:0.3.75")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
+    // Plain JVM tests of pure Kotlin pieces (TakeEndpointer).
+    testImplementation("junit:junit:4.13.2")
 }
 
 // The wake phrase runs on Vosk's small Spanish model (Apache-2.0, ~40 MB). It

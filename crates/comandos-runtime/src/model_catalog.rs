@@ -16,12 +16,15 @@ pub struct Paths {
     /// `~/.cache/comandos/models/opencode.json`: `opencode models` con nombre
     /// y fecha, lo más nuevo primero.
     pub opencode: PathBuf,
+    /// `~/.cache/comandos/models/refuseless.json`: the `/v1/models` of
+    /// Refuseless (a Claude Code motor), same format.
+    pub refuseless: PathBuf,
     pub cwd: PathBuf,
 }
 /// Catálogos que escribe `cc-model-sync` en un formato ya normalizado:
 /// `{"fetched_at": "...", "models": [{"id", "name", "efforts", "defaultEffort",
 /// "contextWindow"?, "tag"?}]}`.
-pub const CLI_CACHES: [&str; 2] = ["omp", "opencode"];
+pub const CLI_CACHES: [&str; 3] = ["omp", "opencode", "refuseless"];
 pub fn catalog_paths(
     home: &Path,
     cwd: &Path,
@@ -40,16 +43,18 @@ pub fn catalog_paths(
         grok: path("grok", grok_home),
         omp: cache("omp"),
         opencode: cache("opencode"),
+        refuseless: cache("refuseless"),
         cwd: cwd.into(),
     }
 }
 impl Paths {
-    fn entries(&self) -> [(&'static str, &Path); 4] {
+    fn entries(&self) -> [(&'static str, &Path); 5] {
         [
             ("codex", &self.codex),
             ("grok", &self.grok),
             ("omp", &self.omp),
             ("opencode", &self.opencode),
+            ("refuseless", &self.refuseless),
         ]
     }
     fn supplied(&self, path: &Path) -> PathBuf {

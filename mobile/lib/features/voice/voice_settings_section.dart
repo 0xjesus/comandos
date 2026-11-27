@@ -289,7 +289,7 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
             _choice<double>(
               'Deja de escucharte tras un silencio de',
               s.silenceSeconds,
-              const <double>[1.5, 2.5, 4.0],
+              const <double>[1.5, 2.5, 3.0, 4.0, 6.0],
               (double d) => '${d.toStringAsFixed(1)} s',
               (double d) => _set((VoiceSettings x) => x.copyWith(silenceSeconds: d)),
             ),
@@ -305,8 +305,9 @@ class _VoiceSettingsSectionState extends State<VoiceSettingsSection> {
               child: Text(
                 'Gratis. Las voces de Edge suenan más naturales: tu equipo las genera y el texto que se lee '
                 'pasa por Microsoft. Si Edge falla, habla la voz del teléfono, que no sale del teléfono. '
-                '«OK ComandOS» se escucha en el teléfono. Lo que le dices después se transcribe igual que el '
-                'dictado del chat (OpenAI, con tu llave); sin llave, con el reconocimiento del teléfono.',
+                '«OK ComandOS» se escucha en el teléfono, sin internet, y lo que le dices después se graba sin '
+                'cortarte: termina cuando dejas de decir palabras. Se transcribe igual que el dictado del chat '
+                '(OpenAI, con tu llave); sin llave, o si OpenAI falla, vale lo que entendió el teléfono.',
                 style: TextStyle(color: Orbita.dim, fontSize: 12.5, height: 1.35),
               ),
             ),

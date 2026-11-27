@@ -62,6 +62,10 @@ class EdgeVoice implements DeviceSpeech {
   static const int _cacheMax = 40;
   static const int _cacheChars = 120;
 
+  /// Chunks of a long reply rendered ahead ([prepare]): key → file (null: failed).
+  final Map<String, Future<String?>> _ahead = <String, Future<String?>>{};
+  int _aheadSlot = 0;
+
   bool get _edge {
     final DateTime? f = _failed;
     return voice().isNotEmpty && render() != null && (f == null || DateTime.now().difference(f) > cooldown);
@@ -76,6 +80,12 @@ class EdgeVoice implements DeviceSpeech {
     final String key = '${voice()}|${edgeRate(speed)}|$t';
     final String? cached = _cache[key];
     if (cached != null && File(cached).existsSync()) return _out.play(cached, 1.0);
+    final Future<String?>? ahead = _ahead.remove(key);
+    if (ahead != null) {
+      final String? path = await ahead;
+      if (gen != _gen) return false;
+      return path != null ? _out.play(path, 1.0) : phone.speak(t, language: language, speed: speed);
+    }
     final Future<Uint8List> Function(String, String, String) synth = render()!;
     final Uint8List mp3;
     try {
@@ -102,9 +112,34 @@ class EdgeVoice implements DeviceSpeech {
     return _out.play(f.path, 1.0);
   }
 
+  /// Renders [text] now so a later [speak] of it plays at once: the next
+  /// chunk of a long reply renders while this one plays. Nothing when Edge
+  /// is not in use; a failure shows up as the phone's voice in [speak].
+  void prepare(String text, {required double speed}) {
+    final String t = text.trim();
+    if (t.isEmpty || !_edge) return;
+    final String key = '${voice()}|${edgeRate(speed)}|$t';
+    if (_ahead.containsKey(key) || _cache.containsKey(key)) return;
+    final Future<Uint8List> Function(String, String, String) synth = render()!;
+    // A few slots: the chunk playing keeps its file while the next renders.
+    final String name = 'edge-a${_aheadSlot++ % 3}.mp3';
+    _ahead[key] = () async {
+      try {
+        final Uint8List mp3 = await synth(t, voice(), edgeRate(speed)).timeout(wait);
+        final File f = File('${await dir()}/$name');
+        await f.writeAsBytes(mp3, flush: true);
+        return f.path;
+      } catch (_) {
+        _failed = DateTime.now();
+        return null;
+      }
+    }();
+  }
+
   @override
   Future<void> stop() async {
     _gen++;
+    _ahead.clear();
     await Future.wait(<Future<void>>[_out.stop(), phone.stop()]);
   }
 }

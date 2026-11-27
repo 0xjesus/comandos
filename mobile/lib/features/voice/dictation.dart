@@ -96,7 +96,7 @@ class DictationController extends ChangeNotifier {
         _precheck = precheck,
         _beforeRecord = beforeRecord,
         _afterRecord = afterRecord,
-        _silenceSeconds = silenceSeconds ?? (() => 2.5),
+        _silenceSeconds = silenceSeconds ?? (() => 3.0),
         _now = now,
         _timer = timer,
         _delay = delay ?? ((Duration d) => Future<void>.delayed(d));
@@ -208,6 +208,7 @@ class DictationController extends ChangeNotifier {
           if (t == null || now - t.createdAtMs > keepPending.inMilliseconds) {
             await _rm(e.path);
             await _rm('$base.m4a');
+            await _rm('$base.wav');
             continue;
           }
           final File a = File(t.path);
@@ -243,10 +244,12 @@ class DictationController extends ChangeNotifier {
       final Object? j = jsonDecode(await f.readAsString());
       if (j is! Map || j['owner'] is! String || j['id'] is! String || j['createdAtMs'] is! num) return null;
       final String p = f.path;
+      // Modo auto's takes are WAV files recorded natively (see [adopt]).
+      final String ext = j['ext'] == 'wav' ? 'wav' : 'm4a';
       return PendingTake(
         id: j['id'] as String,
         owner: j['owner'] as String,
-        path: '${p.substring(0, p.length - 5)}.m4a',
+        path: '${p.substring(0, p.length - 5)}.$ext',
         createdAtMs: (j['createdAtMs'] as num).toInt(),
       );
     } catch (_) {
@@ -397,6 +400,53 @@ class DictationController extends ChangeNotifier {
       final Completer<void>? a = _abort;
       if (a != null && !a.isCompleted) a.complete();
     }
+  }
+
+  /// Where recordings wait ([adopt] takes files recorded there).
+  Future<String> takesDir() => _dir();
+
+  /// Modo auto records its takes itself (`CarListener.kt`, a WAV in
+  /// [takesDir]): [path] becomes a take of [owner] and is transcribed like a
+  /// dictation (same retries, same rules: the file is deleted only once its
+  /// text is safe with the owner, and kept for a retry when it fails).
+  Future<DictationOutcome> adopt(String owner, String path) async {
+    if (_phase != DictationPhase.idle) return const DictationDenied('Ya hay una grabación en curso.');
+    _phase = DictationPhase.transcribing;
+    _owner = owner;
+    _cancelled = false;
+    _notices.remove(owner);
+    notifyListeners();
+    await load();
+    final String name = path.substring(path.lastIndexOf('/') + 1);
+    final int dot = name.lastIndexOf('.');
+    final PendingTake take = PendingTake(
+      id: dot < 0 ? name : name.substring(0, dot),
+      owner: owner,
+      path: path,
+      createdAtMs: _now(),
+    );
+    try {
+      // Meta first: a transcription interrupted by a crash is still found.
+      await File(take.metaPath).writeAsString(
+          jsonEncode(<String, Object?>{
+            'id': take.id,
+            'owner': owner,
+            'createdAtMs': take.createdAtMs,
+            if (path.endsWith('.wav')) 'ext': 'wav',
+          }),
+          flush: true);
+    } catch (_) {}
+    _current = take;
+    final Completer<DictationOutcome> done = _done = Completer<DictationOutcome>();
+    if (_cancelled) {
+      await _forget(take);
+      _finish(const DictationCancelled());
+      return done.future;
+    }
+    // The outcome comes before the text is safe with its owner (Modo auto
+    // holds it until it is sent): do not wait for that here.
+    unawaited(_transcribeTake(take));
+    return done.future;
   }
 
   /// Transcribes a pending take again.

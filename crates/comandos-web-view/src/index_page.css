@@ -565,6 +565,8 @@
   .ns-chips .pmark{display:inline-flex;width:13px;height:13px;vertical-align:-2px}
   .ns-chips .ns-tag{font-size:9px;font-weight:700;letter-spacing:.04em;color:var(--done);text-transform:uppercase}
   .ns-chips .ns-more-models{border-style:dashed}
+  .ns-presets button{font-family:inherit;font-size:12px;font-weight:600;color:var(--text);border-radius:10px}
+  .ns-presets button.on{color:var(--brand)}
   #ns-model{max-height:220px;overflow-y:auto}
   .ns-model-find{background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:5px 9px;color:var(--text);
     font-family:var(--mono);font-size:11px;width:min(240px,55%)}

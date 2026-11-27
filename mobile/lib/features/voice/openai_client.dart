@@ -192,9 +192,11 @@ class OpenAiClient {
     } catch (_) {
       throw const OpenAiException(OpenAiErrorKind.badRequest);
     }
+    // Modo auto's takes are WAV (recorded natively); dictation is AAC.
+    final bool wav = path.endsWith('.wav');
     final MultipartBuilder body = MultipartBuilder()
       ..field('model', o.model)
-      ..file('file', 'dictado.m4a', 'audio/mp4', audio);
+      ..file('file', wav ? 'dictado.wav' : 'dictado.m4a', wav ? 'audio/wav' : 'audio/mp4', audio);
     final String prompt = o.prompt;
     if (prompt.isNotEmpty) body.field('prompt', prompt);
     if (o.modernFields) {
@@ -212,8 +214,9 @@ class OpenAiClient {
       contentType: body.contentType,
       body: body.finish(),
       // A long dictation takes longer to upload and transcribe: one more
-      // second per second of audio (32 kbps ≈ 4 KB/s), on top of the base.
-      timeout: sttTimeout + Duration(seconds: audio.length ~/ 4000),
+      // second per second of audio (AAC 32 kbps ≈ 4 KB/s, WAV 16 kHz 16-bit
+      // = 32 KB/s), on top of the base.
+      timeout: sttTimeout + Duration(seconds: audio.length ~/ (wav ? 32000 : 4000)),
       abort: abort,
     );
     try {

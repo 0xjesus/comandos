@@ -241,14 +241,15 @@ class NativeBridge :
             "watchRunning" -> result.success(WatchService.isRunning)
             "carStart" -> result.success(CarService.start(context))
             "carStop" -> {
-                Thread { WakeWord.stop() }.start()
+                Thread { CarListener.stop() }.start()
                 CarService.stop(context)
                 result.success(null)
             }
-            // «OK ComandOS»: offline listening while the Modo auto call sleeps.
+            // Modo auto's microphone (CarListener): «OK ComandOS» while the call
+            // sleeps, then the person's turn without letting the microphone go.
             // Starting and stopping wait for the microphone, so off the main thread.
             "wakeStart" -> Thread {
-                WakeWord.start(
+                CarListener.sleep(
                     context,
                     { text, final -> channel?.invokeMethod("wakeText", mapOf("text" to text, "final" to final)) },
                     { why -> channel?.invokeMethod("wakeError", why) },
@@ -256,9 +257,31 @@ class NativeBridge :
                 Handler(Looper.getMainLooper()).post { result.success(true) }
             }.start()
             "wakeStop" -> Thread {
-                WakeWord.stop()
+                CarListener.stop()
                 Handler(Looper.getMainLooper()).post { result.success(null) }
             }.start()
+            // Completes when the take is over: {end, path?, text?, words?, ms?, error?}.
+            "takeStart" -> {
+                val spec = CarListener.TakeSpec(
+                    dir = call.argument<String>("dir") ?: context.cacheDir.path,
+                    silenceMs = (call.argument<Number>("silenceMs") ?: 3000).toLong(),
+                    noWordsMs = (call.argument<Number>("noWordsMs") ?: 8000).toLong(),
+                    maxMs = (call.argument<Number>("maxMs") ?: 600000).toLong(),
+                    preRollMs = (call.argument<Number>("preRollMs") ?: 2500).toInt(),
+                    skipHint = (call.argument<Number>("skip") ?: 0).toInt(),
+                    onLevel = { db -> Handler(Looper.getMainLooper()).post { channel?.invokeMethod("takeLevel", db) } },
+                    done = { r -> result.success(r) },
+                )
+                Thread { CarListener.take(context, spec) }.start()
+            }
+            "takeEnd" -> {
+                CarListener.end()
+                result.success(null)
+            }
+            "takeCancel" -> {
+                CarListener.cancel()
+                result.success(null)
+            }
             "requestBluetooth" -> {
                 // The car's microphone over Bluetooth (Android 12+ asks for it).
                 val activity = binding?.activity

@@ -310,6 +310,81 @@ class WizardModel {
           ),
       ];
 
+  // ---- Presets («Atajos») ---------------------------------------------------
+
+  /// The model [p] names on its motor, or null when the motor lacks it.
+  MotorModel? _presetModel(ProviderPreset p) {
+    for (final MotorModel m in motorInfo(p.motor)?.models ?? const <MotorModel>[]) {
+      if (m.id == p.model) return m;
+    }
+    return null;
+  }
+
+  /// A preset shows only when a hand pick could reach the same setup: its
+  /// harness is in the HARNESS row, its `harness:motor` route is selectable
+  /// and its motor offers the model.
+  ///
+  /// Effort: when the model lists efforts and the preset's is not one of them
+  /// the chip is hidden, because its label promises that effort («alto») and
+  /// [selectDefaults] would silently swap in the model's default. When the
+  /// model lists no efforts at all (OpenCode, Oh My Pi catalogs) there is no
+  /// «Pensamiento» row to honour, so the effort is moot and the chip stays.
+  bool presetAvailable(ProviderPreset p) {
+    if (p.harness == 'shell' || !harnessChips.any((WizardChip c) => c.id == p.harness)) return false;
+    final MatrixRoute? r = route(p.harness, p.motor);
+    if (r == null || !r.selectable) return false;
+    final MotorModel? m = _presetModel(p);
+    if (m == null) return false;
+    return p.effort.isEmpty || m.efforts.isEmpty || m.efforts.contains(p.effort);
+  }
+
+  /// «Atajos» chips: the registry's presets this registry can honour.
+  List<WizardChip> get presetChips => <WizardChip>[
+        for (final ProviderPreset p in registry.presets)
+          if (presetAvailable(p))
+            WizardChip(id: p.id, label: p.label, icon: harnessInfo(p.harness)?.icon ?? '', model: p.model, title: p.label),
+      ];
+
+  /// The effort a tap on [p] leaves chosen: null when the model lists no
+  /// efforts (moot), the preset's own, else the model's default exactly as
+  /// [selectDefaults] picks it. An empty preset effort means the model default,
+  /// not whatever effort was left from earlier, so one chip always gives the
+  /// same setup.
+  String? _presetEffort(ProviderPreset p, MotorModel m) {
+    if (m.efforts.isEmpty) return null;
+    if (p.effort.isNotEmpty) return p.effort;
+    return m.defaultEffort.isNotEmpty ? m.defaultEffort : m.efforts.first;
+  }
+
+  /// Id of the first preset the selection matches, else empty.
+  String get currentPresetId {
+    for (final ProviderPreset p in registry.presets) {
+      if (p.harness != sel.harness || p.motor != sel.motor || p.model != sel.model) continue;
+      if (!presetAvailable(p)) continue;
+      final String? effort = _presetEffort(p, _presetModel(p)!);
+      if (effort == null || effort == sel.effort) return p.id;
+    }
+    return '';
+  }
+
+  /// One tap = the same chip callbacks a hand pick runs, in row order, so
+  /// accounts, defaults and the route id follow exactly as they would.
+  void applyPreset(ProviderPreset p) {
+    if (!presetAvailable(p)) return;
+    pickHarness(p.harness);
+    if (sel.motor != p.motor) pickMotor(p.motor);
+    pickModel(p.model);
+    final String? effort = _presetEffort(p, model);
+    if (effort != null) pickEffort(effort);
+  }
+
+  /// [applyPreset] by id; unknown ids do nothing.
+  void applyPresetId(String id) {
+    for (final ProviderPreset p in registry.presets) {
+      if (p.id == id) return applyPreset(p);
+    }
+  }
+
   // ---- Choices (chip callbacks) --------------------------------------------
 
   void pickHarness(String h) {

@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/models/ask_prompt.dart';
@@ -12,7 +14,10 @@ import '../voice/dictation.dart';
 import '../voice/text_prep.dart';
 import '../voice/voice_services.dart';
 import '../voice/voice_settings.dart';
+import 'car_mic.dart';
+import 'edge_voice.dart';
 import 'on_device.dart';
+import 'wake_phrase.dart';
 
 enum SendKind {
   delivered,
@@ -40,6 +45,11 @@ class SendOutcome {
 abstract class CarPorts {
   /// Conversación continua.
   bool get continuous;
+
+  /// «OK ComandOS» matched in [heard] and the listener still has the
+  /// microphone: the person's turn starts now (before the earcon), so words
+  /// said in the same breath are kept. The next [listen] takes it.
+  void takeAfterWake(String heard);
 
   /// Records (auto-stops on silence) and transcribes for [session].
   /// [onTranscribing] fires when recording ends and transcription starts.
@@ -109,9 +119,14 @@ enum CarButton {
 /// [ChatController].
 ///
 /// Voice: Modo auto speaks with Edge (free, rendered by the desktop) or the
-/// phone's voice. What the person says is recorded and transcribed like
-/// the chat's dictation (OpenAI with the person's key); without a key, and
-/// for short spoken answers, the phone's recognizer.
+/// phone's voice. What the person says is recorded by Modo auto's own
+/// microphone ([CarMic]: the listener that heard «OK ComandOS» keeps going,
+/// and the turn ends when no new words are heard) and transcribed like the
+/// chat's dictation (OpenAI with the person's key); without a key, or when
+/// OpenAI fails, what the offline recognizer heard is the text. A take in
+/// which words were heard is never dropped. Short spoken answers use the
+/// phone's recognizer. Without [CarMic] (tests, no model) the chat's
+/// dictation records instead.
 ///
 /// Text safety: Modo auto receives dictated text through a dictation sink
 /// that stays open until the text is either durable in the outbox or saved
@@ -125,12 +140,18 @@ class LiveCarPorts implements CarPorts {
     ConnectivityWatch? connectivity,
     DeviceSpeech? tts,
     DeviceListener? stt,
+    CarMic? mic,
+    Future<void> Function()? holdFocus,
+    Future<void> Function()? releaseFocus,
   })  : _v = voice,
         _outbox = outbox,
         _chat = chat,
         _connectivity = connectivity,
         _tts = tts ?? DeviceVoice.tts,
-        _stt = stt ?? DeviceVoice.stt;
+        _stt = stt ?? DeviceVoice.stt,
+        _mic = mic,
+        _holdFocus = holdFocus ?? holdFocusForRecording,
+        _releaseFocus = releaseFocus ?? releaseAudioFocus;
 
   final VoiceServices _v;
   final Outbox _outbox;
@@ -138,6 +159,19 @@ class LiveCarPorts implements CarPorts {
   final ConnectivityWatch? _connectivity;
   final DeviceSpeech _tts;
   final DeviceListener _stt;
+  final CarMic? _mic;
+  final Future<void> Function() _holdFocus;
+  final Future<void> Function() _releaseFocus;
+
+  /// The take «OK ComandOS» started (the microphone never let go), waiting
+  /// for [listen].
+  Future<MicTake>? _armed;
+
+  /// A [CarMic] take is recording.
+  bool _taking = false;
+
+  /// Input level 0..1 of the take recording now (null: no [CarMic]).
+  ValueListenable<double>? get micLevel => _mic?.level;
 
   /// The phone's recognizer is taking the current dictation (not OpenAI).
   bool _deviceListening = false;
@@ -145,6 +179,15 @@ class LiveCarPorts implements CarPorts {
   int _speakGen = 0;
 
   VoiceSettings get _settings => _v.settings.value;
+
+  Duration get _silence => Duration(milliseconds: (_settings.silenceSeconds * 1000).round());
+
+  @override
+  void takeAfterWake(String heard) {
+    final CarMic? mic = _mic;
+    if (mic == null) return;
+    _armed = mic.take(silence: _silence, afterWake: heard);
+  }
 
 
 
@@ -210,6 +253,14 @@ class LiveCarPorts implements CarPorts {
     final String? owner = _sinkOwner;
     final String? held = _held;
     if (owner != null && held != null && _release != null) await saveDraft(owner, held);
+    final CarMic? mic = _mic;
+    if (!shortAnswer && mic != null) {
+      final Future<MicTake> take = _armed ?? mic.take(silence: _silence);
+      _armed = null;
+      final DictationOutcome? o = await _fromTake(session, take, onTranscribing);
+      if (o != null) return o;
+      // Modo auto's microphone could not record: the chat's dictation does.
+    }
     // What the person says is transcribed like the chat's dictation (the
     // same recording, silence detection and OpenAI transcription, which
     // understands whole sentences); the phone's recognizer cut sentences
@@ -223,10 +274,85 @@ class LiveCarPorts implements CarPorts {
     return o ?? DictationDenied(_stt.problem ?? 'Este teléfono no tiene reconocimiento de voz.');
   }
 
+  /// The person's turn from a [CarMic] take: transcribed with OpenAI (key
+  /// present), else, or when that fails, what the offline recognizer heard.
+  /// Null when nothing could be recorded.
+  Future<DictationOutcome?> _fromTake(String session, Future<MicTake> pending, VoidCallback onTranscribing) async {
+    _taking = true;
+    unawaited(_holdFocus()); // music pauses while the person talks
+    final MicTake t;
+    try {
+      t = await pending;
+    } finally {
+      _taking = false;
+      unawaited(_releaseFocus());
+    }
+    final String? path = t.path;
+    if (t.unusable) return null;
+    if (t.cancelled || path == null) {
+      if (path != null) await _rm(path);
+      return t.cancelled ? const DictationCancelled() : const DictationNothing();
+    }
+    if (!t.words) {
+      // Silence or road noise: never turned into a message.
+      await _rm(path);
+      return const DictationNothing();
+    }
+    final String offline = stripWakePhrase(t.text);
+    onTranscribing();
+    await _v.keys.load();
+    if (_v.keys.status.value.present) {
+      final DictationOutcome o = await _watch(session, () => _d.adopt(session, path), null);
+      switch (o) {
+        case DictationText(:final String text):
+          final String said = stripWakePhrase(text);
+          if (said.isNotEmpty) {
+            if (_held != null) _held = said; // a draft keeps it without the phrase
+            return DictationText(said);
+          }
+          _releaseHeld(); // only the wake phrase: the offline text decides
+        case DictationCancelled():
+          return o;
+        case DictationFailed(:final PendingTake take):
+          // OpenAI failed after its retries: the offline text goes instead.
+          await _d.discard(take.id);
+        case DictationNothing():
+          break;
+        case DictationDenied():
+          await _rm(path);
+      }
+    } else {
+      await _rm(path);
+    }
+    if (offline.isEmpty) return const DictationNothing();
+    return _hold(session, offline);
+  }
+
+  static Future<void> _rm(String path) async {
+    try {
+      await File(path).delete();
+    } catch (_) {}
+  }
+
+  /// [text] (not from the dictation) is held like a transcription until
+  /// sent, saved or released: leaving the screen keeps it as a draft.
+  Future<DictationOutcome> _hold(String session, String text) async {
+    if (_disposed) {
+      await _d.deliver(session, text);
+      return const DictationCancelled();
+    }
+    _detach();
+    _sinkOwner = session;
+    _held = text;
+    _release = Completer<void>();
+    return DictationText(text);
+  }
+
   /// One dictation with the phone's recognizer; null when it cannot
   /// listen. The text is held like a transcription until sent, saved or
   /// released, so leaving the screen keeps it as a draft.
   Future<DictationOutcome?> _listenOnDevice(String session, {required bool shortAnswer}) async {
+    await _mic?.release(); // the phone's recognizer needs the microphone
     _deviceListening = true;
     _deviceCancelled = false;
     final String? t;
@@ -244,25 +370,27 @@ class LiveCarPorts implements CarPorts {
     if (_deviceCancelled) return const DictationCancelled();
     final String text = t.trim();
     if (text.isEmpty) return const DictationNothing();
-    if (_disposed) {
-      await _d.deliver(session, text);
-      return const DictationCancelled();
-    }
-    _detach();
-    _sinkOwner = session;
-    _held = text;
-    _release = Completer<void>();
-    return DictationText(text);
+    return _hold(session, text);
   }
 
   @override
   void releaseDictation() => _releaseHeld();
 
   @override
-  void stopListening() => unawaited(_deviceListening ? _stt.stop() : _d.stop());
+  void stopListening() {
+    final CarMic? mic = _mic;
+    if (mic != null && (_taking || _armed != null)) {
+      unawaited(mic.end()); // the turn ends now and is transcribed
+      return;
+    }
+    unawaited(_deviceListening ? _stt.stop() : _d.stop());
+  }
 
   @override
   void cancelListening() {
+    final CarMic? mic = _mic;
+    if (mic != null && (_taking || _armed != null)) unawaited(mic.cancel());
+    _armed = null;
     if (_deviceListening) {
       _deviceCancelled = true;
       unawaited(_stt.cancel());
@@ -272,13 +400,16 @@ class LiveCarPorts implements CarPorts {
   }
 
   @override
-  Future<String?> hear(Duration window, {bool Function(String partial)? until}) => _stt.listen(
-        listenFor: window,
-        pauseFor: window,
-        dictation: false,
-        language: _settings.language,
-        until: until,
-      );
+  Future<String?> hear(Duration window, {bool Function(String partial)? until}) async {
+    await _mic?.release(); // the phone's recognizer needs the microphone
+    return _stt.listen(
+      listenFor: window,
+      pauseFor: window,
+      dictation: false,
+      language: _settings.language,
+      until: until,
+    );
+  }
 
   @override
   void stopHearing() => unawaited(_stt.cancel());
@@ -299,13 +430,19 @@ class LiveCarPorts implements CarPorts {
     return _tts.speak(text, language: _settings.language, speed: _settings.speed);
   }
 
-  /// Reads a reply (markdown → speakable text, the configured part of it)
-  /// chunk by chunk with the phone's voice.
+  /// Reads a reply (markdown → speakable text) WHOLE, chunk by chunk: the
+  /// orchestrator talks to be heard, so the chat's read mode (which may
+  /// read only the ending) does not apply. With Edge the next chunk renders
+  /// while this one plays. [stopSpeaking] («Hablar», the steering wheel)
+  /// cuts it between or during chunks.
   @override
   Future<bool> speakReply(String markdown) async {
     final int gen = ++_speakGen;
-    for (final String chunk in speechChunksFor(markdown, _settings.autoReadMode)) {
-      if (!await _tts.speak(chunk, language: _settings.language, speed: _settings.speed)) return false;
+    final List<String> chunks = carReplyChunks(markdown);
+    final DeviceSpeech tts = _tts;
+    for (int i = 0; i < chunks.length; i++) {
+      if (tts is EdgeVoice && i + 1 < chunks.length) tts.prepare(chunks[i + 1], speed: _settings.speed);
+      if (!await tts.speak(chunks[i], language: _settings.language, speed: _settings.speed)) return false;
       if (gen != _speakGen) return false;
     }
     return gen == _speakGen;
@@ -442,6 +579,9 @@ class LiveCarPorts implements CarPorts {
   void dispose() {
     _disposed = true;
     _speakGen++;
+    final CarMic? mic = _mic;
+    if (mic != null && (_taking || _armed != null)) unawaited(mic.cancel());
+    _armed = null;
     if (_deviceListening) unawaited(_stt.stop()); // its text lands in the draft
     final String? owner = _sinkOwner;
     final String? text = _held;
@@ -452,3 +592,9 @@ class LiveCarPorts implements CarPorts {
     }
   }
 }
+
+/// A reply read in Modo auto, all of it: a short first chunk (it starts
+/// fast), then chunks short enough for Edge to render while the previous
+/// one plays.
+List<String> carReplyChunks(String markdown) =>
+    chunkForSpeech(selectForReading(prepareForSpeech(markdown), ReadMode.full), rest: 600);

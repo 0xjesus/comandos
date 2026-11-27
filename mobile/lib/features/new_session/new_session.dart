@@ -704,7 +704,23 @@ class _NewSessionPanelState extends State<NewSessionPanel> {
 
   List<Widget> _choices() {
     final WizardModel m = _m;
+    // «Atajos»: one tap sets harness, motor, model and effort; nothing at all
+    // when the server sends no usable preset.
+    final List<WizardChip> presets = m.presetChips;
     final List<Widget> out = <Widget>[
+      if (presets.isNotEmpty)
+        NsWrap(
+          label: 'Atajos',
+          child: NsChips(
+            key: const ValueKey<String>('ns-presets'),
+            items: presets,
+            current: m.currentPresetId,
+            onPick: (String id) => setState(() {
+              m.applyPresetId(id);
+              _closeModelSearch();
+            }),
+          ),
+        ),
       NsWrap(
         label: 'Agente',
         child: NsChips(

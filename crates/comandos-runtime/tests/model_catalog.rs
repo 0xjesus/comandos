@@ -49,7 +49,8 @@ fn supplied_home_overrides_and_signature_order_do_not_discover_environment() {
             ["codex", "codex-fixture/models_cache.json", null],
             ["grok", f.0.join(".grok/models_cache.json"), null],
             ["omp", f.0.join(".cache/comandos/models/omp.json"), null],
-            ["opencode", f.0.join(".cache/comandos/models/opencode.json"), null]
+            ["opencode", f.0.join(".cache/comandos/models/opencode.json"), null],
+            ["refuseless", f.0.join(".cache/comandos/models/refuseless.json"), null]
         ])
     );
 }
@@ -171,7 +172,7 @@ fn display_and_fetch_strings_truncate_by_unicode_character_and_huge_context_is_r
 fn malformed_missing_nonobject_deep_and_oversized_caches_fall_back() {
     let f = Fixture::new();
     let paths = f.paths();
-    assert_eq!(m::catalog_models(&paths), json!({"codex":[],"grok":[],"omp":[],"opencode":[]}));
+    assert_eq!(m::catalog_models(&paths), json!({"codex":[],"grok":[],"omp":[],"opencode":[],"refuseless":[]}));
     fs::create_dir(f.0.join(".codex")).unwrap();
     for bad in [
         vec![0xff],

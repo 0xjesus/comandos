@@ -251,7 +251,8 @@ void main() {
     }
     await flush(2);
     expect(d.phase, DictationPhase.recording);
-    for (int i = 0; i < 26; i++) {
+    // The default silence (3 s) then ends it.
+    for (int i = 0; i < 31; i++) {
       clock.nowMs += 100;
       level(-60);
       await flush(2);

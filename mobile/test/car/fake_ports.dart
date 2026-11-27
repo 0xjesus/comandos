@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:comandos_mobile/features/car/car_mic.dart';
 import 'package:comandos_mobile/features/car/car_ports.dart';
 import 'package:comandos_mobile/features/voice/dictation.dart';
 import 'package:flutter/foundation.dart';
@@ -38,6 +39,15 @@ class FakePorts implements CarPorts {
   }
 
   final List<bool> shortAnswers = <bool>[];
+
+  /// What «OK ComandOS» matched each time the call started a turn from it.
+  final List<String> wakeTakes = <String>[];
+
+  @override
+  void takeAfterWake(String heard) {
+    log.add('takeAfterWake');
+    wakeTakes.add(heard);
+  }
 
   @override
   Future<DictationOutcome> listen(String session,
@@ -157,4 +167,54 @@ class FakePorts implements CarPorts {
 
   @override
   Future<void> cue() async => cues++;
+}
+
+/// Modo auto's microphone for tests: each take waits for [done] (or
+/// completes at once with [next]).
+class FakeCarMic implements CarMic {
+  final ValueNotifier<double> _level = ValueNotifier<double>(0);
+  final List<String> log = <String>[];
+
+  /// The wake text each take started after (null: a follow-up).
+  final List<String?> takes = <String?>[];
+  final List<Duration> silences = <Duration>[];
+  Completer<MicTake>? pending;
+
+  /// The next take ends at once with this.
+  MicTake? next;
+
+  @override
+  ValueListenable<double> get level => _level;
+
+  @override
+  Future<MicTake> take({required Duration silence, String? afterWake}) {
+    log.add('take');
+    takes.add(afterWake);
+    silences.add(silence);
+    final MicTake? n = next;
+    next = null;
+    if (n != null) return Future<MicTake>.value(n);
+    return (pending = Completer<MicTake>()).future;
+  }
+
+  /// The take in progress ends with [t].
+  void done(MicTake t) {
+    final Completer<MicTake> c = pending!;
+    pending = null;
+    c.complete(t);
+  }
+
+  @override
+  Future<void> end() async => log.add('end');
+
+  @override
+  Future<void> cancel() async {
+    log.add('cancel');
+    final Completer<MicTake>? c = pending;
+    pending = null;
+    if (c != null && !c.isCompleted) c.complete(const MicTake(end: 'cancelled'));
+  }
+
+  @override
+  Future<void> release() async => log.add('release');
 }

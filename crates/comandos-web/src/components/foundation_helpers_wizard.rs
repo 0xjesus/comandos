@@ -275,7 +275,58 @@ fn model_chips() {
 fn id_el(name: &str) -> JsValue {
     id(name)
 }
+/// One-tap configurations from `/providers` `presets` (harness, motor,
+/// model, effort). A preset whose route or model is not available right now
+/// is not shown.
+fn presets() {
+    let list = js_rows(&get(&global("PROVIDERS"), "presets"));
+    let field = |p: &JsValue, k: &str| get(p, k).as_string().unwrap_or_default();
+    let usable: Vec<JsValue> = list
+        .into_iter()
+        .filter(|p| {
+            let (h, m, model) = (field(p, "harness"), field(p, "motor"), field(p, "model"));
+            truthy(&get(&route(Some(h), Some(m.clone())), "selectable"))
+                && (model.is_empty()
+                    || js_rows(&get(&motor(&m), "models")).iter().any(|x| get(x, "id").as_string().as_deref() == Some(&model)))
+        })
+        .collect();
+    classes(&id("ns-presets-wrap"), "hidden", usable.is_empty());
+    let current = usable
+        .iter()
+        .find(|p| {
+            ["harness", "motor", "model", "effort"].iter().all(|k| field(p, k) == ns_s(k))
+        })
+        .map(|p| field(p, "id"))
+        .unwrap_or_default();
+    let items = usable
+        .iter()
+        .map(|p| json!({"id": field(p, "id"), "label": field(p, "label"), "icon": to_utf16_json(&get(&harness(&field(p, "harness")), "icon"))}))
+        .collect();
+    chips(
+        id("ns-presets"),
+        items,
+        current,
+        callback(move |chosen| {
+            let found = js_rows(&get(&global("PROVIDERS"), "presets"))
+                .into_iter()
+                .find(|p| get(p, "id").as_string().as_deref() == Some(&chosen));
+            let Some(p) = found else { return };
+            let field = |k: &str| get(&p, k).as_string().unwrap_or_default();
+            put("modelFilter", "".into());
+            let _ = set(&id_el("ns-model-find"), "value", &"".into());
+            put("harness", field("harness").into());
+            put("motor", field("motor").into());
+            put("harnessAccount", "main".into());
+            put("motorAccount", "main".into());
+            put("model", field("model").into());
+            put("effort", field("effort").into());
+            select_defaults();
+            render();
+        }),
+    );
+}
 fn render() {
+    presets();
     let shell = ns_s("harness") == "shell";
     let source = get(&global("PROVIDERS"), "matrixHarnesses");
     let ids = if truthy(&source) {

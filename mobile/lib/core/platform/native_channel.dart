@@ -153,6 +153,8 @@ class NativeChannel implements NotificationPlatform {
           _onWake?.call(str('text') ?? '', a['final'] == true);
         case 'wakeError':
           if (call.arguments is String) _onWakeError?.call(call.arguments as String);
+        case 'takeLevel':
+          if (call.arguments is num) _onTakeLevel?.call((call.arguments as num).toDouble());
       }
       return null;
     });
@@ -180,7 +182,7 @@ class NativeChannel implements NotificationPlatform {
   void Function(String text, bool last)? _onWake;
   void Function(String why)? _onWakeError;
 
-  /// What the offline listener heard while Modo auto sleeps (`WakeWord.kt`).
+  /// What the offline listener heard while Modo auto sleeps (`CarListener.kt`).
   set onWake(void Function(String text, bool last)? handler) => _onWake = handler;
 
   set onWakeError(void Function(String why)? handler) => _onWakeError = handler;
@@ -188,8 +190,42 @@ class NativeChannel implements NotificationPlatform {
   /// Starts the offline «OK ComandOS» listener. False when it is missing.
   Future<bool> startWake() async => await _call<bool>('wakeStart') ?? false;
 
-  /// Stops it; the microphone is free when this completes.
+  /// Stops Modo auto's microphone (listener or take); it is free when this
+  /// completes. A take in progress completes as cancelled.
   Future<void> stopWake() => _call<void>('wakeStop');
+
+  void Function(double db)? _onTakeLevel;
+
+  /// Input level (dBFS) about every 100 ms while a take records.
+  set onTakeLevel(void Function(double db)? handler) => _onTakeLevel = handler;
+
+  /// The person's turn in Modo auto (`CarListener.kt`): records a WAV into
+  /// [dir] until [silenceMs] after the last word Vosk heard, [noWordsMs]
+  /// without any word or [maxMs]. Started while the listener sleeps it keeps
+  /// the microphone and the last [preRollMs]. Completes when the take is over
+  /// with `{end, path?, text?, words?, ms?, error?}`; null without the native side.
+  Future<Map<Object?, Object?>?> startTake({
+    required String dir,
+    required int silenceMs,
+    required int noWordsMs,
+    required int maxMs,
+    required int preRollMs,
+    int skip = 0,
+  }) =>
+      _call<Map<Object?, Object?>>('takeStart', <String, Object?>{
+        'dir': dir,
+        'silenceMs': silenceMs,
+        'noWordsMs': noWordsMs,
+        'maxMs': maxMs,
+        'preRollMs': preRollMs,
+        'skip': skip,
+      });
+
+  /// Ends the take now: it completes with what was said so far.
+  Future<void> endTake() => _call<void>('takeEnd');
+
+  /// Drops the take (its file is deleted); it completes as cancelled.
+  Future<void> cancelTake() => _call<void>('takeCancel');
 
   /// Asks for the car's microphone over Bluetooth (Android 12+).
   Future<bool> requestBluetooth() async => await _call<bool>('requestBluetooth') ?? false;

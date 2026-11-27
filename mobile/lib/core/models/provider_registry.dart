@@ -149,6 +149,48 @@ class MatrixRoute {
   final List<String> accountScopes;
 }
 
+/// A one-tap setup of the wizard (`presets[]`): «Claude Code · Opus 5.5 alto».
+/// The wizard decides whether it can be applied; the reader only keeps
+/// entries that name everything a tap needs.
+class ProviderPreset {
+  const ProviderPreset({
+    required this.id,
+    required this.label,
+    required this.harness,
+    required this.motor,
+    required this.model,
+    this.effort = '',
+  });
+
+  /// Null when a field a tap needs (id, label, harness, motor, model) is
+  /// missing or not a string; `effort` may be empty.
+  static ProviderPreset? tryParse(Map<String, Object?> m) {
+    final String? id = readStringOrNull(m, 'id');
+    final String? label = readStringOrNull(m, 'label');
+    final String? harness = readStringOrNull(m, 'harness');
+    final String? motor = readStringOrNull(m, 'motor');
+    final String? model = readStringOrNull(m, 'model');
+    if (id == null || label == null || harness == null || motor == null || model == null) return null;
+    return ProviderPreset(
+      id: id,
+      label: label,
+      harness: harness,
+      motor: motor,
+      model: model,
+      effort: readString(m, 'effort'),
+    );
+  }
+
+  final String id;
+  final String label;
+  final String harness;
+  final String motor;
+  final String model;
+
+  /// Empty: the model's default effort.
+  final String effort;
+}
+
 /// The whole `/providers` answer the wizard needs.
 class ProviderRegistry {
   const ProviderRegistry({
@@ -156,6 +198,7 @@ class ProviderRegistry {
     this.motors = const <String, MotorInfo>{},
     this.matrix = const <MatrixRoute>[],
     this.matrixHarnesses,
+    this.presets = const <ProviderPreset>[],
   });
 
   /// Null when [json] is not an object.
@@ -176,7 +219,18 @@ class ProviderRegistry {
       },
       matrix: <MatrixRoute>[for (final Map<String, Object?> r in readMapList(m, 'matrix')) MatrixRoute.fromJson(r)],
       matrixHarnesses: mh is List ? <String>[for (final Object? x in mh) if (x is String) x] : null,
+      presets: _presets(readMapList(m, 'presets')),
     );
+  }
+
+  /// Garbled entries are skipped; a repeated id keeps its first entry (the id
+  /// keys the chip).
+  static List<ProviderPreset> _presets(List<Map<String, Object?>> raw) {
+    final Set<String> seen = <String>{};
+    return <ProviderPreset>[
+      for (final Map<String, Object?> r in raw)
+        if (ProviderPreset.tryParse(r) case final ProviderPreset p when seen.add(p.id)) p,
+    ];
   }
 
   final Map<String, HarnessInfo> harnesses;
@@ -185,4 +239,7 @@ class ProviderRegistry {
 
   /// Order of the HARNESS chips; null when the server does not send it.
   final List<String>? matrixHarnesses;
+
+  /// One-tap setups (`presets[]`); empty when the server sends none.
+  final List<ProviderPreset> presets;
 }

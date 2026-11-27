@@ -69,9 +69,9 @@ const CLEAR: [&str; 9] = [
 ];
 
 /// `motor_lock_env(motor, model)` (1834): fija cada ranura de Claude Code al
-/// modelo del motor de suscripción.
+/// modelo del motor de suscripción (o de un motor directo, como Refuseless).
 pub fn motor_lock_env(motor: &str, model: &str) -> Vec<(&'static str, String)> {
-    if !matches!(motor, "codex" | "grok") || model.is_empty() {
+    if motor == "claude" || model.is_empty() {
         return Vec::new();
     }
     [
@@ -83,6 +83,67 @@ pub fn motor_lock_env(motor: &str, model: &str) -> Vec<(&'static str, String)> {
     .into_iter()
     .map(|key| (key, model.to_owned()))
     .collect()
+}
+
+/// A Claude Code motor served straight by its own Anthropic-compatible API
+/// (`claudeEngines.<motor>.transport == "anthropic-direct"`, like Refuseless):
+/// no local gateway in between.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectEngine {
+    pub base_url: String,
+    /// `~/…` path of the file that holds the key.
+    pub key_file: String,
+}
+
+/// The direct engine behind `motor`, if it is one.
+pub fn direct_engine(registry: &Value, motor: &str) -> Option<DirectEngine> {
+    let engine = registry.get("claudeEngines")?.get(motor)?;
+    if engine.get("transport")?.as_str()? != "anthropic-direct" {
+        return None;
+    }
+    Some(DirectEngine {
+        base_url: engine.get("baseUrl")?.as_str()?.to_owned(),
+        key_file: engine.get("keyFile")?.as_str()?.to_owned(),
+    })
+}
+
+/// The `--settings` file Claude Code gets for a direct engine, written (0600)
+/// only when it changed: its base URL and an `apiKeyHelper` that reads the
+/// key file, so the key itself never lands in this file, the command line or
+/// the pane. Err: a sayable reason (no key yet).
+pub fn direct_settings(home: &Path, motor: &str, engine: &DirectEngine) -> Result<PathBuf, String> {
+    let key = match engine.key_file.strip_prefix("~/") {
+        Some(rest) => home.join(rest),
+        None => PathBuf::from(&engine.key_file),
+    };
+    if !key.is_file() {
+        return Err(format!("falta la llave de {motor} en {}", engine.key_file));
+    }
+    let dir = home.join(".local/share/comandos/engines");
+    let fail = |e: io::Error| format!("no pude preparar {motor}: {e}");
+    fs::create_dir_all(&dir).map_err(fail)?;
+    let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    let path = dir.join(format!("{motor}-claude.json"));
+    let body = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": engine.base_url,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+        },
+        "apiKeyHelper": format!("cat {}", shlex_quote(&key.to_string_lossy())),
+    })
+    .to_string();
+    if fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(fail)?;
+        file.write_all(body.as_bytes()).map_err(fail)?;
+    }
+    Ok(path)
 }
 
 /// `shlex.join(words)`.
@@ -295,7 +356,14 @@ pub fn configuration_command(
             Err(e) => return Err(account_failure(&e)),
         }
     }
-    if harness == "claude" && motor != "claude" {
+    let direct = if harness == "claude" { direct_engine(&ctx.registry, motor) } else { None };
+    let mut settings = None;
+    if let Some(engine) = &direct {
+        settings = Some(direct_settings(&ctx.home, motor, engine).map_err(ConfigError::Value)?);
+        for (key, value) in motor_lock_env(motor, model) {
+            environment.insert(key.into(), json!(value));
+        }
+    } else if harness == "claude" && motor != "claude" {
         if !proxy_alive(ctx.proxy_port) {
             return Err(ConfigError::Value("el gateway local no responde".into()));
         }
@@ -311,10 +379,19 @@ pub fn configuration_command(
     for name in CLEAR {
         argv.extend(["-u".into(), name.into()]);
     }
+    if direct.is_some() {
+        // A key in the environment would win over the engine's apiKeyHelper.
+        for name in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] {
+            argv.extend(["-u".into(), name.into()]);
+        }
+    }
     for (key, value) in &environment {
         argv.push(format!("{key}={}", value.as_str().ok_or(Unsure)?));
     }
     argv.push(binary);
+    if let Some(path) = &settings {
+        argv.extend(["--settings".into(), path.to_string_lossy().into_owned()]);
+    }
     if harness == "acp" {
         argv.extend(["--agent".into(), motor.into()]);
         if account != "main" {
@@ -812,7 +889,36 @@ pub fn trust_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{abbreviated_claude, kept_flags};
+    use super::{abbreviated_claude, direct_engine, direct_settings, kept_flags, motor_lock_env};
+    use serde_json::json;
+
+    #[test]
+    fn a_direct_engine_gets_a_settings_file_that_reads_its_key_without_copying_it() {
+        let registry = json!({"claudeEngines": {
+            "refuseless": {"transport": "anthropic-direct", "baseUrl": "https://api.example", "keyFile": "~/.config/x/api_key"},
+            "codex": {"transport": "cc-proxy"}
+        }});
+        assert_eq!(direct_engine(&registry, "codex"), None);
+        assert_eq!(direct_engine(&registry, "nope"), None);
+        let engine = direct_engine(&registry, "refuseless").unwrap();
+        let home = std::env::temp_dir().join(format!("direct-engine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert!(direct_settings(&home, "refuseless", &engine).unwrap_err().contains("falta la llave"));
+        std::fs::create_dir_all(home.join(".config/x")).unwrap();
+        std::fs::write(home.join(".config/x/api_key"), "secret-value\n").unwrap();
+        let path = direct_settings(&home, "refuseless", &engine).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("secret-value"));
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(body["env"]["ANTHROPIC_BASE_URL"], "https://api.example");
+        assert_eq!(body["apiKeyHelper"], format!("cat {}", home.join(".config/x/api_key").display()));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        // Every Claude Code slot is pinned to the engine's model.
+        assert_eq!(motor_lock_env("refuseless", "glm").len(), 4);
+        assert!(motor_lock_env("claude", "opus").is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn abbreviated_prefix_needs_a_boundary() {

@@ -164,6 +164,40 @@ const Map<String, Object?> missingDirs = <String, Object?>{
 
 ProviderRegistry registry() => ProviderRegistry.tryParse(jsonDecode(providersJson))!;
 
+/// [providersJson] with a `presets` array.
+String providersWithPresets(List<Object?> presets) {
+  final Map<String, Object?> m = (jsonDecode(providersJson) as Map<String, Object?>)..['presets'] = presets;
+  return jsonEncode(m);
+}
+
+Map<String, Object?> preset(String id, String label, String harness, String motor, String model, [String? effort]) =>
+    <String, Object?>{
+      'id': id,
+      'label': label,
+      'harness': harness,
+      'motor': motor,
+      'model': model,
+      'effort': ?effort,
+    };
+
+/// Usable presets plus one per reason to hide or skip.
+final List<Object?> samplePresets = <Object?>[
+  preset('opus-high', 'Claude Code · Opus 5.5 alto', 'claude', 'claude', 'claude-opus-5-5', 'high'),
+  preset('luna', 'Codex · Luna', 'codex', 'codex', 'gpt-6-luna'),
+  // OpenCode models list no efforts: the effort is moot, the chip stays.
+  preset('qwen', 'ACP · Qwen', 'acp', 'opencode', 'groq/qwen/qwen3.8-27b', 'high'),
+  // Hidden: blocked route, unknown route, unknown model, effort not offered.
+  preset('blocked', 'Codex · Grok', 'codex', 'grok', 'grok-4.7', 'high'),
+  preset('nowhere', 'Nadie · Nada', 'nadie', 'claude', 'claude-opus-5-5', 'high'),
+  preset('ghost', 'Claude Code · Opus 9', 'claude', 'claude', 'claude-opus-9', 'high'),
+  preset('ultra', 'Grok · ultra', 'grok', 'grok', 'grok-4.7', 'ultra'),
+  // Skipped by the reader.
+  42,
+  <String, Object?>{'id': 'half', 'label': 'Sin modelo', 'harness': 'claude', 'motor': 'claude'},
+  <String, Object?>{'id': 7, 'label': 'x', 'harness': 'claude', 'motor': 'claude', 'model': 'claude-opus-5-5'},
+  preset('opus-high', 'Duplicado', 'codex', 'codex', 'gpt-6-luna'),
+];
+
 WizardModel freshModel() {
   final WizardModel m = WizardModel(registry(), WizardSelection.defaults());
   m.selectDefaults();
@@ -412,6 +446,74 @@ void main() {
     });
   });
 
+  group('Presets («Atajos»)', () {
+    WizardModel withPresets() {
+      final ProviderRegistry reg = ProviderRegistry.tryParse(jsonDecode(providersWithPresets(samplePresets)))!;
+      final WizardModel m = WizardModel(reg, WizardSelection.defaults());
+      m.selectDefaults();
+      m.normalize();
+      return m;
+    }
+
+    test('reader: garbled or incomplete entries skipped, first of a repeated id kept, effort optional', () {
+      final ProviderRegistry reg = ProviderRegistry.tryParse(jsonDecode(providersWithPresets(samplePresets)))!;
+      expect(reg.presets.map((ProviderPreset p) => p.id).toList(),
+          <String>['opus-high', 'luna', 'qwen', 'blocked', 'nowhere', 'ghost', 'ultra']);
+      final ProviderPreset opus = reg.presets.first;
+      expect(opus.label, 'Claude Code · Opus 5.5 alto');
+      expect((opus.harness, opus.motor, opus.model, opus.effort), ('claude', 'claude', 'claude-opus-5-5', 'high'));
+      expect(reg.presets[1].effort, '');
+    });
+
+    test('reader: no array, or not a list, is an empty list', () {
+      expect(registry().presets, isEmpty);
+      final Map<String, Object?> m = (jsonDecode(providersJson) as Map<String, Object?>)..['presets'] = 'x';
+      expect(ProviderRegistry.tryParse(m)!.presets, isEmpty);
+    });
+
+    test('chips: only the presets a hand pick could reach', () {
+      final WizardModel m = withPresets();
+      expect(m.presetChips.map((WizardChip c) => c.id).toList(), <String>['opus-high', 'luna', 'qwen']);
+      expect(m.presetChips.first.icon, 'anthropic');
+      expect(m.presetChips.first.model, 'claude-opus-5-5');
+    });
+
+    test('a tap runs the hand picks: harness, motor, model, effort, route and accounts follow', () {
+      final WizardModel m = withPresets();
+      expect(m.currentPresetId, '');
+      m.applyPresetId('opus-high');
+      expect((m.sel.harness, m.sel.motor, m.sel.model, m.sel.effort), ('claude', 'claude', 'claude-opus-5-5', 'high'));
+      expect(m.sel.routeId, 'claude:claude');
+      expect(m.sel.harnessAccount, 'main');
+      expect(m.currentPresetId, 'opus-high');
+      m.pickEffort('low');
+      expect(m.currentPresetId, '', reason: 'a different effort is no longer the preset');
+
+      m.applyPresetId('luna');
+      expect((m.sel.harness, m.sel.motor, m.sel.model), ('codex', 'codex', 'gpt-6-luna'));
+      expect(m.sel.effort, 'medium', reason: 'no effort in the preset: the model default, not the «low» left over');
+      expect(m.currentPresetId, 'luna');
+      m.pickEffort('high');
+      expect(m.currentPresetId, '');
+
+      m.applyPresetId('qwen');
+      expect(m.sel.routeId, 'acp:opencode');
+      expect(m.sel.model, 'groq/qwen/qwen3.8-27b');
+      expect(m.sel.effort, '', reason: 'the model has no efforts');
+      expect(m.currentPresetId, 'qwen');
+      expect(m.canCreate, isTrue);
+    });
+
+    test('a hidden preset does nothing when applied', () {
+      final WizardModel m = withPresets();
+      for (final String id in <String>['blocked', 'nowhere', 'ghost', 'ultra', 'missing']) {
+        m.applyPresetId(id);
+        expect(m.sel.routeId, 'codex:codex', reason: id);
+        expect(m.sel.model, 'gpt-6.1-sol', reason: id);
+      }
+    });
+  });
+
   group('WizardPaths', () {
     test('crumbs, short home, folder name, create error text', () {
       expect(WizardPaths.crumbs('/srv/dev/code'), <(String, String)>[
@@ -615,6 +717,7 @@ void main() {
     late http.Response Function(Map<String, Object?> body) onCreate;
     late bool findAvailable;
     late bool activeTab;
+    late String providersBody;
 
     Future<String?> Function() open(WidgetTester tester) {
       String? result;
@@ -665,6 +768,7 @@ void main() {
       gets = <Uri>[];
       findAvailable = true;
       activeTab = true;
+      providersBody = providersJson;
       onCreate = (_) => jsonResponse(<String, Object?>{'ok': true, 'session': 'term-r123', 'label': 'portal'});
       final MockClient client = MockClient((http.Request r) async {
         final Map<String, Object?> body =
@@ -673,7 +777,7 @@ void main() {
         if (r.method == 'GET') gets.add(r.url);
         switch (r.url.path) {
           case '/providers':
-            return http.Response.bytes(utf8.encode(providersJson), 200,
+            return http.Response.bytes(utf8.encode(providersBody), 200,
                 headers: <String, String>{'content-type': 'application/json; charset=utf-8'});
           case '/model-tiers':
             return jsonResponse(<String, Object?>{'providers': <Object?>[]});
@@ -965,6 +1069,75 @@ void main() {
       await tester.pumpAndSettle();
       expect(posts.single.$2['routeId'], 'acp:opencode');
       expect(posts.single.$2['model'], 'groq/qwen/qwen3.8-27b');
+    });
+
+    Future<void> tapIn(WidgetTester tester, String parent, Finder target) async {
+      final Finder f = find.descendant(of: byKey(parent), matching: target);
+      await tester.ensureVisible(f);
+      await tester.pumpAndSettle();
+      await tester.tap(f);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('«Atajos»: chips for usable presets; a tap sets harness, motor, model and effort',
+        (WidgetTester tester) async {
+      providersBody = providersWithPresets(samplePresets);
+      await open(tester)();
+      expect(find.text('ATAJOS'), findsOneWidget);
+      // Atajos sit right above the agent row.
+      expect(tester.getTopLeft(find.text('ATAJOS')).dy, lessThan(tester.getTopLeft(find.text('AGENTE')).dy));
+      final Finder row = byKey('ns-presets');
+      for (final String label in <String>['Claude Code · Opus 5.5 alto', 'Codex · Luna', 'ACP · Qwen']) {
+        expect(find.descendant(of: row, matching: find.text(label)), findsOneWidget, reason: label);
+      }
+      for (final String label in <String>['Codex · Grok', 'Nadie · Nada', 'Claude Code · Opus 9', 'Grok · ultra']) {
+        expect(find.text(label), findsNothing, reason: label);
+      }
+      NsChip chip(String parent, String id) =>
+          tester.widget<NsChip>(find.descendant(of: byKey(parent), matching: find.byKey(ValueKey<String>(id))));
+      expect(
+        tester.widgetList<NsChip>(find.descendant(of: row, matching: find.byType(NsChip))).where((NsChip c) => c.on),
+        isEmpty,
+        reason: 'the default Codex setup is no preset',
+      );
+
+      await tapIn(tester, 'ns-presets', find.text('Claude Code · Opus 5.5 alto'));
+      expect(find.text('Claude Code → Claude · claude-opus-5-5 · high'), findsOneWidget);
+      expect(chip('ns-presets', 'opus-high').on, isTrue);
+      expect(chip('ns-presets', 'luna').on, isFalse);
+      expect(chip('ns-harness', 'claude').on, isTrue);
+      expect(chip('ns-motor', 'claude').on, isTrue);
+      expect(chip('ns-model', 'claude-opus-5-5').on, isTrue);
+      expect(chip('ns-effort', 'high').on, isTrue);
+
+      // A hand pick of another effort leaves the preset.
+      await tapIn(tester, 'ns-effort', byKey('max'));
+      expect(find.text('Claude Code → Claude · claude-opus-5-5 · max'), findsOneWidget);
+      expect(chip('ns-presets', 'opus-high').on, isFalse);
+
+      await tapIn(tester, 'ns-presets', find.text('ACP · Qwen'));
+      expect(find.text('ComandOS ACP → OpenCode · groq/qwen/qwen3.8-27b'), findsOneWidget);
+      expect(find.text('Qwen3.8 27B (Groq)'), findsOneWidget, reason: 'the chosen model joins the chips');
+      expect(chip('ns-presets', 'qwen').on, isTrue);
+      await tester.tap(byKey('ns-go'));
+      await tester.pumpAndSettle();
+      expect(posts.single.$2['routeId'], 'acp:opencode');
+      expect(posts.single.$2['model'], 'groq/qwen/qwen3.8-27b');
+    });
+
+    testWidgets('«Atajos»: nothing at all without presets', (WidgetTester tester) async {
+      await open(tester)();
+      expect(find.text('AGENTE'), findsOneWidget);
+      expect(find.text('ATAJOS'), findsNothing);
+      expect(byKey('ns-presets'), findsNothing);
+    });
+
+    testWidgets('«Atajos»: nothing at all when no preset is usable', (WidgetTester tester) async {
+      providersBody = providersWithPresets(<Object?>[samplePresets[3], samplePresets[5], 42]);
+      await open(tester)();
+      expect(find.text('AGENTE'), findsOneWidget);
+      expect(find.text('ATAJOS'), findsNothing);
+      expect(byKey('ns-presets'), findsNothing);
     });
 
     testWidgets('the close button completes with null and creates nothing', (WidgetTester tester) async {

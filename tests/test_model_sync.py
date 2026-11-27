@@ -209,3 +209,28 @@ def test_omp_default_model_reads_model_roles(tmp_path):
     (cfg / "config.yml").write_text("theme: dark\nmodelRoles:\n  smol: a/b\n  default: refuseless/glm-5.3\ntools:\n")
     assert model_sync.omp_default_model(tmp_path) == "refuseless/glm-5.3"
     assert model_sync.omp_default_model(tmp_path / "none") == ""
+
+
+def test_refuseless_catalog_keeps_api_order_with_names_context_and_new_tag():
+    today = time.mktime(time.strptime("2026-11-26", "%Y-%m-%d"))
+    data = {"data": [
+        {"id": "kimi-k3.1-pro-abliterated", "created": today - 3 * 86400, "context_length": 1048576},
+        {"id": "glm-5.3-flash-abliterated", "created": today - 400 * 86400},
+        {"id": "bad id"}, {"id": ""}, {},
+    ]}
+    rows = model_sync.refuseless_catalog(data, today)
+    assert [r["id"] for r in rows] == ["kimi-k3.1-pro-abliterated", "glm-5.3-flash-abliterated"]
+    assert rows[0]["name"] == "Kimi K3.1 Pro Abliterated" and rows[0]["tag"] == "nuevo"
+    assert rows[0]["contextWindow"] == 1048576 and rows[0]["efforts"] == []
+    assert rows[1]["name"] == "GLM 5.3 Flash Abliterated" and "tag" not in rows[1]
+    assert model_sync.refuseless_catalog(None, today) == []
+
+
+def test_write_catalogs_writes_refuseless_without_touching_others_when_clis_are_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_sync, "_which", lambda name: None)
+    counts = model_sync.write_catalogs(tmp_path, now=time.time(),
+                                       fetch_refuseless=lambda home: {"data": [{"id": "glm-5.3-abliterated"}]})
+    assert counts == {"refuseless": 1}
+    saved = json.loads((model_sync.cache_dir(tmp_path) / "refuseless.json").read_text())
+    assert saved["models"][0]["id"] == "glm-5.3-abliterated"
+    assert model_sync.write_catalogs(tmp_path / "x", fetch_refuseless=lambda home: None) == {}

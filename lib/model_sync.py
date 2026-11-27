@@ -411,8 +411,63 @@ def opencode_catalog(ids_text, meta, today):
     return [row for _, row in models]
 
 
-def write_catalogs(home, dry_run=False, now=None):
-    """Los catálogos de Oh My Pi y OpenCode; un CLI ausente o que falla no toca su archivo."""
+REFUSELESS_MODELS = "https://api.refuseless.com/v1/models"
+
+
+def _pretty(mid):
+    words = []
+    for part in mid.split("-"):
+        low = part.lower()
+        if low in ("glm", "ai"):
+            words.append(part.upper())
+        elif low == "deepseek":
+            words.append("DeepSeek")
+        elif low == "minimax":
+            words.append("MiniMax")
+        elif low[:1].isalpha() and any(c.isdigit() for c in low) and len(low) <= 6:
+            words.append(part.upper())
+        else:
+            words.append(part.capitalize() if part.islower() else part)
+    return " ".join(words)
+
+
+def refuseless_catalog(data, today):
+    """`/v1/models` de Refuseless (motor de Claude Code), en el orden de la API."""
+    rows = []
+    for item in (data or {}).get("data") or []:
+        mid = str((item or {}).get("id") or "").strip()
+        if not mid or " " in mid:
+            continue
+        row = {"id": mid, "name": _pretty(mid), "efforts": [], "defaultEffort": ""}
+        ctx = item.get("context_length")
+        if isinstance(ctx, int) and ctx > 0:
+            row["contextWindow"] = ctx
+        created = item.get("created")
+        if isinstance(created, (int, float)) and 0 <= (today - created) / 86400 <= NEW_DAYS:
+            row["tag"] = "nuevo"
+        rows.append(row)
+    return rows
+
+
+def _refuseless_models(home):
+    """La lista de modelos de Refuseless con la llave de su archivo (nunca se imprime)."""
+    import urllib.request
+    try:
+        key = (Path(home) / ".config/refuseless/api_key").read_text().strip()
+    except OSError:
+        return None
+    if not key:
+        return None
+    request = urllib.request.Request(REFUSELESS_MODELS, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read(4 * 1024 * 1024))
+    except (OSError, ValueError):
+        return None
+
+
+def write_catalogs(home, dry_run=False, now=None, fetch_refuseless=None):
+    """Los catálogos de Oh My Pi, OpenCode y Refuseless; un CLI o servicio ausente o que falla no toca su archivo."""
     home = Path(home)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
     out = {}
@@ -431,6 +486,10 @@ def write_catalogs(home, dry_run=False, now=None):
         models = opencode_catalog(ids, meta if isinstance(meta, dict) else {}, now or time.time())
         if models:
             out["opencode"] = models
+    data = (fetch_refuseless or _refuseless_models)(home)
+    models = refuseless_catalog(data, now or time.time()) if data else None
+    if models:
+        out["refuseless"] = models
     for cli, models in out.items():
         write_if_changed(cache_dir(home) / f"{cli}.json",
                          json.dumps({"fetched_at": stamp, "models": models}, ensure_ascii=False) + "\n",
